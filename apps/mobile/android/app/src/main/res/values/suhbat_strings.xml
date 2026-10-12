@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bg_running">На связи — сообщения приходят в фоне</string>
+    <string name="ch_service">Работа в фоне</string>
+    <string name="ch_messages">Сообщения</string>
+    <string name="ch_calls">Звонки</string>
+</resources>

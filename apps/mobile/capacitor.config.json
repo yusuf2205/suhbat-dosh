@@ -1,0 +1,21 @@
+{
+  "appId": "app.suhbat.mobile",
+  "appName": "Suhbat-dosh",
+  "webDir": "www",
+  "backgroundColor": "#fbc700",
+  "appendUserAgent": "SuhbatShell/mobile SuhbatApp/0.2.15",
+  "server": {
+    "cleartext": true,
+    "allowNavigation": [
+      "*"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "ios": {
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}

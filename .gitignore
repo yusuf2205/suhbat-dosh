@@ -1,0 +1,23 @@
+node_modules/
+data/
+backups/
+.env
+*.db
+*.db-wal
+*.db-shm
+secret.key
+
+# local build outputs and deployment bundles (contain secrets / large binaries)
+.nas-stage/
+dist-nas-suhbat.zip
+apps/*/dist/
+apps/*/node_modules/
+apps/mobile/android/local.properties
+apps/mobile/android/.gradle/
+apps/mobile/android/app/build/
+apps/mobile/*.log
+
+release/
+
+.upd/
+/*.png

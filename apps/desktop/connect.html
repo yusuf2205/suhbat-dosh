@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'">
+  <title>Suhbat-dosh</title>
+  <link rel="stylesheet" href="connect.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Suhbat-dosh</h1>
+    <p id="lead">Адрес вашего сервера / Server manzili</p>
+    <form id="f">
+      <label for="url" class="sr">Server</label>
+      <input id="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://suhbat-dosh.uz" required>
+      <button type="submit">Подключиться / Ulanish</button>
+    </form>
+    <p id="err" role="alert"></p>
+  </main>
+  <script src="connect.js"></script>
+</body>
+</html>

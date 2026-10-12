@@ -1,0 +1,74 @@
+# Suhbat-dosh on a NAS (Synology Container Manager, QNAP Container Station, TrueNAS, plain Docker).
+#   cp .env.example .env   # then edit .env (APP_SECRET is required)
+#   docker compose up -d --build
+#   docker compose --profile https up -d --build   # adds the Caddy HTTPS reverse proxy
+services:
+  suhbat:
+    build: .
+    image: suhbat:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      DOWNLOADS_DIR: /downloads
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+    volumes:
+      - ./data:/data          # SQLite database + uploaded files (the only state)
+      - ./backups:/backups    # output of `npm run backup`
+      - ./downloads:/downloads:ro   # installers offered on /download
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # Public access through your own Cloudflare Tunnel (profile 'tunnel'; no open ports needed).
+  # Set up with: sh scripts/set-tunnel-token.sh
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on: [suhbat]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+  # Optional TURN relay for calls that cannot connect directly.
+  # Needs UDP 3478 and 49160-49200 forwarded to this host (it cannot go through Cloudflare Tunnel).
+  coturn:
+    image: coturn/coturn:latest
+    profiles: ["turn"]
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      -n --log-file=stdout --no-cli --fingerprint --lt-cred-mech
+      --realm=${TURN_REALM:-suhbat-dosh.uz}
+      --user=${TURN_USERNAME:-suhbat}:${TURN_CREDENTIAL:-change-me}
+      --external-ip=${TURN_EXTERNAL_IP:-}
+      --min-port=49160 --max-port=49200
+      --no-multicast-peers
+      --denied-peer-ip=10.0.0.0-10.255.255.255 --denied-peer-ip=172.16.0.0-172.31.255.255
+      --denied-peer-ip=192.168.0.0-192.168.255.255 --denied-peer-ip=127.0.0.0-127.255.255.255
+      --denied-peer-ip=169.254.0.0-169.254.255.255
+
+  # Optional HTTPS termination with automatic certificates (public domain required).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on: [suhbat]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

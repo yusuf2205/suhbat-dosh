@@ -1,0 +1,81 @@
+{
+  "name": "suhbat-desktop",
+  "productName": "Suhbat-dosh",
+  "version": "0.2.5",
+  "description": "Suhbat-dosh desktop client (Windows, macOS, Linux)",
+  "author": "Suhbat-dosh <noreply@suhbat.local>",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win zip nsis --x64",
+    "dist:linux": "electron-builder --linux AppImage deb --x64",
+    "dist:mac": "electron-builder --mac dmg zip --universal",
+    "dist:linux:portable": "electron-builder --linux tar.gz --x64"
+  },
+  "build": {
+    "appId": "app.suhbat.desktop",
+    "productName": "Suhbat-dosh",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "connect.html",
+      "connect.js",
+      "connect.css",
+      "notif.html",
+      "notif.js",
+      "package.json",
+      "build/icon.png"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "Suhbat-dosh-${version}-windows-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Suhbat-dosh-Setup-${version}-windows-x64.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Network",
+      "maintainer": "Suhbat-dosh <noreply@suhbat.local>",
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "artifactName": "Suhbat-dosh-${version}-linux-x64.${ext}"
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.social-networking",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://suhbat-dosh.uz/downloads"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

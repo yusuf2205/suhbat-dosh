@@ -1,0 +1,10 @@
+{$DOMAIN} {
+	encode gzip
+	# WebSocket upgrades (/ws) are proxied transparently.
+	reverse_proxy suhbat:3000 {
+		header_up X-Forwarded-Host {host}
+	}
+	request_body {
+		max_size 60MB
+	}
+}

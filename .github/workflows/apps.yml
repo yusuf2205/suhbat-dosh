@@ -1,0 +1,85 @@
+# Builds the platforms that cannot be built on a Windows workstation.
+# Run manually: Actions -> "Build apps" -> Run workflow. Artifacts are attached to the run.
+name: Build apps
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            cmd: npx electron-builder --mac dmg zip --universal
+          - os: ubuntu-24.04
+            cmd: npx electron-builder --linux AppImage deb --x64
+          - os: windows-2022
+            cmd: npx electron-builder --win nsis zip --x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # unsigned builds; add signing secrets to ship publicly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: ${{ matrix.cmd }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+            apps/desktop/dist/*.exe
+
+  android:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm install --no-audit --no-fund
+      - run: npx cap sync android
+      - run: ./gradlew assembleDebug
+        working-directory: apps/mobile/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suhbat-android-debug
+          path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
+
+  ios:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: npx cap add ios
+      - run: npx cap sync ios
+      # Simulator build needs no Apple account. A device/TestFlight build needs your signing team:
+      # open apps/mobile/ios/App/App.xcworkspace in Xcode, set the Team, then Product -> Archive.
+      - run: >
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - run: cd build/Build/Products/Debug-iphonesimulator && zip -r "$GITHUB_WORKSPACE/Suhbat-dosh-simulator.zip" App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suhbat-ios-simulator
+          path: Suhbat-dosh-simulator.zip

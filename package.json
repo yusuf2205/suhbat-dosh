@@ -1,0 +1,22 @@
+{
+  "name": "suhbat",
+  "version": "0.2.3",
+  "private": true,
+  "description": "Suhbat-dosh — self-hosted messenger (web, PWA-ready)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "test": "node --test test/e2e.test.mjs test/callquality.test.mjs",
+    "backup": "node scripts/backup.mjs",
+    "restore-check": "node scripts/restore-check.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  }
+}
