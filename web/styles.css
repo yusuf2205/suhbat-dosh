@@ -1440,3 +1440,7 @@ html[data-motion="lite"] *, html[data-motion="lite"] *::before, html[data-motion
 .pdf-zoom, .pdf-counter { min-width: 56px; text-align: center; font-size: .9rem; opacity: .9; }
 .pdf-scroll { flex: 1; overflow: auto; padding: 12px; background: #3a3a40; }
 .pdf-status { color: #ddd; padding: 20px; text-align: center; }
+
+/* the PDF reader uses the whole viewer area (it used to shrink to one narrow column) */
+.viewer-stage .pdf-view, .pdf-view { width: 100%; max-width: none; align-self: stretch; justify-self: stretch; min-width: 0; }
+.pdf-pages { width: 100%; }
