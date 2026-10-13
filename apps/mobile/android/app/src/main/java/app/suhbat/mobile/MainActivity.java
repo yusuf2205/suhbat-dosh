@@ -54,7 +54,33 @@ public class MainActivity extends BridgeActivity {
                 if (openExternally(Uri.parse(url))) return true;
                 return super.shouldOverrideUrlLoading(view, url);
             }
+
+            /** Android may kill the web renderer while the app waits in the background (e.g. in Telegram): start over, not a white screen. */
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+                runOnUiThread(() -> recreate());
+                return true;
+            }
         });
+    }
+
+    /** Back from another app: if the page is empty or stranded on a foreign site, load the messenger again. */
+    private void checkPageHealth() {
+        try {
+            final WebView wv = getBridge().getWebView();
+            String saved = getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
+            final String origin = saved != null ? saved : "https://suhbat-dosh.uz";
+            wv.evaluateJavascript(
+                    "(function(){return (location.origin||'')+'|'+((document.body&&document.body.children.length)||0)})()",
+                    v -> {
+                        String s = v == null ? "" : v.replace("\"", "");
+                        String[] p = s.split("\\|");
+                        boolean local = p.length > 0 && (p[0].equals("https://localhost") || p[0].equals("http://localhost"));
+                        boolean sameOrigin = p.length > 0 && (local || p[0].equals(origin));
+                        boolean empty = p.length < 2 || "0".equals(p[1]);
+                        if (!sameOrigin || empty) wv.loadUrl(origin);
+                    });
+        } catch (Exception ignored) { /* bridge not ready yet */ }
     }
 
     /** An incoming-call notification opens the app on top of the lock screen and wakes the display. */
@@ -102,6 +128,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        checkPageHealth();
         PushService.appVisible = true;
         android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.cancel(PushService.ID_CALL);

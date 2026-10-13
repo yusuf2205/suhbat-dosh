@@ -29,7 +29,9 @@ export async function showLogin(root, { onLoggedIn }) {
   const langSel = h('select', { class: 'input', 'aria-label': 'Language', onchange: () => { S.prefs.lang = langSel.value; savePrefs(); fire('relang'); } },
     Object.entries(LANGS).map(([k, v]) => h('option', { value: k, selected: getLang() === k }, v)));
 
-  const stopTg = () => { clearInterval(tgTimer); tgTimer = null; };
+  let pollOnce = null;
+  const onVisible = () => { if (!document.hidden && tgTimer && pollOnce) pollOnce(); };
+  const stopTg = () => { clearInterval(tgTimer); tgTimer = null; document.removeEventListener('visibilitychange', onVisible); };
   const isMobileShell = navigator.userAgent.includes('SuhbatShell/mobile');
 
   async function startTelegram() {
@@ -48,7 +50,8 @@ export async function showLogin(root, { onLoggedIn }) {
     else window.open(tgLogin.url, '_blank', 'noopener');
     const deadline = Date.now() + tgLogin.expires_in * 1000;
     stopTg();
-    tgTimer = setInterval(async () => {
+    pollOnce = async () => {
+      if (!tgTimer) return;
       if (Date.now() > deadline) { stopTg(); step = 'home'; draw(t('err.tg_expired')); return; }
       try {
         const r = await api('GET', `/api/auth/telegram/poll?token=${encodeURIComponent(tgLogin.token)}`);
@@ -56,7 +59,10 @@ export async function showLogin(root, { onLoggedIn }) {
         else if (r.status === 'rejected') { stopTg(); step = 'home'; draw(t('err.tg_rejected')); }
         else if (r.status === 'expired') { stopTg(); step = 'home'; draw(t('err.tg_expired')); }
       } catch { /* transient network error: keep polling */ }
-    }, 2000);
+    };
+    tgTimer = setInterval(pollOnce, 2000);
+    // the page is paused while the user is in Telegram: check right away when they come back
+    document.addEventListener('visibilitychange', onVisible);
   }
 
   function draw(message = '') {
@@ -132,7 +138,7 @@ export async function showLogin(root, { onLoggedIn }) {
           h('li', null, t('login.tg_step1', { bot: `@${tgLogin.bot}` })),
           h('li', null, t('login.tg_step2')),
           h('li', null, t('login.tg_step3'))),
-        h('a', { class: 'btn', style: { display: 'block', textAlign: 'center', textDecoration: 'none' }, href: link, target: '_blank', rel: 'noopener' }, `✈️ ${t('login.tg_open')}`),
+        h('a', { class: 'btn', style: { display: 'block', textAlign: 'center', textDecoration: 'none' }, href: link, ...(isMobileShell ? {} : { target: '_blank' }), rel: 'noopener' }, `✈️ ${t('login.tg_open')}`),
         h('p', { class: 'muted', role: 'status' }, `⏳ ${t('login.tg_wait')}`),
         h('button', { class: 'btn link', type: 'button', onclick: () => { stopTg(); step = 'home'; draw(); } }, t('chat.cancel')),
       );
