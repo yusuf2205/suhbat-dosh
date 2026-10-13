@@ -163,7 +163,7 @@ function areaChart(days, values, label) {
     const [x0, y0] = pts[i - 1]; const [x1, y1] = pts[i]; const cx = (x0 + x1) / 2;
     line += ` C${cx},${y0} ${cx},${y1} ${x1},${y1}`;
   }
-  const area = `${line} L${pts.at(-1)[0]},${H - B} L${pts[0][0]},${H - B} Z`;
+  const area = `${line} L${pts[pts.length - 1][0]},${H - B} L${pts[0][0]},${H - B} Z`;
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': label });
   const grad = svgEl('linearGradient', { id: 'ag', x1: 0, y1: 0, x2: 0, y2: 1 },
     svgEl('stop', { offset: 0, 'stop-color': '#fbc700', 'stop-opacity': '.45' }), svgEl('stop', { offset: 1, 'stop-color': '#fbc700', 'stop-opacity': '0' }));
@@ -181,7 +181,7 @@ function areaChart(days, values, label) {
     svg.append(t);
   });
   svg.append(svgEl('path', { d: area, fill: 'url(#ag)' }), svgEl('path', { d: line, class: 'line', fill: 'none' }));
-  const dot = svgEl('circle', { r: 5, class: 'dot', cx: pts.at(-1)[0], cy: pts.at(-1)[1] });
+  const dot = svgEl('circle', { r: 5, class: 'dot', cx: pts[pts.length - 1][0], cy: pts[pts.length - 1][1] });
   const vline = svgEl('line', { class: 'vline', y1: T, y2: H - B, x1: -10, x2: -10 });
   svg.append(vline, dot);
   const wrap = h('div', { class: 'chart-wrap' }, svg);
@@ -273,7 +273,7 @@ async function viewOverview() {
       h('span', { class: 'muted' }, fmtDT(e.ts))))) : [h('p', { class: 'muted' }, 'Событий пока нет')]));
   drawFeed(ev.events);
 
-  const today = st.series.messages.at(-1);
+  const today = st.series.messages[st.series.messages.length - 1];
   setView(
     h('div', { class: 'kpis' },
       kpi('users', 'tone-gold', o.users, 'Пользователи', `+${o.new_users_7d} за 7 дней`, () => setTab('users')),
@@ -479,7 +479,7 @@ async function viewJournal() {
   };
   const draw = () => { clear(holder).append(eventsTable(events)); moreBtn.hidden = !hasMore; };
   const reload = async () => { const r = await get(qs()); events = r.events; hasMore = r.has_more; draw(); };
-  moreBtn.onclick = async () => { const r = await get(qs(`&before=${events.at(-1).id}`)); events = events.concat(r.events); hasMore = r.has_more; draw(); };
+  moreBtn.onclick = async () => { const r = await get(qs(`&before=${events[events.length - 1].id}`)); events = events.concat(r.events); hasMore = r.has_more; draw(); };
   for (const el of [actor, action, since, until]) el.addEventListener('change', reload);
   const live = h('input', { type: 'checkbox', id: 'live' });
   live.addEventListener('change', () => (live.checked ? startLive(reload, 4000) : stopLive()));
@@ -596,7 +596,7 @@ function spark(values, { max = null, unit = '', color = '#fbc700', fmt = (v) => 
   const pts = values.map((v, i) => [(i * W) / Math.max(1, values.length - 1), H - 6 - (Math.min(v, top) / top) * (H - 14)]);
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
   const area = pts.length ? `${line} L${W} ${H} L0 ${H} Z` : '';
-  const last = values.at(-1) ?? 0;
+  const last = values[values.length - 1] ?? 0;
   return h('div', { class: 'spark' },
     svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none', role: 'img', 'aria-label': 'график' },
       svgEl('path', { d: area, fill: color, 'fill-opacity': '.18' }), svgEl('path', { d: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round' })),

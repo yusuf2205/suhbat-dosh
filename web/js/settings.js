@@ -182,7 +182,7 @@ export function openSettings() {
   }
 
   function draw() {
-    const page = stack.at(-1);
+    const page = stack[stack.length - 1];
     const out = page.render();
     m.setBody(header(page.title(), { actions: out.actions || [] }), h('div', { class: 'st-page' }, ...out.nodes));
     m.el.scrollTop = 0;

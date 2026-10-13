@@ -98,7 +98,7 @@ export function modal({ title, body, onClose, className = '', bare = false }) {
     },
   };
   const onKey = (e) => {
-    if (e.key === 'Escape' && modalStack.at(-1) === api) { e.stopPropagation(); api.close(); }
+    if (e.key === 'Escape' && modalStack[modalStack.length - 1] === api) { e.stopPropagation(); api.close(); }
   };
   closeBtn.addEventListener('click', api.close);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) api.close(); });
