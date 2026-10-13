@@ -1,4 +1,6 @@
 // Native "open this file": the Android app / desktop app download it and hand it to the right program (Word, Excel, PDF ...).
+/** Word / Excel / PowerPoint and similar: opened by the programs installed on the device. */
+export const isOffice = (f) => /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv)$/i.test(f?.name || '');
 export const canOpenNative = () => !!(window.SuhbatNative?.openFile || window.suhbatShell?.openFile);
 
 import { autoAllowed } from './downloads.js';

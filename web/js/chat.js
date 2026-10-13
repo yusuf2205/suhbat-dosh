@@ -14,8 +14,7 @@ import { startCall } from './call.js';
 import { openViewer, openMediaPanel } from './viewer.js';
 import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
-import { canOpenNative, openNative, prefetchNative } from './native.js';
-import { canViewInApp, openDocument } from './docviewer.js';
+import { canOpenNative, isOffice, openNative, prefetchNative } from './native.js';
 import { fileIcon } from './fileicons.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
@@ -1174,7 +1173,7 @@ function buildFile(m) {
   }
   if (m.kind === 'audio' || m.kind === 'voice') return voiceNode(m);
   prefetchNative(f);
-  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (canViewInApp(f)) openDocument(f, { onSave: saveFile }); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
+  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) { if (canOpenNative()) openNative(f); else saveFile(f); } else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));
 }
