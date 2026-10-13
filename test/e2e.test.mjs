@@ -399,107 +399,11 @@ test('super admin: sees who wrote, edited and deleted what', async (t) => {
   });
 });
 
-test('telegram bot login', async (t) => {
-  const anon = () => new Client('anon', '+1');
-  const waitSent = async (pred, ms = 4000) => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < ms) {
-      const m = stub.sent.find(pred);
-      if (m) return m;
-      await new Promise((r) => setTimeout(r, 30));
-    }
-    throw new Error('bot did not respond');
-  };
-  const begin = async () => {
-    const c = anon();
-    const r = await c.call('POST', '/api/auth/telegram/start');
-    assert.equal(r.status, 200);
-    return { c, token: r.data.token, url: r.data.url };
-  };
-  const poll = (c, token) => c.call('GET', `/api/auth/telegram/poll?token=${token}`);
-  const from = (id, extra = {}) => ({ id, first_name: 'Test', last_name: 'User', username: `tg${id}`, ...extra });
-  const say = (id, text, extra) => stub.push({ message: { chat: { id, type: 'private' }, from: from(id), text, ...extra } });
-
-  await t.test('providers advertise the bot', async () => {
-    const r = await anon().call('GET', '/api/auth/providers');
-    assert.equal(r.data.telegram.enabled, true);
-    assert.equal(r.data.telegram.bot, 'suhbat_test_bot');
-  });
-
-  let userId;
-  await t.test('new user: start → share contact → confirm → session', async () => {
-    const { c, token, url } = await begin();
-    assert.match(url, /^https:\/\/t\.me\/suhbat_test_bot\?start=/);
-    assert.equal((await poll(c, token)).data.status, 'pending');
-    say(7001, `/start ${token}`);
-    const ask = await waitSent((m) => m.chat_id === '7001' && m.reply_markup?.keyboard?.[0]?.[0]?.request_contact);
-    assert.ok(ask);
-    stub.push({ message: { chat: { id: 7001, type: 'private' }, from: from(7001), contact: { user_id: 7001, phone_number: '998901234500' } } });
-    const conf = await waitSent((m) => m.chat_id === '7001' && m.reply_markup?.inline_keyboard);
-    assert.match(conf.text, /IP:/);
-    assert.equal((await poll(c, token)).data.status, 'pending'); // not approved until the button is pressed
-    const yes = conf.reply_markup.inline_keyboard[0][0].callback_data;
-    stub.push({ callback_query: { id: 'cb1', from: from(7001), data: yes, message: { chat: { id: 7001 }, message_id: 5 } } });
-    let r;
-    for (let i = 0; i < 50 && (r = await poll(c, token)).data.status !== 'approved'; i++) await new Promise((x) => setTimeout(x, 40));
-    assert.equal(r.data.status, 'approved');
-    assert.equal(r.data.user.phone, '+998901234500');
-    assert.equal(r.data.user.name, 'Test User');
-    userId = r.data.user.id;
-    const me = await c.call('GET', '/api/me');
-    assert.equal(me.status, 200);
-    assert.equal((await poll(c, token)).data.status, 'expired'); // single use
-  });
-
-  await t.test('returning user is recognised without sharing the phone again', async () => {
-    const { c, token } = await begin();
-    stub.sent.length = 0;
-    say(7001, `/start ${token}`);
-    const conf = await waitSent((m) => m.chat_id === '7001' && m.reply_markup?.inline_keyboard);
-    stub.push({ callback_query: { id: 'cb2', from: from(7001), data: conf.reply_markup.inline_keyboard[0][0].callback_data, message: { chat: { id: 7001 }, message_id: 6 } } });
-    let r;
-    for (let i = 0; i < 50 && (r = await poll(c, token)).data.status !== 'approved'; i++) await new Promise((x) => setTimeout(x, 40));
-    assert.equal(r.data.user.id, userId);
-  });
-
-  await t.test('"not me" rejects the sign-in', async () => {
-    const { c, token } = await begin();
-    stub.sent.length = 0;
-    say(7001, `/start ${token}`);
-    const conf = await waitSent((m) => m.chat_id === '7001' && m.reply_markup?.inline_keyboard);
-    stub.push({ callback_query: { id: 'cb3', from: from(7001), data: conf.reply_markup.inline_keyboard[0][1].callback_data, message: { chat: { id: 7001 }, message_id: 7 } } });
-    let r;
-    for (let i = 0; i < 50 && (r = await poll(c, token)).data.status === 'pending'; i++) await new Promise((x) => setTimeout(x, 40));
-    assert.equal(r.data.status, 'rejected');
-    assert.equal((await c.call('GET', '/api/me')).status, 401);
-  });
-
-  await t.test("someone else's contact card is refused", async () => {
-    const { c, token } = await begin();
-    say(7002, `/start ${token}`);
-    await waitSent((m) => m.chat_id === '7002' && m.reply_markup?.keyboard);
-    stub.sent.length = 0;
-    stub.push({ message: { chat: { id: 7002, type: 'private' }, from: from(7002), contact: { user_id: 9999, phone_number: '998907777777' } } });
-    await waitSent((m) => m.chat_id === '7002' && /raqam|номер/i.test(m.text));
-    assert.equal((await poll(c, token)).data.status, 'pending');
-    assert.equal((await c.call('GET', '/api/me')).status, 401);
-  });
-
-  await t.test('a different Telegram account cannot confirm someone else\'s attempt', async () => {
-    const { c, token } = await begin();
-    stub.sent.length = 0;
-    say(7001, `/start ${token}`);
-    const conf = await waitSent((m) => m.chat_id === '7001' && m.reply_markup?.inline_keyboard);
-    stub.push({ callback_query: { id: 'cb4', from: from(8888), data: conf.reply_markup.inline_keyboard[0][0].callback_data, message: { chat: { id: 7001 }, message_id: 8 } } });
-    await new Promise((x) => setTimeout(x, 400));
-    assert.equal((await poll(c, token)).data.status, 'pending');
-  });
-
-  await t.test('unknown / forged tokens do not authenticate', async () => {
-    const c = anon();
-    assert.equal((await poll(c, 'not-a-real-token-1234567890')).data.status, 'expired');
-  });
-}, { timeout: 60000 });
+test('sign-in with Telegram is retired (login + password only)', async () => {
+  const p = await (await fetch(BASE + '/api/auth/providers')).json();
+  assert.equal(p.telegram.enabled, false);
+  assert.equal((await fetch(BASE + '/api/auth/telegram/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 404);
+});
 
 test('public download page and installers', async (t) => {
   const anon = new Client('anon', '+1');

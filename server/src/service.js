@@ -50,8 +50,9 @@ export function publicUser(u, viewerId) {
 export function selfUser(u) {
   return {
     ...publicUser(u, u.id),
-    phone: u.phone?.startsWith('email:') ? null : u.phone,
+    phone: u.phone?.startsWith('email:') || u.phone?.startsWith('login:') ? null : u.phone,
     email: u.email || null,
+    has_password: !!u.pw_hash,
     privacy: { photo: u.privacy_photo, status: u.privacy_status, last_seen: u.privacy_last_seen, birthday: u.privacy_birthday },
     is_admin: !!u.is_admin,
     created_at: u.created_at,

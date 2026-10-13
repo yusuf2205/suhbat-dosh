@@ -258,7 +258,7 @@ features.get('/export', (req, res) => {
   );
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="suhbat-export-${new Date().toISOString().slice(0, 10)}.json"`);
-  res.write(`{"exported_at":${now()},"user":${JSON.stringify({ id: me.id, name: me.name, username: me.username, phone: me.phone?.startsWith('email:') ? null : me.phone, email: me.email, bio: me.bio })},"chats":[`);
+  res.write(`{"exported_at":${now()},"user":${JSON.stringify({ id: me.id, name: me.name, username: me.username, phone: me.phone?.startsWith('email:') || me.phone?.startsWith('login:') ? null : me.phone, email: me.email, bio: me.bio })},"chats":[`);
   chats.forEach((c, i) => {
     let title = c.title;
     if (c.type === 'direct') {

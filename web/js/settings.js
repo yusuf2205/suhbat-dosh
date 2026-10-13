@@ -331,6 +331,8 @@ export function openSettings() {
           group(info(me.phone || '—', t('st.phone'))),
           heading(t('settings.email')),
           group(h('div', { class: 'sfield' }, emailBox)),
+          heading(t('st.password')),
+          group(h('div', { class: 'sfield' }, passwordBox(() => draw()))),
         ],
       };
     },
@@ -580,6 +582,32 @@ function shellNodes() {
     out.push(h('div', { class: 'muted' }, t('settings.server_hint')));
   }
   return out;
+}
+
+/** Set or change the password (the account's login is its username). */
+function passwordBox(refresh) {
+  const box = h('div', { class: 'st-password' });
+  const me = S.me;
+  const msg = h('div', { class: 'err', role: 'alert' });
+  const login = me.username ? null : h('input', { class: 'input', autocomplete: 'username', autocapitalize: 'none', spellcheck: false, maxLength: LIMITS.USERNAME_MAX, placeholder: t('login.login'), 'aria-label': t('login.login') });
+  const cur = me.has_password ? h('input', { class: 'input', type: 'password', autocomplete: 'current-password', maxLength: 200, placeholder: t('st.password_current'), 'aria-label': t('st.password_current') }) : null;
+  const next = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', maxLength: 200, placeholder: t('st.password_new'), 'aria-label': t('st.password_new') });
+  const go = h('button', { class: 'btn', type: 'button' }, me.has_password ? t('st.password_change') : t('st.password_set'));
+  go.onclick = async () => {
+    msg.textContent = '';
+    go.disabled = true;
+    try {
+      const r = await api('POST', '/api/me/password', {
+        new_password: next.value, ...(cur ? { current_password: cur.value } : {}), ...(login ? { username: login.value.trim() } : {}),
+      });
+      S.me = r.user;
+      fire('me');
+      toast(t('st.password_saved'));
+      refresh();
+    } catch (e) { msg.textContent = errText(e.code); go.disabled = false; }
+  };
+  box.append(me.username ? h('p', { class: 'muted' }, `${t('login.login')}: ${me.username}`) : login, cur, next, msg, go);
+  return box;
 }
 
 /** Link / change / unlink an e-mail address (a second way to sign in). */

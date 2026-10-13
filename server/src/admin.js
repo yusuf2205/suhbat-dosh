@@ -24,7 +24,7 @@ admin.use(safetyAdmin);
 
 const pageSize = (v) => int(v, 'limit', { min: 1, max: 200, optional: true }) ?? 50;
 
-const userRef = (u) => (u ? { id: u.id, name: u.name, username: u.username, phone: u.phone?.startsWith('email:') ? '' : u.phone, email: u.email || null } : null);
+const userRef = (u) => (u ? { id: u.id, name: u.name, username: u.username, phone: u.phone?.startsWith('email:') || u.phone?.startsWith('login:') ? '' : u.phone, email: u.email || null } : null);
 
 function auditOut(r) {
   const actor = r.actor_id ? getUser(r.actor_id) : null;

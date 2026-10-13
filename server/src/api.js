@@ -115,7 +115,7 @@ async function deliverOtp(phone, code) {
 }
 
 api.post('/auth/request', async (req, res) => {
-  if (config.otpMode === 'off') throw new HttpError(403, 'otp_disabled');
+  if (config.otpMode !== 'dev') throw new HttpError(403, 'otp_disabled'); // retired (dev mode keeps it for the tests)
   const phone = normalizePhone(req.body?.phone);
   if (!rateLimit(`otp-ip:${ip(req)}`, config.otpPerIp, 600_000) || !rateLimit(`otp-phone:${phone}`, 3, 600_000)) {
     throw new HttpError(429, 'too_many_requests');
@@ -132,7 +132,7 @@ api.post('/auth/request', async (req, res) => {
 });
 
 api.post('/auth/verify', (req, res) => {
-  if (config.otpMode === 'off') throw new HttpError(403, 'otp_disabled');
+  if (config.otpMode !== 'dev') throw new HttpError(403, 'otp_disabled');
   const phone = normalizePhone(req.body?.phone);
   const code = str(req.body?.code, 'code', { min: 6, max: 6 });
   if (!rateLimit(`verify-ip:${ip(req)}`, config.otpPerIp * 3, 600_000)) throw new HttpError(429, 'too_many_requests');
@@ -167,6 +167,54 @@ api.post('/auth/verify', (req, res) => {
   res.json({ user: selfUser(user) });
 });
 
+const LOGIN_RE = /^[A-Za-z][A-Za-z0-9_]{4,31}$/;
+const PASSWORD_MIN = 8;
+const goodPassword = (v) => {
+  const p = String(v ?? '');
+  if (p.length < PASSWORD_MIN || p.length > 200) throw new HttpError(400, 'weak_password');
+  return p;
+};
+
+// the one sign-in form: login (username) + password; administrators may use their admin login here as well
+api.post('/auth/login', (req, res) => {
+  const login = str(String(req.body?.login ?? ''), 'login', { min: 1, max: 64 }).replace(/^@/, '').toLowerCase();
+  const password = str(String(req.body?.password ?? ''), 'password', { min: 1, max: 200 });
+  if (!rateLimit(`login-ip:${ip(req)}`, 20, 600_000) || !rateLimit(`login:${login}`, 8, 600_000)) throw new HttpError(429, 'too_many_requests');
+  let user = q.get('SELECT * FROM users WHERE username = ? COLLATE NOCASE', login);
+  let via = 'password';
+  let ok = !!user?.pw_hash && verifyPassword(password, user.pw_hash);
+  if (!ok) {
+    const adm = q.get('SELECT * FROM users WHERE admin_login = ? AND is_admin = 1', login);
+    if (adm && verifyPassword(password, adm.admin_pass)) { user = adm; ok = true; via = 'admin_password'; }
+  }
+  if (!ok) {
+    if (!user?.pw_hash) verifyPassword(password, null); // same work for unknown logins
+    aud(req, 'auth.login_failed', { actor: null, details: { login } });
+    throw new HttpError(401, 'invalid_credentials');
+  }
+  startSession(req, res, user, via);
+  res.json({ user: selfUser(user) });
+});
+
+api.post('/auth/register', (req, res) => {
+  if (!rateLimit(`reg-ip:${ip(req)}`, 10, 3600_000)) throw new HttpError(429, 'too_many_requests');
+  const inv = gateRegistration(req.body?.invite);
+  const name = str(req.body?.name, 'name', { min: 1, max: LIMITS.NAME_MAX });
+  const username = str(String(req.body?.username ?? ''), 'username', { min: 1, max: LIMITS.USERNAME_MAX }).replace(/^@/, '');
+  if (!LOGIN_RE.test(username)) throw new HttpError(400, 'invalid_username');
+  const password = goodPassword(req.body?.password);
+  if (q.get('SELECT 1 AS x FROM users WHERE username = ? COLLATE NOCASE', username)) throw new HttpError(409, 'username_taken');
+  const r = q.run(
+    'INSERT INTO users (phone, name, username, pw_hash, last_seen, created_at) VALUES (?,?,?,?,?,?)',
+    `login:${username.toLowerCase()}`, name, username, hashPassword(password), now(), now(),
+  );
+  const user = getUser(Number(r.lastInsertRowid));
+  consumeInvite(inv);
+  aud(req, 'user.register', { actor: user.id, target_type: 'user', target_id: user.id, details: { name, via: 'password' } });
+  startSession(req, res, user, 'password');
+  res.status(201).json({ user: selfUser(user) });
+});
+
 api.post('/auth/admin-login', (req, res) => {
   const login = str(String(req.body?.login ?? ''), 'login', { min: 1, max: 64 }).toLowerCase();
   const password = str(String(req.body?.password ?? ''), 'password', { min: 1, max: 200 });
@@ -183,9 +231,10 @@ api.post('/auth/admin-login', (req, res) => {
 
 api.get('/auth/providers', async (_req, res) => {
   res.json({
-    telegram: telegramEnabled() ? { enabled: true, bot: (await getBotUsername()) || null } : { enabled: false },
-    phone_code: config.otpMode !== 'off',
-    email: emailEnabled(),
+    telegram: { enabled: false }, // sign-in with Telegram was retired: login + password only
+    phone_code: false,
+    password: true,
+    email: emailEnabled(), // kept only as a way back into an account whose password is forgotten
   });
 });
 
@@ -227,6 +276,8 @@ api.post('/auth/email/verify', (req, res) => {
 });
 
 api.post('/auth/telegram/start', async (req, res) => {
+  throw new HttpError(404, 'telegram_disabled'); // retired
+  // eslint-disable-next-line no-unreachable
   if (!telegramEnabled()) throw new HttpError(404, 'telegram_disabled');
   if (!rateLimit(`tgstart:${ip(req)}`, 20, 600_000)) throw new HttpError(429, 'too_many_requests');
   try {
@@ -346,6 +397,23 @@ function broadcastProfile(userId) {
 }
 
 api.get('/me', (req, res) => res.json({ user: selfUser(req.user) }));
+
+api.post('/me/password', (req, res) => {
+  const me = getUser(req.user.id);
+  if (!rateLimit(`setpw:${me.id}`, 10, 600_000)) throw new HttpError(429, 'too_many_requests');
+  if (me.pw_hash && !verifyPassword(String(req.body?.current_password ?? ''), me.pw_hash)) throw new HttpError(403, 'wrong_password');
+  const next = goodPassword(req.body?.new_password);
+  let username = me.username;
+  if (!username) {
+    username = String(req.body?.username ?? '').replace(/^@/, '').trim();
+    if (!LOGIN_RE.test(username)) throw new HttpError(400, 'invalid_username');
+    if (q.get('SELECT 1 AS x FROM users WHERE username = ? COLLATE NOCASE AND id != ?', username, me.id)) throw new HttpError(409, 'username_taken');
+    q.run('UPDATE users SET username = ? WHERE id = ?', username, me.id);
+  }
+  q.run('UPDATE users SET pw_hash = ? WHERE id = ?', hashPassword(next), me.id);
+  aud(req, 'auth.password_set');
+  res.json({ user: selfUser(getUser(me.id)) });
+});
 
 api.patch('/me', (req, res) => {
   const b = req.body || {};
