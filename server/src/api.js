@@ -239,12 +239,12 @@ api.post('/auth/telegram/start', async (req, res) => {
 api.get('/auth/telegram/poll', (req, res) => {
   if (!rateLimit(`tgpoll:${ip(req)}`, 120, 60_000)) throw new HttpError(429, 'too_many_requests');
   const token = str(String(req.query.token ?? ''), 'token', { min: 10, max: 64 });
-  const r = pollLogin(token);
+  const r = pollLogin(token, (u) => (!u ? 'generic' : u.banned_at ? 'account_banned' : u.is_admin && u.admin_pass ? 'admin_password_required' : null));
   if (r.status === 'approved') {
     startSession(req, res, r.user, 'telegram');
     return res.json({ status: 'approved', user: selfUser(r.user) });
   }
-  res.json({ status: r.status, step: r.step });
+  res.json({ status: r.status, step: r.step, reason: r.reason });
 });
 
 api.post('/auth/logout', requireAuth, (req, res) => {

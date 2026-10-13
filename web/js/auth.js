@@ -68,7 +68,7 @@ export async function showLogin(root, { onLoggedIn }) {
         const r = await api('GET', `/api/auth/telegram/poll?token=${encodeURIComponent(myToken)}`);
         if (!tgTimer || tgLogin.token !== myToken) return; // finished or restarted meanwhile
         if (r.status === 'approved') { stopTg(); onLoggedIn(r.user); }
-        else if (r.status === 'rejected') { stopTg(); step = 'home'; draw(t('err.tg_rejected')); }
+        else if (r.status === 'rejected') { stopTg(); step = 'home'; draw(r.reason ? errText(r.reason) : t('err.tg_rejected')); }
         else if (r.status === 'expired') {
           if (await alreadyIn()) return;
           stopTg(); step = 'home'; draw(t('err.tg_expired'));

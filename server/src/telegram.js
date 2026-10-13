@@ -52,11 +52,17 @@ export async function startLogin({ ip, device, invite = null }) {
 }
 
 /** Returns { status: 'pending' } | { status: 'approved', user } | { status: 'rejected' | 'expired' } */
-export function pollLogin(token) {
+export function pollLogin(token, precheck) {
   const row = q.get('SELECT * FROM login_tokens WHERE token_hash = ?', sha256(token));
   if (!row || row.expires_at < now() || row.status === 'consumed') return { status: 'expired' };
   if (row.status === 'rejected') return { status: 'rejected' };
   if (row.status !== 'approved') return { status: 'pending', step: row.status };
+  // the account may not be allowed to sign in this way (e.g. an administrator with a password): say so, do not burn the link silently
+  const why = precheck?.(getUser(row.user_id));
+  if (why) {
+    q.run("UPDATE login_tokens SET status = 'consumed' WHERE id = ?", row.id);
+    return { status: 'rejected', reason: why };
+  }
   q.run("UPDATE login_tokens SET status = 'consumed' WHERE id = ? AND status = 'approved'", row.id);
   return { status: 'approved', user: getUser(row.user_id) };
 }
