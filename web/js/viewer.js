@@ -7,6 +7,7 @@ import { api } from './net.js';
 import { icon } from './icons.js';
 import { fmtDay, fmtTime, modal, toast } from './ui.js';
 import { cachedBlobUrl, clearAll, usage } from './mediacache.js';
+import { pdfNode } from './pdfview.js';
 
 // In-app viewer: the chat stays exactly where it was underneath (it is an overlay, not navigation).
 let viewer = null;
@@ -172,9 +173,12 @@ export async function openViewer(chatId, messageId, single = null) {
       return;
     }
 
-    if (isPdf(f) && navigator.pdfViewerEnabled !== false && !/Android/i.test(navigator.userAgent)) {
-      // the browser's PDF viewer streams pages as you scroll (Range requests)
-      stage.append(h('iframe', { class: 'viewer-pdf', title: f.name, src: `${f.url}?inline=1`, sandbox: 'allow-same-origin allow-scripts allow-popups' }));
+    if (isPdf(f)) {
+      // pdf.js draws the pages itself (same everywhere; Chrome's own viewer is blocked in sandboxed frames)
+      stage.append(pdfNode(f, { fallback: () => h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, '📄'), h('b', null, f.name),
+        h('div', { class: 'row', style: { justifyContent: 'center', marginTop: '14px' } },
+          canOpenNative() ? h('button', { class: 'btn', type: 'button', onclick: () => openNative(f) }, t('viewer.open')) : null,
+          h('a', { class: 'btn secondary', href: `${f.url}?dl=1`, download: f.name }, t('viewer.download')))) }));
       return;
     }
 
