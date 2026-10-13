@@ -43,7 +43,8 @@ export function sendLocation(chatId, done) {
 export function locationNode(m) {
   const g = parseGeo(m.text);
   if (!g) return h('div', { class: 'text' }, m.text);
-  const url = `https://www.openstreetmap.org/?mlat=${g.lat}&mlon=${g.lng}#map=16/${g.lat}/${g.lng}`;
+  // Yandex Maps takes longitude first: pt=lng,lat
+  const url = `https://yandex.ru/maps/?pt=${g.lng},${g.lat}&z=16&l=map`;
   return h('button', { class: 'geo-card', type: 'button', onclick: () => openExternal(url) },
     h('span', { class: 'geo-pin' }, icon('pin', 26)),
     h('span', { class: 'geo-txt' }, h('b', null, t('msg.location')), h('span', { class: 'muted' }, `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`),
