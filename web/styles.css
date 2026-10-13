@@ -1428,3 +1428,15 @@ html[data-motion="lite"] *, html[data-motion="lite"] *::before, html[data-motion
 .pdf-page { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.4); max-width: 100%; }
 .pdf-page canvas { display: block; max-width: 100%; height: auto !important; }
 .pdf-count { padding: 10px; color: #bbb; }
+
+/* ===== file-type icons (SVG) ===== */
+.ficon { background: none !important; padding: 0; display: grid; place-items: center; }
+.ficon .file-icon, .big-ico .file-icon { display: block; filter: drop-shadow(0 1px 1px rgba(0,0,0,.18)); }
+.big-ico { display: grid; place-items: center; }
+
+.pdf-view { display: flex; flex-direction: column; height: 100%; padding: 0; }
+.pdf-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #2b2b30; color: #fff; justify-content: center; }
+.pdf-bar .pdf-btn { color: #fff; font-size: 1.2rem; }
+.pdf-zoom, .pdf-counter { min-width: 56px; text-align: center; font-size: .9rem; opacity: .9; }
+.pdf-scroll { flex: 1; overflow: auto; padding: 12px; background: #3a3a40; }
+.pdf-status { color: #ddd; padding: 20px; text-align: center; }

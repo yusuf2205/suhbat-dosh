@@ -190,7 +190,7 @@ export function previewText(m) {
   if (m.kind === 'location') return `📍 ${t('msg.location')}`;
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return `👤 ${t('msg.contact')}`; } }
   if (m.text) return m.text;
-  const map = { image: `🖼 ${t('msg.photo')}`, video: `🎬 ${t('msg.video')}`, audio: `🎵 ${t('msg.audio')}`, voice: `🎤 ${t('msg.voice')}`, file: `📎 ${m.file?.name || t('msg.file')}` };
+  const map = { image: `🖼 ${t('msg.photo')}`, video: `🎬 ${t('msg.video')}`, audio: `🎵 ${t('msg.audio')}`, voice: `🎤 ${t('msg.voice')}`, file: `${m.file?.name || t('msg.file')}` };
   return map[m.kind] || '';
 }
 

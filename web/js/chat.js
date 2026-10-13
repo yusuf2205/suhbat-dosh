@@ -16,6 +16,7 @@ import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
 import { canOpenNative, openNative, prefetchNative } from './native.js';
 import { canViewInApp, openDocument } from './docviewer.js';
+import { fileIcon } from './fileicons.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
 import { fileBlob } from './downloads.js';
@@ -673,7 +674,7 @@ function attachFile(file, onDone) {
     onClose: () => { if (url) URL.revokeObjectURL(url); onDone?.(); },
     body: h('div', null,
       url ? h('div', { class: 'media' }, h('img', { src: url, alt: '', style: { cursor: 'default' } }))
-        : h('div', { class: 'filecard' }, h('span', { class: 'ficon' }, (file.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
+        : h('div', { class: 'filecard' }, h('span', { class: 'ficon' }, fileIcon(file.name, file.type, 40)),
           h('span', null, h('b', null, file.name), h('br'), h('span', { class: 'muted' }, formatBytes(file.size)))),
       h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
       h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
@@ -1110,10 +1111,9 @@ function secretNode(m, c) {
 }
 
 function secretFile(m, c, f) {
-  const ext = (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase();
   const holder = h('div', { class: 'secret-file' });
   const card = h('button', { class: 'filecard', type: 'button', 'aria-label': f.name },
-    h('span', { class: 'ficon' }, ext),
+    h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, `🔒 ${f.name}`), h('span', { class: 'muted' }, formatBytes(f.size || 0))));
   const decrypt = async () => {
     card.disabled = true;
@@ -1149,7 +1149,7 @@ function uploadCard(m) {
   if (['paused', 'waiting', 'error'].includes(u.state)) act.push(h('button', { class: 'icon-btn up-act', type: 'button', 'aria-label': u.state === 'error' ? t('up.retry') : t('up.resume'), onclick: () => resumeUpload(id) }, u.state === 'error' ? '↻' : '▶'));
   act.push(h('button', { class: 'icon-btn up-cancel', type: 'button', 'aria-label': t('chat.cancel'), onclick: () => { cancelTask(id); removeMessage(m.chat_id, m.id); } }, '✕'));
   return h('div', { class: `upcard${u.state === 'error' ? ' failed' : ''}`, dataset: { up: id, state: u.state || 'queued' } },
-    h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
+    h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, f.name),
       h('span', { class: 'muted up-txt' }, upText(u, f.size)),
       h('span', { class: 'up-track' }, bar)),
@@ -1175,7 +1175,7 @@ function buildFile(m) {
   if (m.kind === 'audio' || m.kind === 'voice') return voiceNode(m);
   prefetchNative(f);
   return h('button', { class: 'filecard', type: 'button', onclick: () => { if (canViewInApp(f)) openDocument(f, { onSave: saveFile }); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
-    h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
+    h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));
 }
 

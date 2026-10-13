@@ -405,7 +405,7 @@ async function viewChats() {
 }
 
 function messageNode(m) {
-  const kindIcon = { image: '🖼', video: '🎬', audio: '🎵', voice: '🎤', file: '📎' }[m.kind] || '';
+  const kindIcon = { image: '🖼', video: '🎬', audio: '🎵', voice: '🎤', file: '' }[m.kind] || '';
   return h('div', { class: 'amsg' },
     h('div', null, h('div', { class: 'who' }, m.sender ? userLink(m.sender.id) : '—'),
       h('div', { class: 'when' }, fmtDT(m.created_at), m.edited_at ? ` · изм. ${fmtDT(m.edited_at)}` : '')),

@@ -8,6 +8,7 @@ import { icon } from './icons.js';
 import { fmtDay, fmtTime, modal, toast } from './ui.js';
 import { cachedBlobUrl, clearAll, usage } from './mediacache.js';
 import { pdfNode } from './pdfview.js';
+import { fileIcon } from './fileicons.js';
 
 // In-app viewer: the chat stays exactly where it was underneath (it is an overlay, not navigation).
 let viewer = null;
@@ -168,14 +169,14 @@ export async function openViewer(chatId, messageId, single = null) {
     }
 
     if (isAudio(f)) {
-      stage.append(h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, '🎵'), h('b', null, f.name),
+      stage.append(h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, fileIcon(f.name, f.mime, 72)), h('b', null, f.name),
         h('audio', { controls: true, src: f.url, preload: 'metadata' })));
       return;
     }
 
     if (isPdf(f)) {
       // pdf.js draws the pages itself (same everywhere; Chrome's own viewer is blocked in sandboxed frames)
-      stage.append(pdfNode(f, { fallback: () => h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, '📄'), h('b', null, f.name),
+      stage.append(pdfNode(f, { fallback: () => h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, fileIcon(f.name, f.mime, 72)), h('b', null, f.name),
         h('div', { class: 'row', style: { justifyContent: 'center', marginTop: '14px' } },
           canOpenNative() ? h('button', { class: 'btn', type: 'button', onclick: () => openNative(f) }, t('viewer.open')) : null,
           h('a', { class: 'btn secondary', href: `${f.url}?dl=1`, download: f.name }, t('viewer.download')))) }));
@@ -183,7 +184,7 @@ export async function openViewer(chatId, messageId, single = null) {
     }
 
     stage.append(h('div', { class: 'viewer-doc' },
-      h('div', { class: 'big-ico' }, isPdf(f) ? '📄' : '📎'),
+      h('div', { class: 'big-ico' }, fileIcon(f.name, f.mime, 72)),
       h('b', null, f.name), h('span', { class: 'muted' }, `${f.mime} · ${formatBytes(f.size)}`),
       h('div', { class: 'row', style: { justifyContent: 'center', marginTop: '14px' } },
         canOpenNative() ? h('button', { class: 'btn', type: 'button', onclick: () => openNative(f) }, t('viewer.open')) : null,
@@ -313,7 +314,7 @@ export function openMediaPanel(chatId) {
     }
     if (kind === 'files') {
       return h('button', { class: 'list-item clickable', type: 'button', onclick: () => { m.close(); openViewer(chatId, msg.id, msg); } },
-        h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
+        h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
         h('span', { class: 'grow' }, h('b', { class: 'ellipsis', style: { display: 'block' } }, f.name),
           h('span', { class: 'muted' }, `${formatBytes(f.size)} · ${fmtDay(msg.created_at)}`)));
     }
