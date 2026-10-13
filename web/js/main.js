@@ -7,6 +7,7 @@ import { setLang, t } from './i18n.js';
 import { S, bucket, chatTitle, fire, isMuted, on, savePrefs } from './state.js';
 import { api, connect, disconnect, flushOutbox, outbox } from './net.js';
 import { showLogin } from './auth.js';
+import './motion.js';
 import { mount as mountList } from './list.js';
 import { mount as mountRail } from './rail.js';
 import {
@@ -22,7 +23,7 @@ import { handleGroupCallEvent, refreshGroupCalls } from './gcall.js';
 import { syncPush } from './push.js';
 import { initEdgeSwipe } from './swipe.js';
 import { handleBack } from './backnav.js';
-import { renderGroupCallBar as renderGcallBar } from './chat.js';
+import { renderGroupCallBar as renderGcallBar, restorePendingUploads } from './chat.js';
 import { checkForUpdate, initUpdates } from './updates.js';
 import { clearAll as clearMediaCache } from './mediacache.js';
 
@@ -308,6 +309,7 @@ async function enter(user) {
   } catch { /* offline start: list stays empty until reconnect */ }
   connect();
   initUpdates();
+  restorePendingUploads();
   handleHash();
   syncView();
   askForEmail();

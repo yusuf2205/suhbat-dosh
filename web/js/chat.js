@@ -15,6 +15,7 @@ import { openViewer, openMediaPanel } from './viewer.js';
 import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
 import { canOpenNative, openNative, prefetchNative } from './native.js';
+import { cancel as cancelTask, enqueue as enqueueUpload, onUpload, pause as pauseUpload, restore as restoreUploads, resume as resumeUpload } from './uploads.js';
 import { contactNode, initPhoneMenu, locationNode, openContactShare, sendLocation } from './share.js';
 import { groupCallOf, groupCallChatId, joinGroupCall } from './gcall.js';
 import {
@@ -526,49 +527,73 @@ async function sendText() {
   else fire('outbox');
 }
 
-const uploads = new Map(); // client_id -> XMLHttpRequest
+const upLabel = { preparing: 'up.preparing', queued: 'up.queued', paused: 'up.paused', waiting: 'up.waiting', error: 'up.error' };
 
-function cancelUpload(m) {
-  uploads.get(m.client_id)?.abort();
-  uploads.delete(m.client_id);
-  removeMessage(m.chat_id, m.id);
+function upText(u, size) {
+  const pct = size ? Math.min(100, Math.round(((u.loaded || 0) / size) * 100)) : 0;
+  if (u.state === 'uploading') return `${formatBytes(u.loaded || 0)} / ${formatBytes(size)} · ${pct}%`;
+  const base = upLabel[u.state] ? t(upLabel[u.state]) : '';
+  return pct > 0 ? `${base} · ${pct}%` : base;
 }
 
-function setProgress(clientId, loaded, total) {
-  const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
-  for (const m of S.msgs.values()) {
-    const x = m.list.find((v) => v.client_id === clientId && v.upload);
-    if (x) x.upload.pct = pct / 100;
+/** Keeps the pending message and its card in step with the upload manager. */
+function paintUpload(task) {
+  for (const bk of S.msgs.values()) {
+    const x = bk.list.find((v) => v.client_id === task.id && v.upload);
+    if (x) { x.upload.state = task.state; x.upload.loaded = task.loaded || task.sent || 0; x.upload.error = task.error; }
   }
-  document.querySelectorAll(`[data-up="${clientId}"]`).forEach((el) => {
+  document.querySelectorAll(`[data-up="${task.id}"]`).forEach((el) => {
+    const pct = task.size ? Math.min(100, Math.round(((task.loaded || 0) / task.size) * 100)) : 0;
     const bar = el.querySelector('.up-bar');
     if (bar) bar.style.width = `${pct}%`;
     const txt = el.querySelector('.up-txt');
-    if (txt) txt.textContent = `${formatBytes(loaded)} / ${formatBytes(total)} · ${pct}%`;
+    if (txt) txt.textContent = upText({ state: task.state, loaded: task.loaded || task.sent || 0 }, task.size);
+    el.dataset.state = task.state;
+  });
+}
+onUpload((task, type) => {
+  if (type === 'state') {
+    paintUpload(task);
+    if (S.active) renderMessages(); // the buttons of the card depend on the state
+  } else paintUpload(task);
+});
+
+function followUpload(task, chatId, thumbP) {
+  task.promise.then((r) => {
+    upsert(chatId, r.message);
+    scrollBottom();
+    thumbP?.then((th) => {
+      if (!th || !r.message?.file) return;
+      api('POST', `/api/files/${r.message.file.id}/thumb?w=${th.w}&h=${th.h}`, undefined, {
+        raw: th.blob, headers: { 'content-type': 'application/octet-stream' },
+      }).catch(() => {});
+    });
+  }, (e) => {
+    if (e.aborted) return;
+    removeMessage(chatId, `c:${task.id}`);
+    toast(errText(e.code));
   });
 }
 
-/** POST the file with a live progress bar (fetch cannot report upload progress). */
-function sendRaw(url, blob, clientId) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    uploads.set(clientId, xhr);
-    xhr.open('POST', url);
-    xhr.withCredentials = true;
-    xhr.setRequestHeader('content-type', 'application/octet-stream');
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) setProgress(clientId, e.loaded, e.total); };
-    xhr.onload = () => {
-      uploads.delete(clientId);
-      let data = null;
-      try { data = JSON.parse(xhr.responseText); } catch { /* empty */ }
-      if (xhr.status === 401) fire('unauthorized');
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-      else reject({ status: xhr.status, code: data?.error || 'generic' });
-    };
-    xhr.onerror = () => { uploads.delete(clientId); reject({ status: 0, code: 'network' }); };
-    xhr.onabort = () => { uploads.delete(clientId); reject({ aborted: true }); };
-    xhr.send(blob);
-  });
+function pendingUploadMessage(task) {
+  const kind = task.opts.voice ? 'voice' : /^image\//.test(task.mime) ? 'image' : /^video\//.test(task.mime) ? 'video' : /^audio\//.test(task.mime) ? 'audio' : 'file';
+  return {
+    id: `c:${task.id}`, client_id: task.id, chat_id: task.chatId, sender_id: S.me.id, kind, text: task.opts.caption || '', pending: true,
+    upload: { state: task.state, loaded: task.loaded || 0 }, file: { id: `u:${task.id}`, name: task.name, size: task.size, mime: task.mime, url: '', local: true },
+    reactions: {}, reply_to: null, created_at: task.createdAt,
+  };
+}
+
+/** After a start: interrupted uploads of this account continue where they stopped. */
+export async function restorePendingUploads() {
+  try {
+    for (const task of await restoreUploads(S.me.id)) {
+      const bk = bucket(task.chatId);
+      if (!bk.list.some((m) => m.client_id === task.id)) bk.list.push(pendingUploadMessage(task));
+      followUpload(task, task.chatId, null);
+    }
+    if (S.active) renderMessages();
+  } catch { /* storage unavailable: nothing to restore */ }
 }
 
 async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null } = {}) {
@@ -576,40 +601,14 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
   if (blob.size > cfg.max_upload_bytes) {
     return toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) }));
   }
-  const clientId = uuid();
-  const qs = new URLSearchParams({ name, client_id: clientId });
-  if (voice) qs.set('voice', '1');
-  if (duration !== null) qs.set('duration', String(Math.round(duration)));
-  if (caption) qs.set('caption', caption);
-  if (waveform) qs.set('waveform', waveform);
-  if (replyTo) qs.set('reply_to', String(replyTo.id));
+  const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null };
   replyTo = null;
   renderComposer();
-  // the message appears at once with a progress bar
-  const kind = voice ? 'voice' : /^image\//.test(blob.type) ? 'image' : /^video\//.test(blob.type) ? 'video' : /^audio\//.test(blob.type) ? 'audio' : 'file';
-  const local = {
-    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind, text: caption, pending: true,
-    upload: { pct: 0 }, file: { id: `u:${clientId}`, name, size: blob.size, mime: blob.type, url: '', local: true },
-    reactions: {}, reply_to: null, created_at: Date.now(),
-  };
-  bucket(c.id).list.push(local);
+  const task = enqueueUpload({ userId: S.me.id, chatId: c.id, blob, name, opts, id: uuid() });
+  // the message appears at once, with its progress card
+  bucket(c.id).list.push(pendingUploadMessage(task));
   if (S.active === c.id) { renderMessages(); scrollBottom(); }
-  const thumbP = voice ? Promise.resolve(null) : makeThumb(blob);
-  try {
-    const r = await sendRaw(`/api/chats/${c.id}/files?${qs}`, blob, clientId);
-    upsert(chatId, r.message);
-    scrollBottom();
-    thumbP.then((th) => {
-      if (!th || !r.message.file) return;
-      api('POST', `/api/files/${r.message.file.id}/thumb?w=${th.w}&h=${th.h}`, undefined, {
-        raw: th.blob, headers: { 'content-type': 'application/octet-stream' },
-      }).catch(() => {});
-    });
-  } catch (e) {
-    if (e.aborted) return;
-    removeMessage(chatId, local.id);
-    toast(e.status === 0 ? t('net.offline') : errText(e.code));
-  }
+  followUpload(task, c.id, voice ? null : makeThumb(blob));
 }
 
 function attachFile(file, onDone) {
@@ -760,6 +759,7 @@ export function upsert(chatId, m) {
     b.list[idx] = m;
   } else {
     if (b.detached) return;
+    if (S.active === chatId && typeof m.id === 'number') m._enter = true; // a live arrival animates in once
     const pendingStart = b.list.findIndex((x) => x.pending);
     if (pendingStart === -1) b.list.push(m);
     else b.list.splice(pendingStart, 0, m);
@@ -875,7 +875,7 @@ function renderMessages() {
       want.push(keyed('unread', () => h('div', { class: 'unread-div', role: 'separator' }, t('chat.new_messages'))));
       dividerDone = true;
     }
-    const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.failed, m.reply_to?.text, m.forward_from,
+    const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
       m.file?.id, m.file?.thumb, m.markup, m.poll, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
@@ -965,7 +965,7 @@ function buildMessage(m, c) {
   }
   bubble.append(h('button', { class: 'more', type: 'button', 'aria-label': t('msg.more'), onclick: (e) => messageMenu(e.currentTarget, m) }, '⋯'));
   bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); messageMenu(bubble, m); });
-  const el = h('div', { class: `msg ${mine ? 'out' : 'in'} ${m.pending ? 'pending' : ''} ${highlightId === m.id ? 'hl' : ''}` }, bubble);
+  const el = h('div', { class: `msg ${mine ? 'out' : 'in'} ${m.pending ? 'pending' : ''} ${highlightId === m.id ? 'hl' : ''} ${m._enter ? 'enter' : ''}` }, bubble);
   if (selectMode && typeof m.id === 'number') {
     const on = selected.has(m.id);
     el.classList.add('selectable');
@@ -1038,15 +1038,21 @@ function keyboardNode(m) {
 
 function uploadCard(m) {
   const f = m.file;
-  const pct = Math.round((m.upload?.pct || 0) * 100);
+  const u = m.upload || {};
+  const pct = f.size ? Math.min(100, Math.round(((u.loaded || 0) / f.size) * 100)) : 0;
   const bar = h('span', { class: 'up-bar' });
   bar.style.width = `${pct}%`;
-  return h('div', { class: 'upcard', dataset: { up: m.client_id } },
+  const id = m.client_id;
+  const act = [];
+  if (['uploading', 'preparing', 'queued'].includes(u.state)) act.push(h('button', { class: 'icon-btn up-act', type: 'button', 'aria-label': t('up.pause'), onclick: () => pauseUpload(id) }, '⏸'));
+  if (['paused', 'waiting', 'error'].includes(u.state)) act.push(h('button', { class: 'icon-btn up-act', type: 'button', 'aria-label': u.state === 'error' ? t('up.retry') : t('up.resume'), onclick: () => resumeUpload(id) }, u.state === 'error' ? '↻' : '▶'));
+  act.push(h('button', { class: 'icon-btn up-cancel', type: 'button', 'aria-label': t('chat.cancel'), onclick: () => { cancelTask(id); removeMessage(m.chat_id, m.id); } }, '✕'));
+  return h('div', { class: `upcard${u.state === 'error' ? ' failed' : ''}`, dataset: { up: id, state: u.state || 'queued' } },
     h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
     h('span', { class: 'fname' }, h('b', null, f.name),
-      h('span', { class: 'muted up-txt' }, `${formatBytes(Math.round(f.size * (pct / 100)))} / ${formatBytes(f.size)} · ${pct}%`),
+      h('span', { class: 'muted up-txt' }, upText(u, f.size)),
       h('span', { class: 'up-track' }, bar)),
-    h('button', { class: 'icon-btn up-cancel', type: 'button', 'aria-label': t('chat.cancel'), onclick: () => cancelUpload(m) }, '✕'));
+    h('span', { class: 'up-actions' }, act));
 }
 
 function buildFile(m) {

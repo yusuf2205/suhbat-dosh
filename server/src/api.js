@@ -1076,6 +1076,107 @@ api.post('/chats/:id/messages', (req, res) => {
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 
+// ---- resumable chunked upload: init -> PUT chunks (sequential offsets) -> complete; a dropped connection resumes from `received`
+const CHUNK_MAX = 8 * 1024 * 1024;
+const partPath = (id) => path.join(config.filesDir, `.part-${id}`);
+const uploadOut = (u) => ({ upload_id: u.id, size: u.size, received: (() => { try { return fs.statSync(partPath(u.id)).size; } catch { return 0; } })() });
+
+function ownUpload(req) {
+  const u = q.get('SELECT * FROM uploads WHERE id = ? AND user_id = ?', String(req.params.id), req.user.id);
+  if (!u) throw new HttpError(404, 'not_found');
+  return u;
+}
+
+api.post('/chats/:id/uploads', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const me = requireMember(id, req.user.id);
+  const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
+  assertCanPost(chat, me, req.user.id);
+  if (!rateLimit(`upinit:${req.user.id}`, 60, 60_000)) throw new HttpError(429, 'slow_down');
+  const b = req.body || {};
+  const name = checkName(str(String(b.name ?? 'file'), 'name', { min: 1, max: 200 }));
+  const size = int(b.size, 'size', { min: 1, max: config.maxUploadBytes });
+  const clientId = str(String(b.client_id ?? ''), 'client_id', { min: 8, max: 64 });
+  const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', id, req.user.id, clientId);
+  if (dup) return res.json({ done: true, message: messageOut(dup), duplicate: true });
+  const existing = q.get('SELECT * FROM uploads WHERE user_id = ? AND client_id = ?', req.user.id, clientId);
+  if (existing) return res.json(uploadOut(existing));
+  assertQuota(req.user, size);
+  const wf = typeof b.waveform === 'string' && /^[A-Za-z0-9_-]{8,140}$/.test(b.waveform) ? b.waveform : null;
+  const uid = rid(16);
+  q.run(
+    'INSERT INTO uploads (id, user_id, chat_id, client_id, name, size, caption, voice, duration, reply_to, waveform, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    uid, req.user.id, id, clientId, name, size, str(String(b.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX }), b.voice ? 1 : 0,
+    int(b.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, now(), now(),
+  );
+  fs.writeFileSync(partPath(uid), '');
+  res.status(201).json({ ...uploadOut(q.get('SELECT * FROM uploads WHERE id = ?', uid)), chunk: 1024 * 1024 });
+});
+
+api.get('/uploads/:id', (req, res) => res.json(uploadOut(ownUpload(req))));
+
+api.put('/uploads/:id', async (req, res) => {
+  const u = ownUpload(req);
+  if (!rateLimit(`upchunk:${req.user.id}`, 1200, 60_000)) throw new HttpError(429, 'slow_down');
+  const have = uploadOut(u).received;
+  const offset = int(req.query.offset, 'offset', { min: 0 });
+  if (offset !== have) {
+    req.resume();
+    return res.status(409).json({ error: 'offset_mismatch', received: have });
+  }
+  const chunks = [];
+  let total = 0;
+  await new Promise((resolve, reject) => {
+    req.on('data', (c) => {
+      total += c.length;
+      if (total > CHUNK_MAX) { reject(new HttpError(413, 'chunk_too_large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(true));
+    req.on('error', () => resolve(false)); // the client went away mid-chunk (pause, lost network): nothing to answer
+    req.on('aborted', () => resolve(false));
+  }).then((complete) => { if (!complete) throw Object.assign(new Error('client_gone'), { gone: true }); }).catch((e) => { if (e.gone) return 'gone'; throw e; });
+  if (res.destroyed || !req.complete) return;
+  const buf = Buffer.concat(chunks);
+  if (!buf.length || have + buf.length > u.size) throw new HttpError(400, 'invalid_chunk');
+  const want = req.headers['x-chunk-sha256'];
+  if (want && crypto.createHash('sha256').update(buf).digest('hex') !== String(want).toLowerCase()) throw new HttpError(422, 'chunk_corrupted');
+  fs.appendFileSync(partPath(u.id), buf);
+  q.run('UPDATE uploads SET updated_at = ? WHERE id = ?', now(), u.id);
+  res.json({ received: have + buf.length, size: u.size });
+});
+
+api.post('/uploads/:id/complete', (req, res) => {
+  const u = ownUpload(req);
+  const part = partPath(u.id);
+  const got = uploadOut(u).received;
+  if (got !== u.size) return res.status(409).json({ error: 'incomplete', received: got, size: u.size });
+  const chat = q.get('SELECT * FROM chats WHERE id = ?', u.chat_id);
+  const me = requireMember(u.chat_id, req.user.id);
+  assertCanPost(chat, me, req.user.id);
+  const fid = rid(16);
+  const dest = filePath(fid);
+  fs.renameSync(part, dest);
+  const type = sniff(readHead(dest), !!u.voice);
+  const mime = type?.mime ?? 'application/octet-stream';
+  const kind = type?.kind ?? 'file';
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, req.user.id, u.chat_id, u.name, mime, u.size, now());
+  const out = postMessage({
+    chat, user: req.user, text: u.caption, kind, fileId: fid,
+    duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? u.duration : null,
+    replyTo: u.reply_to, clientId: u.client_id, waveform: kind === 'voice' ? u.waveform : null,
+  });
+  q.run('DELETE FROM uploads WHERE id = ?', u.id);
+  res.status(201).json(out);
+});
+
+api.delete('/uploads/:id', (req, res) => {
+  const u = ownUpload(req);
+  fs.unlink(partPath(u.id), () => {});
+  q.run('DELETE FROM uploads WHERE id = ?', u.id);
+  res.json({ ok: true });
+});
+
 // raw body upload: POST /chats/:id/files?name=...&voice=1&caption=...&duration=...&client_id=...
 api.post('/chats/:id/files', async (req, res) => {
   const id = int(req.params.id, 'id');

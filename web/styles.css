@@ -1363,3 +1363,24 @@ a, .btn.link, .chat-head .sub.live, .pinbar b, .unread-div, .sender, .quote b, .
 .upcard .up-bar { display: block; height: 100%; width: 0; background: var(--brand-strong, #c79500); border-radius: 3px; transition: width .15s linear; }
 .msg.out .bubble .upcard .up-bar { background: #fff; }
 .upcard .up-cancel { flex: none; }
+
+.upcard .up-actions { display: flex; gap: 2px; flex: none; }
+.upcard.failed .up-bar { background: #d33; }
+.upcard[data-state="paused"] .up-bar, .upcard[data-state="waiting"] .up-bar { opacity: .5; }
+
+/* ===== motion system: short, calm, never blocking input ===== */
+:root { --dur: .2s; --ease: cubic-bezier(.2, .8, .2, 1); }
+@keyframes msgin { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+.msg.enter { animation: msgin var(--dur) var(--ease) both; }
+.msg.out.enter { transform-origin: bottom right; }
+.msg.in.enter { transform-origin: bottom left; }
+@keyframes sheetin { from { opacity: 0; transform: translateY(14px) scale(.98); } to { opacity: 1; transform: none; } }
+.modal { animation: sheetin var(--dur) var(--ease) both; }
+@keyframes menuin { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+.menu { animation: menuin .12s ease-out both; transform-origin: top; }
+.upcard .up-bar { transition: width .2s linear; }
+/* lite mode: no animations at all (slow devices, "reduce motion", or chosen in Settings) */
+html[data-motion="lite"] *, html[data-motion="lite"] *::before, html[data-motion="lite"] *::after {
+  animation-duration: .001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important;
+  transition-duration: .001ms !important; scroll-behavior: auto !important;
+}

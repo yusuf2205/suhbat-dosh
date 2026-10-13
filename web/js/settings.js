@@ -1,6 +1,7 @@
 // Settings, laid out like Telegram: a list of sections with icons; each opens its own page with a back arrow.
 import { closeLayer, openLayer } from './backnav.js';
 import { LIMITS, PRIVACY_VALUES } from '/shared/contracts.js';
+import { motionLevel, setLiteMotion } from './motion.js';
 import { h, clear } from './dom.js';
 import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs } from './state.js';
@@ -492,6 +493,8 @@ export function openSettings() {
       const server = navigator.userAgent.includes('SuhbatShell/') ? shellNodes() : [];
       return {
         nodes: [
+          heading(t('st.motion')),
+          group(switchRow(t('st.motion_lite'), motionLevel() === 'lite', (v) => setLiteMotion(v), t('st.motion_hint'))),
           heading(t('st.updates')),
           group(h('div', { class: 'sfield' }, ...updatesSection().slice(1))),
           heading(t('settings.shortcuts')),
