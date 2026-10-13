@@ -50,15 +50,30 @@ export async function showLogin(root, { onLoggedIn }) {
     else window.open(tgLogin.url, '_blank', 'noopener');
     const deadline = Date.now() + tgLogin.expires_in * 1000;
     stopTg();
+    const myToken = tgLogin.token;
+    let polling = false;
+    // already signed in (e.g. the answer of an earlier poll was lost, or another tab finished the login)?
+    const alreadyIn = async () => {
+      try { const me = await api('GET', '/api/me'); if (me?.user) { stopTg(); onLoggedIn(me.user); return true; } } catch { /* not signed in */ }
+      return false;
+    };
     pollOnce = async () => {
-      if (!tgTimer) return;
-      if (Date.now() > deadline) { stopTg(); step = 'home'; draw(t('err.tg_expired')); return; }
+      if (!tgTimer || polling) return; // one request at a time: a second one would find the token already used
+      polling = true;
       try {
-        const r = await api('GET', `/api/auth/telegram/poll?token=${encodeURIComponent(tgLogin.token)}`);
+        if (Date.now() > deadline) {
+          if (await alreadyIn()) return;
+          stopTg(); step = 'home'; draw(t('err.tg_expired')); return;
+        }
+        const r = await api('GET', `/api/auth/telegram/poll?token=${encodeURIComponent(myToken)}`);
+        if (!tgTimer || tgLogin.token !== myToken) return; // finished or restarted meanwhile
         if (r.status === 'approved') { stopTg(); onLoggedIn(r.user); }
         else if (r.status === 'rejected') { stopTg(); step = 'home'; draw(t('err.tg_rejected')); }
-        else if (r.status === 'expired') { stopTg(); step = 'home'; draw(t('err.tg_expired')); }
-      } catch { /* transient network error: keep polling */ }
+        else if (r.status === 'expired') {
+          if (await alreadyIn()) return;
+          stopTg(); step = 'home'; draw(t('err.tg_expired'));
+        }
+      } catch { /* transient network error: keep polling */ } finally { polling = false; }
     };
     tgTimer = setInterval(pollOnce, 2000);
     // the page is paused while the user is in Telegram: check right away when they come back
