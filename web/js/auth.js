@@ -25,7 +25,7 @@ export async function showLogin(root, { onLoggedIn }) {
   let login = '';
   let email = '';
   let pendingCode = '';
-  let newUser = null;
+  let draft = {};
 
   const card = h('div', { class: 'auth-card' });
   const langSel = h('select', { class: 'input', 'aria-label': 'Language', onchange: () => { S.prefs.lang = langSel.value; savePrefs(); fire('relang'); } },
@@ -68,27 +68,24 @@ export async function showLogin(root, { onLoggedIn }) {
       const user = h('input', { class: 'input', id: 'rl', autocomplete: 'username', autocapitalize: 'none', spellcheck: false, maxLength: 32, placeholder: 'login_name', required: true });
       const pass = h('input', { class: 'input', id: 'rp', type: 'password', autocomplete: 'new-password', maxLength: 200, minLength: 8, required: true });
       const mail = providers.email
-        ? h('input', { class: 'input', id: 're', type: 'email', autocomplete: 'email', inputMode: 'email', autocapitalize: 'none', spellcheck: false, placeholder: 'name@example.com' })
+        ? h('input', { class: 'input', id: 're', type: 'email', autocomplete: 'email', inputMode: 'email', autocapitalize: 'none', spellcheck: false, placeholder: 'name@example.com', value: draft.email || '', required: true })
         : null;
       const btn = h('button', { class: 'btn', type: 'submit', style: { width: '100%' } }, t('login.create'));
       card.append(h('form', { onsubmit: async (e) => {
         e.preventDefault();
         err.textContent = '';
         btn.disabled = true;
+        draft = { name: name.value, username: user.value.trim(), password: pass.value, email: mail ? mail.value.trim() : '' };
         try {
-          const r = await api('POST', '/api/auth/register', { name: name.value, username: user.value.trim(), password: pass.value, invite: inviteCode() });
-          const addr = mail?.value.trim();
-          if (addr) {
-            // the account exists and is signed in: attach the e-mail (a code is sent to prove it is yours)
-            try {
-              await api('POST', '/api/me/email', { email: addr });
-              email = addr.toLowerCase();
-              newUser = r.user;
-              step = 'regcode';
-              draw();
-              return;
-            } catch (ex) { /* a bad / taken address must not block the sign-up; it can be attached later in Settings */ }
+          if (mail) {
+            // the address is proven first: a code is mailed, the account is created when it is entered
+            await api('POST', '/api/auth/register/code', { username: draft.username, email: draft.email, invite: inviteCode() });
+            email = draft.email.toLowerCase();
+            step = 'regcode';
+            draw();
+            return;
           }
+          const r = await api('POST', '/api/auth/register', { name: draft.name, username: draft.username, password: draft.password, invite: inviteCode() });
           onLoggedIn(r.user);
         } catch (ex) {
           err.textContent = netErr(ex);
@@ -98,10 +95,12 @@ export async function showLogin(root, { onLoggedIn }) {
       h('p', { class: 'muted' }, t('login.reg_sub')),
       field('rn', t('login.name'), name), field('rl', t('login.login'), user),
       field('rp', t('login.password'), pass), h('p', { class: 'muted', style: { fontSize: '.8rem', margin: '-6px 0 8px' } }, t('login.password_hint')),
-      mail ? field('re', t('login.email_opt'), mail) : null,
+      mail ? field('re', t('login.email_req'), mail) : null,
       err, btn),
       link(t('login.have_account'), 'login'));
-      name.focus();
+      (draft.name ? pass : name).focus();
+      name.value = draft.name || '';
+      user.value = draft.username || '';
     } else if (step === 'regcode') {
       const code = h('input', { class: 'input', id: 'rc', inputMode: 'numeric', autocomplete: 'one-time-code', maxLength: 6, placeholder: '000000', required: true });
       const btn = h('button', { class: 'btn', type: 'submit', style: { width: '100%' } }, t('login.verify'));
@@ -110,8 +109,8 @@ export async function showLogin(root, { onLoggedIn }) {
         err.textContent = '';
         btn.disabled = true;
         try {
-          const r = await api('POST', '/api/me/email/verify', { email, code: code.value.trim() });
-          onLoggedIn(r.user || newUser);
+          const r = await api('POST', '/api/auth/register', { ...draft, email, code: code.value.trim(), invite: inviteCode() });
+          onLoggedIn(r.user);
         } catch (ex) {
           err.textContent = netErr(ex);
           btn.disabled = false;
@@ -119,7 +118,7 @@ export async function showLogin(root, { onLoggedIn }) {
       } },
       h('p', { class: 'muted' }, t('login.email_sent', { email })),
       field('rc', t('login.code'), code), err, btn),
-      h('button', { class: 'btn link', type: 'button', onclick: () => onLoggedIn(newUser) }, t('login.skip')));
+      link(t('login.email_change'), 'register'));
       code.focus();
     } else if (step === 'email') {
       const input = h('input', { class: 'input', type: 'email', id: 'email', autocomplete: 'email', inputMode: 'email', autocapitalize: 'none', spellcheck: false, placeholder: 'name@example.com', value: email, required: true });

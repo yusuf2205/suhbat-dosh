@@ -13,8 +13,9 @@ import {
   mount as mountChat, openChat, closeChat, upsert, removeMessage, markFailed, renderAll, renderTyping, renderHeader,
   markRead, setConfig, activeChat,
 } from './chat.js';
-import { beep, toast } from './ui.js';
+import { beep, modal, toast } from './ui.js';
 import { openJoin, renderInfo } from './dialogs.js';
+import { drawEmail } from './settings.js';
 import { handleCallEvent } from './call.js';
 import { isQuietNow, loadFolders, playSound, setFolders } from './extras.js';
 import { handleGroupCallEvent, refreshGroupCalls } from './gcall.js';
@@ -309,6 +310,21 @@ async function enter(user) {
   initUpdates();
   handleHash();
   syncView();
+  askForEmail();
+}
+
+/** An e-mail address is mandatory: accounts created before that are asked to attach one (once per device; Settings keeps the field). */
+async function askForEmail() {
+  try {
+    if (S.me.email || S.me.is_bot) return;
+    if (localStorage.getItem('suhbat.mailAsk')) return; // asked once on this device: never nag again
+    const p = await api('GET', '/api/auth/providers');
+    if (!p.email) return;
+    const box = h('div', { class: 'st-email' });
+    const m = modal({ title: t('email.required_title'), body: [h('p', { class: 'muted' }, t('email.required_text')), box] });
+    drawEmail(box, () => { if (S.me.email) m.close(); });
+    localStorage.setItem('suhbat.mailAsk', String(Date.now()));
+  } catch { /* offline or storage blocked: ask again next time */ }
 }
 
 function loggedOut() {

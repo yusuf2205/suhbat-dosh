@@ -56,7 +56,7 @@ export const config = {
   maxUploadBytes: (Number(env.MAX_UPLOAD_MB) || 50) * 1024 * 1024,
   cookieSecure: bool(env.COOKIE_SECURE, production),
   trustProxy: bool(env.TRUST_PROXY, false),
-  sessionTtlMs: 30 * 24 * 3600 * 1000,
+  sessionTtlMs: 365 * 24 * 3600 * 1000,
   logLevel: env.LOG_LEVEL || 'info',
   telegramToken: env.TELEGRAM_BOT_TOKEN || '',
   telegramApiBase: (env.TELEGRAM_API_BASE || 'https://api.telegram.org').replace(/\/$/, ''),

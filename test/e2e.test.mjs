@@ -687,3 +687,27 @@ test('calls: signalling, renegotiation, grace on reconnect, quality metrics', as
   });
 });
 
+
+test('sign-up needs a verified e-mail address', async (t) => {
+  const anon = () => new Client('anon', '+1');
+  const codeOf = () => /(\d{6})/.exec(stub.mail.at(-1).text)[1];
+  const body = { name: 'Мария', username: 'maria_pw', password: 'long-enough-1', email: 'maria@example.com' };
+  await t.test('no code, no account', async () => {
+    assert.equal((await anon().call('POST', '/api/auth/register', body)).status, 400);
+    assert.equal((await anon().call('POST', '/api/auth/register', { ...body, email: undefined })).status, 400);
+  });
+  await t.test('code is mailed, then the account is created with the address verified', async () => {
+    const c = anon();
+    assert.equal((await c.call('POST', '/api/auth/register/code', { username: body.username, email: body.email })).status, 200);
+    const code = codeOf();
+    assert.equal((await c.call('POST', '/api/auth/register', { ...body, code: code === '000000' ? '111111' : '000000' })).status, 400);
+    const r = await c.call('POST', '/api/auth/register', { ...body, code });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.user.email, 'maria@example.com');
+    assert.equal((await anon().call('POST', '/api/auth/login', { login: 'maria_pw', password: body.password })).status, 200);
+  });
+  await t.test('an address or a login cannot be used twice', async () => {
+    assert.equal((await anon().call('POST', '/api/auth/register/code', { username: 'maria_two', email: body.email })).status, 409);
+    assert.equal((await anon().call('POST', '/api/auth/register/code', { username: body.username, email: 'other@example.com' })).status, 409);
+  });
+});

@@ -45,8 +45,10 @@ export function authenticate(req) {
   if (!s || now() - s.last_active > config.sessionTtlMs) return null;
   const user = getUser(s.user_id);
   if (!user || user.banned_at) return null;
+  // a device that signed in once stays signed in: use renews both the server record and the cookie (once a day)
+  const renew = now() - s.last_active > 24 * 3600_000;
   if (now() - s.last_active > 60_000) q.run('UPDATE sessions SET last_active = ? WHERE id = ?', now(), s.id);
-  return { user, session: s };
+  return { user, session: s, token, renew };
 }
 
 function ip(req) {
@@ -55,9 +57,10 @@ function ip(req) {
 
 const aud = (req, action, o = {}) => audit(o.actor ?? req.user?.id ?? null, action, { ...o, ip: ip(req) });
 
-const requireAuth = (req, _res, next) => {
+const requireAuth = (req, res, next) => {
   const a = authenticate(req);
   if (!a) return next(new HttpError(401, 'unauthorized'));
+  if (a.renew) setCookie(res, a.token, req);
   req.user = a.user;
   req.session = a.session;
   next();
@@ -196,6 +199,21 @@ api.post('/auth/login', (req, res) => {
   res.json({ user: selfUser(user) });
 });
 
+// step 1 of sign-up: check the login and the address, mail a code (the account does not exist yet)
+api.post('/auth/register/code', async (req, res) => {
+  if (!emailEnabled()) throw new HttpError(404, 'email_disabled');
+  if (!rateLimit(`regcode-ip:${ip(req)}`, 10, 600_000)) throw new HttpError(429, 'too_many_requests');
+  gateRegistration(req.body?.invite); // closed / invitation-only is reported before a mail is sent
+  const username = str(String(req.body?.username ?? ''), 'username', { min: 1, max: LIMITS.USERNAME_MAX }).replace(/^@/, '');
+  if (!LOGIN_RE.test(username)) throw new HttpError(400, 'invalid_username');
+  if (q.get('SELECT 1 AS x FROM users WHERE username = ? COLLATE NOCASE', username)) throw new HttpError(409, 'username_taken');
+  const email = normalizeEmail(req.body?.email);
+  if (q.get('SELECT 1 AS x FROM users WHERE email = ?', email)) throw new HttpError(409, 'email_taken');
+  if (!rateLimit(`regcode-to:${email}`, 3, 600_000)) throw new HttpError(429, 'too_many_requests');
+  await issueCode(email, 'register');
+  res.json({ ok: true, ttl: 600 });
+});
+
 api.post('/auth/register', (req, res) => {
   if (!rateLimit(`reg-ip:${ip(req)}`, 10, 3600_000)) throw new HttpError(429, 'too_many_requests');
   const inv = gateRegistration(req.body?.invite);
@@ -204,9 +222,16 @@ api.post('/auth/register', (req, res) => {
   if (!LOGIN_RE.test(username)) throw new HttpError(400, 'invalid_username');
   const password = goodPassword(req.body?.password);
   if (q.get('SELECT 1 AS x FROM users WHERE username = ? COLLATE NOCASE', username)) throw new HttpError(409, 'username_taken');
+  // an e-mail address is mandatory and must be proven with the mailed code
+  let email = null;
+  if (emailEnabled()) {
+    email = normalizeEmail(req.body?.email);
+    if (q.get('SELECT 1 AS x FROM users WHERE email = ?', email)) throw new HttpError(409, 'email_taken');
+    checkCode(email, 'register', str(req.body?.code, 'code', { min: 6, max: 6 }));
+  }
   const r = q.run(
-    'INSERT INTO users (phone, name, username, pw_hash, last_seen, created_at) VALUES (?,?,?,?,?,?)',
-    `login:${username.toLowerCase()}`, name, username, hashPassword(password), now(), now(),
+    'INSERT INTO users (phone, name, username, pw_hash, email, email_verified_at, last_seen, created_at) VALUES (?,?,?,?,?,?,?,?)',
+    `login:${username.toLowerCase()}`, name, username, hashPassword(password), email, email ? now() : null, now(), now(),
   );
   const user = getUser(Number(r.lastInsertRowid));
   consumeInvite(inv);

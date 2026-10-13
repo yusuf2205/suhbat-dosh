@@ -137,6 +137,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
+        // keep the sign-in cookie on disk: the app may be killed in the background
+        try { android.webkit.CookieManager.getInstance().flush(); } catch (Exception ignored) { /* best effort */ }
         PushService.appVisible = false;
         super.onPause();
         Updater.installIfReady(getApplicationContext());

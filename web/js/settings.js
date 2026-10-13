@@ -611,7 +611,7 @@ function passwordBox(refresh) {
 }
 
 /** Link / change / unlink an e-mail address (a second way to sign in). */
-function drawEmail(box, refresh) {
+export function drawEmail(box, refresh) {
   const view = (stage = 'view', pending = '') => {
     clear(box);
     const msg = h('div', { class: 'err', role: 'alert' });
