@@ -16,6 +16,8 @@ import { openBotFather } from './bots.js';
 import { openSaved, setView } from './rail.js';
 import { updatesSection } from './updates.js';
 import { storageSection } from './viewer.js';
+import { DEFAULT_AUTO, autoPolicy, cancelDownload, listDownloads, netClass, onDownload, pauseDownload, resumeDownload, setAutoPolicy } from './downloads.js';
+import { cancel as cancelUpload, listUploads, onUpload, pause as pauseUpload, resume as resumeUpload } from './uploads.js';
 import { callSettingsSection } from './call.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -252,6 +254,8 @@ export function openSettings() {
           row('lock', t('st.privacy'), { onclick: () => go(pages.privacy) }),
           row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
           row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
+          row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
+          row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
           row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
           row('speaker', t('st.av'), { onclick: () => go(pages.av) }),
           row('globe', t('settings.language'), { value: LANGS[getLang()], onclick: () => go(pages.language) })),
@@ -502,6 +506,84 @@ export function openSettings() {
             .flatMap(([k, v]) => [h('dt', null, h('kbd', null, k)), h('dd', null, t(`shortcuts.${v}`))]))),
         ],
       };
+    },
+  };
+
+  const KB = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
+  const stateText = (s, err) => ({ preparing: t('up.preparing'), queued: t('up.queued'), uploading: t('dl.active'), downloading: t('dl.active'), paused: t('up.paused'), waiting: t('up.waiting'), done: t('dl.done'), error: err ? `${t('up.error')} (${err})` : t('up.error') })[s] || s;
+
+  // everything that is being sent or received, with controls; interrupted uploads that the server still holds are listed too
+  pages.transfers = {
+    title: () => t('dl.title'),
+    render() {
+      const box = h('div');
+      let remote = [];
+      const item = (name, size, loaded, state, err, actions) => {
+        const pct = size ? Math.min(100, Math.round((loaded / size) * 100)) : 0;
+        const bar = h('span', { class: 'up-bar' });
+        bar.style.width = `${pct}%`;
+        return h('div', { class: 'xfer' },
+          h('div', { class: 'xfer-main' }, h('b', { class: 'ellipsis' }, name),
+            h('span', { class: 'muted' }, `${stateText(state, err)} · ${KB(loaded)} / ${KB(size)} · ${pct}%`),
+            h('span', { class: 'up-track' }, bar)),
+          h('div', { class: 'xfer-act' }, actions));
+      };
+      const btn = (txt, label, fn) => h('button', { class: 'icon-btn', type: 'button', 'aria-label': label, onclick: fn }, txt);
+      const paint = () => {
+        if (!box.isConnected) return;
+        const ups = listUploads();
+        const downs = listDownloads();
+        const localIds = new Set(ups.map((u) => u.uploadId).filter(Boolean));
+        const nodes = [];
+        nodes.push(heading(t('dl.sending')));
+        const upRows = ups.filter((u) => u.state !== 'done').map((u) => item(u.name, u.size, u.loaded || u.sent || 0, u.state, u.error, [
+          ['uploading', 'preparing', 'queued'].includes(u.state) ? btn('⏸', t('up.pause'), () => pauseUpload(u.id)) : null,
+          ['paused', 'waiting', 'error'].includes(u.state) ? btn('▶', t('up.resume'), () => resumeUpload(u.id)) : null,
+          btn('✕', t('chat.cancel'), () => { cancelUpload(u.id); paint(); }),
+        ]));
+        const staleRows = remote.filter((r) => !localIds.has(r.upload_id)).map((r) => item(r.name, r.size, r.received, 'paused', '', [
+          btn('✕', t('dl.discard'), async () => { try { await api('DELETE', `/api/uploads/${r.upload_id}`); remote = remote.filter((x) => x !== r); paint(); } catch (e) { fail(e); } }),
+        ]));
+        nodes.push(group(...(upRows.length || staleRows.length ? [...upRows, ...staleRows] : [h('div', { class: 'sfield muted' }, t('dl.none'))])));
+        if (staleRows.length) nodes.push(note(t('dl.stale_hint')));
+        nodes.push(heading(t('dl.receiving')));
+        const downRows = downs.map((d) => item(d.file.name, d.total, d.loaded, d.state, d.error, [
+          ['downloading', 'queued'].includes(d.state) ? btn('⏸', t('up.pause'), () => pauseDownload(d.id)) : null,
+          ['paused', 'error'].includes(d.state) ? btn(d.state === 'error' ? '↻' : '▶', t('up.resume'), () => resumeDownload(d.id)) : null,
+          btn('✕', t('chat.cancel'), () => { cancelDownload(d.id); paint(); }),
+        ]));
+        nodes.push(group(...(downRows.length ? downRows : [h('div', { class: 'sfield muted' }, t('dl.none'))])));
+        box.replaceChildren(...nodes);
+      };
+      const offs = [onUpload((_t, type) => { if (type === 'state') paint(); else paintLight(); }), onDownload((_t, type) => { if (type === 'state') paint(); else paintLight(); })];
+      let lightT = 0;
+      function paintLight() { const n = Date.now(); if (n - lightT > 400) { lightT = n; paint(); } }
+      api('GET', '/api/uploads').then((r) => { remote = r.uploads || []; paint(); }).catch(() => {});
+      queueMicrotask(paint);
+      const timer = setInterval(() => { if (!box.isConnected) { clearInterval(timer); offs.forEach((o) => o()); } }, 2000);
+      return { nodes: [box] };
+    },
+  };
+
+  // automatic download: separately for Wi-Fi, mobile data and roaming
+  pages.autodl = {
+    title: () => t('auto.title'),
+    render() {
+      const cur = netClass();
+      const nodes = [note(t('auto.hint', { net: t(`auto.net_${cur}`) }))];
+      for (const net of ['wifi', 'cellular', 'roaming']) {
+        const p = autoPolicy()[net];
+        const max = h('input', { class: 'input', type: 'number', min: 0, max: 2000, value: p.max, 'aria-label': t('auto.max'), style: { maxWidth: '110px' } });
+        max.addEventListener('change', () => setAutoPolicy(net, { max: Math.max(0, Math.min(2000, Number(max.value) || 0)) }));
+        nodes.push(heading(t(`auto.net_${net}`) + (net === cur ? ` · ${t('auto.now')}` : '')));
+        nodes.push(group(
+          switchRow(t('auto.photo'), p.photo, (v) => setAutoPolicy(net, { photo: v })),
+          switchRow(t('auto.video'), p.video, (v) => setAutoPolicy(net, { video: v })),
+          switchRow(t('auto.file'), p.file, (v) => setAutoPolicy(net, { file: v })),
+          h('div', { class: 'sfield row' }, h('span', null, t('auto.max')), max, h('span', { class: 'muted' }, 'MB'))));
+      }
+      nodes.push(group(h('div', { class: 'sfield' }, h('button', { class: 'btn secondary', type: 'button', onclick: () => { S.prefs.auto = JSON.parse(JSON.stringify(DEFAULT_AUTO)); savePrefs(); toast(t('settings.saved')); go(pages.autodl); } }, t('auto.reset')))));
+      return { nodes };
     },
   };
 

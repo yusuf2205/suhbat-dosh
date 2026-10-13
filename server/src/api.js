@@ -33,6 +33,7 @@ import { BUILD_ID, SERVER_VERSION } from './build.js';
 import { getBotUsername, pollLogin, startLogin, telegramEnabled } from './telegram.js';
 import { checkCode, emailEnabled, issueCode, normalizeEmail } from './email.js';
 import { checkName, filePath, readHead, receive, removeFile, sniff, thumbPath } from './files.js';
+import zlib from 'node:zlib';
 
 export const api = express.Router();
 
@@ -1047,6 +1048,7 @@ api.post('/chats/:id/messages', (req, res) => {
   if (b.forward_of !== undefined) {
     const src = getMessage(int(b.forward_of, 'forward_of'));
     if (!src || !membership(src.chat_id, req.user.id)) throw new HttpError(404, 'not_found');
+    if (isSecretChat(src.chat_id) || isSecretChat(chat.id)) throw new HttpError(403, 'secret_no_forward');
     const sender = src.sender_id ? getUser(src.sender_id)?.name : null;
     text = src.text;
     kind = src.kind === 'poll' ? 'text' : src.kind;
@@ -1054,8 +1056,16 @@ api.post('/chats/:id/messages', (req, res) => {
     duration = src.duration;
     forwardFrom = src.forward_from || sender || '';
   } else {
-    text = str(b.text, 'text', { min: 1, max: LIMITS.TEXT_MAX });
-    if (b.kind === 'location') {
+    text = str(b.text, 'text', { min: 1, max: LIMITS.TEXT_MAX * 2 });
+    if (isSecretChat(chat.id)) {
+      // end-to-end encrypted chat: only ciphertext envelopes are accepted
+      if (b.kind !== 'secret') throw new HttpError(400, 'secret_requires_encryption');
+      if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', chat.id)?.peer_pub) throw new HttpError(409, 'secret_not_ready');
+      text = checkEnvelope(text);
+      kind = 'secret';
+    } else if (b.kind === 'secret') {
+      throw new HttpError(400, 'invalid_input');
+    } else if (b.kind === 'location') {
       const g = /^geo:(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)$/.exec(text);
       if (!g || Math.abs(Number(g[1])) > 90 || Math.abs(Number(g[2])) > 180) throw new HttpError(400, 'invalid_input');
       kind = 'location';
@@ -1074,6 +1084,178 @@ api.post('/chats/:id/messages', (req, res) => {
   }
   const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
+});
+
+// ------------------------------------------------------------------ secret (end-to-end encrypted) chats
+const PUB_RE = /^[A-Za-z0-9+/=_-]{80,140}$/;
+const isSecretChat = (chatId) => !!q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', chatId);
+
+/** The text of an encrypted message is an envelope {v:1, iv, ct}; the server cannot read it, only check its shape. */
+function checkEnvelope(text) {
+  let e;
+  try { e = JSON.parse(text); } catch { throw new HttpError(400, 'invalid_input'); }
+  if (e?.v !== 1 || typeof e.iv !== 'string' || typeof e.ct !== 'string' || e.iv.length > 40 || e.ct.length > LIMITS.TEXT_MAX * 2) throw new HttpError(400, 'invalid_input');
+  return JSON.stringify({ v: 1, iv: e.iv, ct: e.ct });
+}
+
+api.post('/secret/start', (req, res) => {
+  const peer = int(req.body?.user_id, 'user_id');
+  const pub = String(req.body?.pub ?? '');
+  if (!PUB_RE.test(pub)) throw new HttpError(400, 'invalid_input');
+  const peerUser = getUser(peer);
+  if (peer === req.user.id || !peerUser || peerUser.is_bot) throw new HttpError(400, 'invalid_input');
+  if (isBlockedEitherWay(req.user.id, peer)) throw new HttpError(403, 'blocked');
+  if (!rateLimit(`secretstart:${req.user.id}`, 20, 3600_000)) throw new HttpError(429, 'too_many_requests');
+  const id = tx(() => {
+    const key = `s:${Math.min(req.user.id, peer)}:${Math.max(req.user.id, peer)}:${rid(6)}`;
+    const r = q.run("INSERT INTO chats (type, direct_key, last_message_at, created_at) VALUES ('direct', ?, ?, ?)", key, now(), now());
+    const cid = Number(r.lastInsertRowid);
+    for (const uid of [req.user.id, peer]) q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", cid, uid, now());
+    q.run('INSERT INTO secret_chats (chat_id, initiator_id, peer_id, init_pub, created_at) VALUES (?,?,?,?,?)', cid, req.user.id, peer, pub, now());
+    return cid;
+  });
+  aud(req, 'chat.create', { chat_id: id, target_type: 'chat', target_id: id, details: { type: 'secret', with: peer } });
+  pushChat(id);
+  res.status(201).json({ chat: chatOut(id, req.user.id) });
+});
+
+api.post('/secret/:id/accept', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const sc = q.get('SELECT * FROM secret_chats WHERE chat_id = ?', id);
+  const pub = String(req.body?.pub ?? '');
+  if (!sc || sc.peer_id !== req.user.id) throw new HttpError(404, 'not_found');
+  if (sc.peer_pub) throw new HttpError(409, 'already_accepted');
+  if (!PUB_RE.test(pub)) throw new HttpError(400, 'invalid_input');
+  q.run('UPDATE secret_chats SET peer_pub = ?, accepted_at = ? WHERE chat_id = ?', pub, now(), id);
+  pushChat(id);
+  res.json({ chat: chatOut(id, req.user.id) });
+});
+
+// ------------------------------------------------------------------ stickers and animated emoji
+const ANIM_EMOJI = ['1f600', '1f602', '1f923', '1f60d', '1f970', '1f618', '1f60e', '1f914', '1f973', '1f62d', '1f621', '1f631', '1f917', '1f44d', '1f44f', '1f64f', '1f525', '2764_fe0f', '1f389', '1f4af', '2728', '1f680', '1f440', '1f64c', '1f60a', '1f609', '1f622', '1f634', '1f92f', '1f4aa', '1f648', '1f340'];
+const CP_RE = /^[0-9a-f]{4,6}(_[0-9a-f]{4,6}){0,3}$/;
+const animDir = path.join(config.dataDir, 'anim');
+fs.mkdirSync(animDir, { recursive: true });
+const animMiss = new Map(); // cp -> time of the last miss (do not hammer the source)
+
+/** Animated emoji (Noto, CC BY 4.0) fetched once and kept on the server's disk. */
+async function animEmoji(cp) {
+  const file = path.join(animDir, `${cp}.json`);
+  if (fs.existsSync(file)) return file;
+  if (now() - (animMiss.get(cp) || 0) < 3600_000) return null;
+  try {
+    const r = await fetch(`https://fonts.gstatic.com/s/e/notoemoji/latest/${cp}/lottie.json`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(String(r.status));
+    const txt = await r.text();
+    const j = JSON.parse(txt);
+    if (!Array.isArray(j.layers)) throw new Error('not lottie');
+    fs.writeFileSync(file, txt);
+    return file;
+  } catch {
+    animMiss.set(cp, now());
+    return null;
+  }
+}
+
+api.get('/anim/:cp', async (req, res) => {
+  const cp = String(req.params.cp);
+  if (!CP_RE.test(cp)) throw new HttpError(400, 'invalid_input');
+  const file = await animEmoji(cp);
+  if (!file) throw new HttpError(404, 'not_found');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.type('application/json').sendFile(file, { dotfiles: 'allow' });
+});
+
+function stickerType(buf) {
+  const t = sniff(buf, false);
+  if (t?.kind === 'image' && /^image\/(webp|png)$/.test(t.mime)) return { mime: t.mime };
+  const gz = buf[0] === 0x1f && buf[1] === 0x8b;
+  let text;
+  try { text = gz ? zlib.gunzipSync(buf, { maxOutputLength: 4 * 1024 * 1024 }).toString('utf8') : buf.toString('utf8'); } catch { return null; }
+  try {
+    const j = JSON.parse(text);
+    if (j && Array.isArray(j.layers) && j.layers.length <= 400 && typeof j.fr === 'number' && j.w > 0 && j.w <= 2048 && j.h > 0 && j.h <= 2048) {
+      return { mime: gz ? 'application/x-tgsticker' : 'application/json' };
+    }
+  } catch { /* not an animation */ }
+  return null;
+}
+
+const stickerOut = (s) => {
+  const f = q.get('SELECT * FROM files WHERE id = ?', s.file_id);
+  return { id: s.id, emoji: s.emoji, file: f ? { id: f.id, url: `/api/files/${f.id}`, mime: f.mime, name: f.name, size: f.size } : null };
+};
+
+api.get('/stickers', (req, res) => {
+  const rows = q.all('SELECT * FROM stickers WHERE user_id = ? ORDER BY id DESC LIMIT 200', req.user.id);
+  res.json({ mine: rows.map(stickerOut).filter((s) => s.file), anim: ANIM_EMOJI });
+});
+
+api.post('/stickers', async (req, res) => {
+  if (!rateLimit(`stk:${req.user.id}`, 30, 600_000)) throw new HttpError(429, 'slow_down');
+  const chunks = [];
+  let total = 0;
+  const ok = await new Promise((resolve) => {
+    req.on('data', (c) => { total += c.length; if (total > 1024 * 1024) { resolve(false); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(true));
+    req.on('error', () => resolve(false));
+  });
+  if (!ok) throw new HttpError(413, 'file_too_large');
+  const buf = Buffer.concat(chunks);
+  const type = buf.length ? stickerType(buf) : null;
+  if (!type) throw new HttpError(415, 'sticker_invalid');
+  const own = q.get('SELECT COUNT(*) AS n FROM stickers WHERE user_id = ?', req.user.id).n;
+  if (own >= 200) throw new HttpError(400, 'too_many_stickers');
+  const fid = rid(16);
+  fs.writeFileSync(filePath(fid), buf);
+  const ext = type.mime === 'application/x-tgsticker' ? 'tgs' : type.mime === 'application/json' ? 'json' : type.mime.split('/')[1];
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, req.user.id, null, `sticker.${ext}`, type.mime, buf.length, now());
+  const emoji = String(req.query.emoji ?? '').slice(0, 16);
+  const r = q.run('INSERT INTO stickers (user_id, file_id, emoji, created_at) VALUES (?,?,?,?)', req.user.id, fid, emoji, now());
+  res.status(201).json({ sticker: stickerOut(q.get('SELECT * FROM stickers WHERE id = ?', Number(r.lastInsertRowid))) });
+});
+
+api.delete('/stickers/:id', (req, res) => {
+  const s = q.get('SELECT * FROM stickers WHERE id = ? AND user_id = ?', int(req.params.id, 'id'), req.user.id);
+  if (!s) throw new HttpError(404, 'not_found');
+  q.run('DELETE FROM stickers WHERE id = ?', s.id);
+  // the file stays while some message still shows it
+  res.json({ ok: true });
+});
+
+api.post('/chats/:id/stickers', async (req, res) => {
+  const id = int(req.params.id, 'id');
+  const me = requireMember(id, req.user.id);
+  const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
+  assertCanPost(chat, me, req.user.id);
+  if (!rateLimit(`stkmsg:${req.user.id}`, 40, 60_000)) throw new HttpError(429, 'slow_down');
+  const b = req.body || {};
+  const clientId = b.client_id ? str(String(b.client_id), 'client_id', { min: 8, max: 64 }) : null;
+  let fileId;
+  let emoji = '';
+  if (b.anim !== undefined) {
+    const cp = String(b.anim);
+    if (!CP_RE.test(cp)) throw new HttpError(400, 'invalid_input');
+    const src = await animEmoji(cp);
+    if (!src) throw new HttpError(404, 'not_found');
+    let row = q.get('SELECT file_id FROM anim_files WHERE cp = ?', cp);
+    if (!row || !fs.existsSync(filePath(row.file_id))) {
+      const fid = rid(16);
+      fs.copyFileSync(src, filePath(fid));
+      q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, req.user.id, null, `${cp}.json`, 'application/json', fs.statSync(src).size, now());
+      q.run('INSERT INTO anim_files (cp, file_id) VALUES (?, ?) ON CONFLICT(cp) DO UPDATE SET file_id = excluded.file_id', cp, fid);
+      row = { file_id: fid };
+    }
+    fileId = row.file_id;
+    emoji = String.fromCodePoint(...cp.split('_').map((x) => parseInt(x, 16)));
+  } else {
+    const s = q.get('SELECT * FROM stickers WHERE id = ?', int(b.sticker_id, 'sticker_id'));
+    if (!s) throw new HttpError(404, 'not_found');
+    fileId = s.file_id;
+    emoji = s.emoji;
+  }
+  const out = postMessage({ chat, user: req.user, text: emoji, kind: 'sticker', fileId, clientId });
+  res.status(out.duplicate ? 200 : 201).json(out);
 });
 
 // ---- resumable chunked upload: init -> PUT chunks (sequential offsets) -> complete; a dropped connection resumes from `received`
@@ -1111,6 +1293,11 @@ api.post('/chats/:id/uploads', (req, res) => {
   );
   fs.writeFileSync(partPath(uid), '');
   res.status(201).json({ ...uploadOut(q.get('SELECT * FROM uploads WHERE id = ?', uid)), chunk: 1024 * 1024 });
+});
+
+api.get('/uploads', (req, res) => {
+  const rows = q.all('SELECT * FROM uploads WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100', req.user.id);
+  res.json({ uploads: rows.map((u) => ({ ...uploadOut(u), name: u.name, chat_id: u.chat_id, updated_at: u.updated_at })) });
 });
 
 api.get('/uploads/:id', (req, res) => res.json(uploadOut(ownUpload(req))));
@@ -1157,12 +1344,18 @@ api.post('/uploads/:id/complete', (req, res) => {
   const fid = rid(16);
   const dest = filePath(fid);
   fs.renameSync(part, dest);
-  const type = sniff(readHead(dest), !!u.voice);
+  const secretChat = isSecretChat(u.chat_id);
+  let capt = u.caption;
+  if (secretChat) {
+    if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', u.chat_id)?.peer_pub) { fs.renameSync(dest, part); throw new HttpError(409, 'secret_not_ready'); }
+    try { capt = checkEnvelope(u.caption); } catch (e) { fs.renameSync(dest, part); throw e; }
+  }
+  const type = secretChat ? null : sniff(readHead(dest), !!u.voice);
   const mime = type?.mime ?? 'application/octet-stream';
-  const kind = type?.kind ?? 'file';
-  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, req.user.id, u.chat_id, u.name, mime, u.size, now());
+  const kind = secretChat ? 'secret' : (type?.kind ?? 'file');
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, req.user.id, u.chat_id, secretChat ? 'secret.bin' : u.name, mime, u.size, now());
   const out = postMessage({
-    chat, user: req.user, text: u.caption, kind, fileId: fid,
+    chat, user: req.user, text: capt, kind, fileId: fid,
     duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? u.duration : null,
     replyTo: u.reply_to, clientId: u.client_id, waveform: kind === 'voice' ? u.waveform : null,
   });
@@ -1200,14 +1393,20 @@ api.post('/chats/:id/files', async (req, res) => {
   const size = await receive(req, dest, config.maxUploadBytes);
   if (size === 0) { removeFile(fid); throw new HttpError(400, 'empty_file'); }
   try { assertQuota(req.user, size); } catch (e) { removeFile(fid); throw e; }
-  const type = sniff(readHead(dest), voice);
+  const secretChat = isSecretChat(id);
+  let capt = caption;
+  if (secretChat) {
+    if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', id)?.peer_pub) { removeFile(fid); throw new HttpError(409, 'secret_not_ready'); }
+    try { capt = checkEnvelope(caption); } catch (e) { removeFile(fid); throw e; }
+  }
+  const type = secretChat ? null : sniff(readHead(dest), voice);
   // Unknown content is stored as an opaque download — it is never rendered inline.
   const mime = type?.mime ?? 'application/octet-stream';
-  const kind = type?.kind ?? 'file';
+  const kind = secretChat ? 'secret' : (type?.kind ?? 'file');
   q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)',
-    fid, req.user.id, id, name, mime, size, now());
+    fid, req.user.id, id, secretChat ? 'secret.bin' : name, mime, size, now());
   const out = postMessage({
-    chat, user: req.user, text: caption, kind, fileId: fid, duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? duration : null,
+    chat, user: req.user, text: capt, kind, fileId: fid, duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? duration : null,
     replyTo, clientId, waveform: kind === 'voice' ? wf : null,
   });
   res.status(201).json(out);
@@ -1238,6 +1437,7 @@ function sendFile(res, f, { download = false, pdfInline = false, thumb = false }
 }
 
 function canAccessFile(userId, fid) {
+  if (q.get('SELECT 1 AS x FROM stickers WHERE file_id = ? AND user_id = ?', fid, userId)) return true;
   return !!q.get(
     `SELECT 1 AS x FROM messages m JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
      WHERE m.file_id = ? LIMIT 1`,
@@ -1319,6 +1519,7 @@ api.patch('/messages/:id', (req, res) => {
   if (!m) throw new HttpError(404, 'not_found');
   requireMember(m.chat_id, req.user.id);
   if (m.sender_id !== req.user.id) throw new HttpError(403, 'forbidden');
+  if (isSecretChat(m.chat_id)) throw new HttpError(403, 'secret_no_edit'); // the server cannot re-encrypt
   const text = str(req.body?.text, 'text', { min: m.file_id ? 0 : 1, max: LIMITS.TEXT_MAX });
   aud(req, 'message.edit', { chat_id: m.chat_id, target_type: 'message', target_id: m.id, details: { old: m.text, new: text } });
   q.run('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?', text, now(), m.id);
@@ -1346,7 +1547,8 @@ api.delete('/messages/:id', (req, res) => {
   }
   q.run('UPDATE chats SET pinned_message_id = NULL WHERE pinned_message_id = ?', m.id);
   q.run('DELETE FROM messages WHERE id = ?', m.id);
-  if (m.file_id && !q.get('SELECT 1 AS x FROM messages WHERE file_id = ?', m.file_id)) {
+  if (m.file_id && !q.get('SELECT 1 AS x FROM messages WHERE file_id = ?', m.file_id)
+    && !q.get('SELECT 1 AS x FROM stickers WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM anim_files WHERE file_id = ?', m.file_id)) {
     q.run('DELETE FROM files WHERE id = ?', m.file_id);
     removeFile(m.file_id);
   }

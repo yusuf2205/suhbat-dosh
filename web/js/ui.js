@@ -185,6 +185,7 @@ export function callLabel(m, myId) {
 export function previewText(m) {
   if (!m) return '';
   if (m.kind === 'call') return `📞 ${callLabel(m, S.me?.id)}`;
+  if (m.kind === 'secret') return m.plain !== undefined ? `🔒 ${m.plain}` : `🔒 ${t('secret.message')}`;
   if (m.kind === 'poll') return `📊 ${m.text}`;
   if (m.kind === 'location') return `📍 ${t('msg.location')}`;
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return `👤 ${t('msg.contact')}`; } }

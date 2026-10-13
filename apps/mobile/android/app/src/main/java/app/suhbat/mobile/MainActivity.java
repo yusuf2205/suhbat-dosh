@@ -275,6 +275,22 @@ public class MainActivity extends BridgeActivity {
             return getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
         }
 
+        /** 'wifi' | 'cellular' | 'roaming' | 'none': the auto-download settings are chosen per network. */
+        @JavascriptInterface
+        public String networkType() {
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                android.net.Network n = cm.getActiveNetwork();
+                android.net.NetworkCapabilities c = n == null ? null : cm.getNetworkCapabilities(n);
+                if (c == null) return "none";
+                if (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) return "wifi";
+                if (c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    return c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING) ? "cellular" : "roaming";
+                }
+                return "wifi";
+            } catch (Exception e) { return "wifi"; }
+        }
+
         /** Quietly fetch a received document in the background so that opening it later is instant. */
         @JavascriptInterface
         public void prefetchFile(String url, String name) {

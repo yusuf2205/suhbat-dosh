@@ -179,6 +179,7 @@ export function chatOut(chatId, viewerId) {
     blocked_by_me = !!q.get('SELECT 1 AS x FROM blocks WHERE user_id = ? AND blocked_id = ?', viewerId, pid);
     blocked_me = !!q.get('SELECT 1 AS x FROM blocks WHERE user_id = ? AND blocked_id = ?', pid, viewerId);
   }
+  const sc = c.type === 'direct' ? q.get('SELECT * FROM secret_chats WHERE chat_id = ?', chatId) : null;
   const last = c.last_message_id && c.last_message_id > (m.cleared_before || 0) ? messageOut(getMessage(c.last_message_id)) : null;
   const pinned = c.pinned_message_id ? messageOut(getMessage(c.pinned_message_id)) : null;
   const canPost =
@@ -202,6 +203,7 @@ export function chatOut(chatId, viewerId) {
     pinned_at: m.pinned_at || null,
     sound: m.sound || null,
     saved: c.type === 'direct' && /^(\d+):\1$/.test(c.direct_key || ''),
+    secret: sc ? { state: sc.peer_pub ? 'ready' : 'pending', initiator_id: sc.initiator_id, peer_id: sc.peer_id, init_pub: sc.init_pub, peer_pub: sc.peer_pub } : null,
     can_post: canPost,
     draft: m.draft,
     unread,

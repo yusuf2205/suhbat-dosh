@@ -222,6 +222,14 @@ function sweep() {
   q.run('DELETE FROM login_tokens WHERE expires_at < ?', t - 3600_000);
   q.run('DELETE FROM email_codes WHERE expires_at < ?', t);
   q.run('DELETE FROM sessions WHERE revoked = 1 OR last_active < ?', t - config.sessionTtlMs);
+  // unfinished uploads nobody continued: the partial file is dropped after UPLOAD_PARTIAL_TTL_DAYS (0 = keep for ever)
+  const ttlDays = Number(process.env.UPLOAD_PARTIAL_TTL_DAYS ?? 30);
+  if (ttlDays > 0) {
+    for (const u of q.all('SELECT id FROM uploads WHERE updated_at < ?', t - ttlDays * 86_400_000)) {
+      fs.unlink(path.join(config.filesDir, `.part-${u.id}`), () => {});
+      q.run('DELETE FROM uploads WHERE id = ?', u.id);
+    }
+  }
   const orphans = q.all(
     `SELECT id FROM files f WHERE f.created_at < ? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.file_id = f.id)
        AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_file = f.id)

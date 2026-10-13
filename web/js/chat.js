@@ -15,6 +15,10 @@ import { openViewer, openMediaPanel } from './viewer.js';
 import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
 import { canOpenNative, openNative, prefetchNative } from './native.js';
+import { canViewInApp, openDocument } from './docviewer.js';
+import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
+import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
+import { fileBlob } from './downloads.js';
 import { cancel as cancelTask, enqueue as enqueueUpload, onUpload, pause as pauseUpload, restore as restoreUploads, resume as resumeUpload } from './uploads.js';
 import { contactNode, initPhoneMenu, locationNode, openContactShare, sendLocation } from './share.js';
 import { groupCallOf, groupCallChatId, joinGroupCall } from './gcall.js';
@@ -355,11 +359,27 @@ export function renderTyping() {
 }
 
 function composerBlockReason(c) {
+  if (c.secret) { const r = secretReason(c); if (r) return r; }
   if (c.can_post) return null;
   if (c.blocked_by_me) return 'blocked_by_me';
   if (c.blocked_me) return 'blocked_me';
   if (c.type === 'channel') return 'readonly';
   return 'restricted';
+}
+
+const secretStatuses = new Map();
+/** Why a secret chat cannot be written to right now (null = it can). The key state is read from this device asynchronously. */
+function secretReason(c) {
+  const key = `${c.id}:${c.secret.state}`;
+  const st = secretStatuses.get(key);
+  if (!st) {
+    secretStatus(c).then((s) => {
+      secretStatuses.set(key, s);
+      if (view && S.active === c.id) { view.ckey = ''; renderComposer(); renderMessages(); }
+    });
+    return 'secret_checking';
+  }
+  return { 'pending-peer': 'secret_pending', invited: 'secret_invited', 'no-key': 'secret_nokey', ready: null }[st] ?? null;
 }
 
 function renderComposer() {
@@ -377,6 +397,12 @@ function renderComposer() {
   clear(view.state);
   if (reason) {
     view.state.append(t(`chat.${reason}`));
+    if (reason === 'secret_invited') {
+      view.state.append(' ', h('button', { class: 'btn', type: 'button', onclick: async () => {
+        const r = await acceptSecretChat(c);
+        if (r) { secretStatuses.delete(`${c.id}:pending`); secretStatuses.delete(`${c.id}:ready`); view.ckey = ''; renderComposer(); renderMessages(); }
+      } }, t('secret.accept')));
+    }
     if (reason === 'blocked_by_me') {
       view.state.append(' ', h('button', { class: 'btn link', type: 'button', onclick: async () => {
         await api('DELETE', `/api/blocks/${c.peer.id}`).catch(() => {});
@@ -408,8 +434,9 @@ function renderComposer() {
       { label: t('attach.file'), onClick: () => view.fileInput.click() },
       { label: t('attach.location'), onClick: () => sendLocation(S.active, (m) => upsert(S.active, m)) },
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
+      { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
-    ]) }, icon('plus', 22)),
+    ].filter((it, i) => !(isSecret(c) && i > 0))) }, icon('plus', 22)),
     h('div', { class: 'field-wrap' },
       view.ta,
       (view.schedBtn = h('button', { class: 'icon-btn', type: 'button', hidden: true, 'aria-label': t('when.schedule'), onclick: (e) => scheduleFromComposer(e.currentTarget) }, icon('clock', 22))),
@@ -503,13 +530,18 @@ async function sendText() {
     return;
   }
   lastTyping = 0;
+  const secret = isSecret(c);
+  let envelope = null;
+  if (secret) {
+    try { envelope = await sealPayload(c, { t: text }); } catch { toast(t('secret.cannot_send')); return; }
+  }
   const clientId = uuid();
   const local = {
-    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind: 'text', text, pending: true,
+    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind: secret ? 'secret' : 'text', text: envelope ?? text, plain: secret ? text : undefined, pending: true,
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
     reactions: {}, file: null, created_at: Date.now(),
   };
-  outbox.add({ chat_id: c.id, text, client_id: clientId, reply_to: replyTo?.id ?? null });
+  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -579,7 +611,7 @@ function pendingUploadMessage(task) {
   const kind = task.opts.voice ? 'voice' : /^image\//.test(task.mime) ? 'image' : /^video\//.test(task.mime) ? 'video' : /^audio\//.test(task.mime) ? 'audio' : 'file';
   return {
     id: `c:${task.id}`, client_id: task.id, chat_id: task.chatId, sender_id: S.me.id, kind, text: task.opts.caption || '', pending: true,
-    upload: { state: task.state, loaded: task.loaded || 0 }, file: { id: `u:${task.id}`, name: task.name, size: task.size, mime: task.mime, url: '', local: true },
+    upload: { state: task.state, loaded: task.loaded || 0 }, file: { id: `u:${task.id}`, name: task.opts.label || task.name, size: task.size, mime: task.mime, url: '', local: true },
     reactions: {}, reply_to: null, created_at: task.createdAt,
   };
 }
@@ -602,13 +634,27 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
     return toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) }));
   }
   const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null };
+  const secret = isSecret(c);
+  let sendBlob = blob;
+  let sendName = name;
+  if (secret) {
+    if (blob.size > 100 * 1048576) return toast(t('secret.too_big'));
+    try {
+      const sealed = await sealBlob(c, blob);
+      opts.caption = await sealPayload(c, { f: { name, mime: blob.type, size: blob.size, iv: sealed.iv } });
+      opts.voice = false;
+      opts.label = name;
+      sendBlob = sealed.blob;
+      sendName = 'secret.bin';
+    } catch { return toast(t('secret.cannot_send')); }
+  }
   replyTo = null;
   renderComposer();
-  const task = enqueueUpload({ userId: S.me.id, chatId: c.id, blob, name, opts, id: uuid() });
+  const task = enqueueUpload({ userId: S.me.id, chatId: c.id, blob: sendBlob, name: sendName, opts, id: uuid() });
   // the message appears at once, with its progress card
   bucket(c.id).list.push(pendingUploadMessage(task));
   if (S.active === c.id) { renderMessages(); scrollBottom(); }
-  followUpload(task, c.id, voice ? null : makeThumb(blob));
+  followUpload(task, c.id, voice || secret ? null : makeThumb(blob));
 }
 
 function attachFile(file, onDone) {
@@ -934,7 +980,7 @@ function buildMessage(m, c) {
   if (m.kind === 'call') return buildCallEntry(m, c);
   const mine = m.sender_id === S.me.id;
   const bigEmoji = m.kind === 'text' && !m.file && /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*){1,3}$/u.test((m.text || '').trim());
-  const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}` });
+  const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}${m.kind === 'sticker' ? ' sticker-bubble' : ''}` });
   if (!mine && c.type !== 'direct') {
     bubble.append(h('div', { class: 'sender' }, S.users.get(m.sender_id)?.name ?? '…'));
   }
@@ -943,10 +989,14 @@ function buildMessage(m, c) {
     bubble.append(h('div', { class: 'quote', onclick: () => jumpTo(c.id, m.reply_to.id) },
       h('b', null, m.reply_to.sender_name || ''), previewText(m.reply_to)));
   }
-  if (m.file) bubble.append(buildFile(m));
+  if (m.kind === 'sticker') bubble.append(stickerNode(m));
+  else if (m.kind === 'secret' && !m.upload) bubble.append(secretNode(m, c));
+  else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
+  else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));
+  else if (bigEmoji && isSingleEmoji(m.text)) bubble.append(animatedEmoji(m.text.trim()) ?? h('div', { class: 'text' }, m.text));
   else if (m.text) bubble.append(h('div', { class: 'text' }, linkify(m.text)));
   if (m.markup?.inline_keyboard) bubble.append(keyboardNode(m));
   const reacts = Object.entries(m.reactions || {});
@@ -1036,6 +1086,57 @@ function keyboardNode(m) {
   return h('div', { class: 'ikb' }, rows);
 }
 
+/** Save a received file through the browser (from the device cache when it is there). */
+async function saveFile(f) {
+  try {
+    const blob = await fileBlob(f, 2);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = f.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+  } catch (e) { toast(errText(e.code === 'forbidden' ? 'forbidden' : 'generic')); }
+}
+
+/** The body of an encrypted message: text or a file, decrypted on this device. */
+function secretNode(m, c) {
+  const box = h('div', { class: 'text secret-text' }, '🔒 …');
+  openPayload(c, m).then((p) => {
+    if (!p) { box.textContent = t('secret.cannot_read'); box.classList.add('muted'); return; }
+    if (p.t !== undefined) { box.replaceChildren(...linkify(p.t)); return; }
+    if (p.f) box.replaceChildren(secretFile(m, c, p.f));
+  });
+  return box;
+}
+
+function secretFile(m, c, f) {
+  const ext = (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase();
+  const holder = h('div', { class: 'secret-file' });
+  const card = h('button', { class: 'filecard', type: 'button', 'aria-label': f.name },
+    h('span', { class: 'ficon' }, ext),
+    h('span', { class: 'fname' }, h('b', null, `🔒 ${f.name}`), h('span', { class: 'muted' }, formatBytes(f.size || 0))));
+  const decrypt = async () => {
+    card.disabled = true;
+    try {
+      const blob = await openBlob(c, m.file.url, f.iv, f.mime);
+      const url = URL.createObjectURL(blob);
+      if (/^image\/(png|jpe?g|gif|webp)$/.test(f.mime)) {
+        holder.replaceChildren(h('img', { class: 'secret-img', src: url, alt: f.name }));
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = f.name;
+        a.click();
+        card.disabled = false;
+      }
+    } catch { card.disabled = false; toast(t('secret.cannot_read')); }
+  };
+  card.onclick = decrypt;
+  holder.append(card);
+  if (/^image\//.test(f.mime) && (f.size || 0) <= 12 * 1048576) decrypt(); // pictures open by themselves, decrypted locally
+  return holder;
+}
+
 function uploadCard(m) {
   const f = m.file;
   const u = m.upload || {};
@@ -1073,7 +1174,7 @@ function buildFile(m) {
   }
   if (m.kind === 'audio' || m.kind === 'voice') return voiceNode(m);
   prefetchNative(f);
-  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
+  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (canViewInApp(f)) openDocument(f, { onSave: saveFile }); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));
 }
@@ -1337,6 +1438,8 @@ function chatMoreMenu(anchor) {
     { label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) },
     { label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) },
   ];
+  if (isSecret(c)) items.unshift({ label: t('secret.title'), onClick: () => showSecretInfo(c) });
+  else if (c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot) items.splice(1, 0, { label: t('secret.start'), onClick: () => startSecretChat(c.peer.id) });
   if (c.type === 'direct' && !c.saved) items.push({ label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
   popMenu(anchor, items);
 }

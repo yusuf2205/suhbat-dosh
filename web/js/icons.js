@@ -23,6 +23,7 @@ const P = {
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/>',
   logout: '<path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4M15 8l4 4-4 4M19 12H9"/>',
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/>',
+  wifi: '<path d="M4.5 9.5a11 11 0 0 1 15 0M7.5 12.8a6.8 6.8 0 0 1 9 0M10.5 16a2.6 2.6 0 0 1 3 0"/><circle cx="12" cy="19" r="1"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 8 8 5.5L20 8"/>',
   telegram: '<path d="M21 4 3 11.2l5.6 2.1L10.5 19l3-3.6 4.4 3.3z"/><path d="m8.6 13.3 8.3-5.6"/>',
   grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/>',

@@ -75,3 +75,35 @@ export async function clearAll() {
 
 // housekeeping shortly after start
 setTimeout(() => prune().catch(() => {}), 5000);
+
+/** Is this file already on the device? */
+export async function hasCached(url) {
+  if (!supported()) return false;
+  try { return !!(await (await caches.open(NAME)).match(url)); } catch { return false; }
+}
+
+/** The stored Blob of a cached file, or null. */
+export async function getCachedBlob(url) {
+  if (!supported()) return null;
+  try {
+    const res = await (await caches.open(NAME)).match(url);
+    if (!res) return null;
+    const idx = readIndex();
+    if (idx[url]) { idx[url][0] = Date.now(); writeIndex(idx); }
+    return await res.blob();
+  } catch { return null; }
+}
+
+/** Keep a finished download (the queue assembles it from ranges). */
+export async function putCachedBlob(url, blob, mime = "") {
+  if (!supported()) return false;
+  try {
+    const c = await caches.open(NAME);
+    await c.put(url, new Response(blob, { headers: { "content-type": mime || blob.type || "application/octet-stream", "content-length": String(blob.size) } }));
+    const idx = readIndex();
+    idx[url] = [Date.now(), blob.size];
+    writeIndex(idx);
+    prune();
+    return true;
+  } catch { return false; }
+}

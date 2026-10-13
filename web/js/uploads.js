@@ -13,6 +13,7 @@ const tasks = new Map();
 const listeners = new Set();
 export const onUpload = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 export const getTask = (id) => tasks.get(id);
+export const listUploads = () => [...tasks.values()];
 const emit = (task, type) => { for (const fn of listeners) { try { fn(task, type); } catch { /* UI errors must not stop an upload */ } } };
 
 // ---------------------------------------------------------------- IndexedDB (best effort)
