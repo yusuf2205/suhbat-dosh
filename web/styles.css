@@ -1349,3 +1349,9 @@ a, .btn.link, .chat-head .sub.live, .pinbar b, .unread-div, .sender, .quote b, .
 .contact-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .contact-list { max-height: 40vh; overflow: auto; margin: 8px 0; }
 .contact-manual { display: grid; gap: 8px; padding-top: 8px; }
+
+/* ===== minimal language picker on the sign-in card ===== */
+.auth-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.auth-tools select { width: auto; min-height: 0; padding: 6px 4px 6px 2px; border: 0; background-color: transparent; box-shadow: none; font-size: .9rem; color: var(--muted, #7a6d3a); cursor: pointer; border-radius: 8px; }
+.auth-tools select:hover, .auth-tools select:focus-visible { color: var(--text); }
+.auth-tools .dl-link { width: auto; min-height: 0; padding: 8px 12px; font-size: .88rem; }
