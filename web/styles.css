@@ -1355,3 +1355,11 @@ a, .btn.link, .chat-head .sub.live, .pinbar b, .unread-div, .sender, .quote b, .
 .auth-tools select { width: auto; min-height: 0; padding: 6px 4px 6px 2px; border: 0; background-color: transparent; box-shadow: none; font-size: .9rem; color: var(--muted, #7a6d3a); cursor: pointer; border-radius: 8px; }
 .auth-tools select:hover, .auth-tools select:focus-visible { color: var(--text); }
 .auth-tools .dl-link { width: auto; min-height: 0; padding: 8px 12px; font-size: .88rem; }
+
+/* ===== upload progress ===== */
+.upcard { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 4px 0; }
+.upcard .fname { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.upcard .up-track { display: block; height: 6px; border-radius: 3px; background: rgba(0,0,0,.12); overflow: hidden; }
+.upcard .up-bar { display: block; height: 100%; width: 0; background: var(--brand-strong, #c79500); border-radius: 3px; transition: width .15s linear; }
+.msg.out .bubble .upcard .up-bar { background: #fff; }
+.upcard .up-cancel { flex: none; }

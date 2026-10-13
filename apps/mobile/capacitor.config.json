@@ -3,7 +3,7 @@
   "appName": "Suhbat-dosh",
   "webDir": "www",
   "backgroundColor": "#fbc700",
-  "appendUserAgent": "SuhbatShell/mobile SuhbatApp/0.2.17",
+  "appendUserAgent": "SuhbatShell/mobile SuhbatApp/0.2.18",
   "server": {
     "cleartext": true,
     "allowNavigation": [

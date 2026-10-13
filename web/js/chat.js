@@ -14,7 +14,7 @@ import { startCall } from './call.js';
 import { openViewer, openMediaPanel } from './viewer.js';
 import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
-import { canOpenNative, openNative } from './native.js';
+import { canOpenNative, openNative, prefetchNative } from './native.js';
 import { contactNode, initPhoneMenu, locationNode, openContactShare, sendLocation } from './share.js';
 import { groupCallOf, groupCallChatId, joinGroupCall } from './gcall.js';
 import {
@@ -526,12 +526,58 @@ async function sendText() {
   else fire('outbox');
 }
 
+const uploads = new Map(); // client_id -> XMLHttpRequest
+
+function cancelUpload(m) {
+  uploads.get(m.client_id)?.abort();
+  uploads.delete(m.client_id);
+  removeMessage(m.chat_id, m.id);
+}
+
+function setProgress(clientId, loaded, total) {
+  const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+  for (const m of S.msgs.values()) {
+    const x = m.list.find((v) => v.client_id === clientId && v.upload);
+    if (x) x.upload.pct = pct / 100;
+  }
+  document.querySelectorAll(`[data-up="${clientId}"]`).forEach((el) => {
+    const bar = el.querySelector('.up-bar');
+    if (bar) bar.style.width = `${pct}%`;
+    const txt = el.querySelector('.up-txt');
+    if (txt) txt.textContent = `${formatBytes(loaded)} / ${formatBytes(total)} · ${pct}%`;
+  });
+}
+
+/** POST the file with a live progress bar (fetch cannot report upload progress). */
+function sendRaw(url, blob, clientId) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    uploads.set(clientId, xhr);
+    xhr.open('POST', url);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) setProgress(clientId, e.loaded, e.total); };
+    xhr.onload = () => {
+      uploads.delete(clientId);
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* empty */ }
+      if (xhr.status === 401) fire('unauthorized');
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject({ status: xhr.status, code: data?.error || 'generic' });
+    };
+    xhr.onerror = () => { uploads.delete(clientId); reject({ status: 0, code: 'network' }); };
+    xhr.onabort = () => { uploads.delete(clientId); reject({ aborted: true }); };
+    xhr.send(blob);
+  });
+}
+
 async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null } = {}) {
   const c = S.chats.get(chatId);
   if (blob.size > cfg.max_upload_bytes) {
     return toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) }));
   }
-  const qs = new URLSearchParams({ name, client_id: uuid() });
+  const clientId = uuid();
+  const qs = new URLSearchParams({ name, client_id: clientId });
   if (voice) qs.set('voice', '1');
   if (duration !== null) qs.set('duration', String(Math.round(duration)));
   if (caption) qs.set('caption', caption);
@@ -539,12 +585,18 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
   if (replyTo) qs.set('reply_to', String(replyTo.id));
   replyTo = null;
   renderComposer();
-  toast(t('upload.sending'), 1500);
+  // the message appears at once with a progress bar
+  const kind = voice ? 'voice' : /^image\//.test(blob.type) ? 'image' : /^video\//.test(blob.type) ? 'video' : /^audio\//.test(blob.type) ? 'audio' : 'file';
+  const local = {
+    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind, text: caption, pending: true,
+    upload: { pct: 0 }, file: { id: `u:${clientId}`, name, size: blob.size, mime: blob.type, url: '', local: true },
+    reactions: {}, reply_to: null, created_at: Date.now(),
+  };
+  bucket(c.id).list.push(local);
+  if (S.active === c.id) { renderMessages(); scrollBottom(); }
   const thumbP = voice ? Promise.resolve(null) : makeThumb(blob);
   try {
-    const r = await api('POST', `/api/chats/${c.id}/files?${qs}`, undefined, {
-      raw: blob, headers: { 'content-type': 'application/octet-stream' },
-    });
+    const r = await sendRaw(`/api/chats/${c.id}/files?${qs}`, blob, clientId);
     upsert(chatId, r.message);
     scrollBottom();
     thumbP.then((th) => {
@@ -554,6 +606,8 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
       }).catch(() => {});
     });
   } catch (e) {
+    if (e.aborted) return;
+    removeMessage(chatId, local.id);
     toast(e.status === 0 ? t('net.offline') : errText(e.code));
   }
 }
@@ -982,7 +1036,21 @@ function keyboardNode(m) {
   return h('div', { class: 'ikb' }, rows);
 }
 
+function uploadCard(m) {
+  const f = m.file;
+  const pct = Math.round((m.upload?.pct || 0) * 100);
+  const bar = h('span', { class: 'up-bar' });
+  bar.style.width = `${pct}%`;
+  return h('div', { class: 'upcard', dataset: { up: m.client_id } },
+    h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
+    h('span', { class: 'fname' }, h('b', null, f.name),
+      h('span', { class: 'muted up-txt' }, `${formatBytes(Math.round(f.size * (pct / 100)))} / ${formatBytes(f.size)} · ${pct}%`),
+      h('span', { class: 'up-track' }, bar)),
+    h('button', { class: 'icon-btn up-cancel', type: 'button', 'aria-label': t('chat.cancel'), onclick: () => cancelUpload(m) }, '✕'));
+}
+
 function buildFile(m) {
+  if (m.upload) return uploadCard(m);
   const f = m.file;
   const open = () => openViewer(m.chat_id, m.id);
   const ratio = f.width && f.height ? `${f.width} / ${f.height}` : null;
@@ -998,6 +1066,7 @@ function buildFile(m) {
       poster, h('span', { class: 'play-badge' }, icon('send', 28)), h('span', { class: 'media-size' }, formatBytes(f.size)));
   }
   if (m.kind === 'audio' || m.kind === 'voice') return voiceNode(m);
+  prefetchNative(f);
   return h('button', { class: 'filecard', type: 'button', onclick: () => { if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, (f.name.split('.').pop() || 'FILE').slice(0, 4).toUpperCase()),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));

@@ -204,40 +204,110 @@ public class MainActivity extends BridgeActivity {
             });
         }
 
-        /** Download a received file and open it in the matching app (Word, Excel, PDF ...), like Telegram does. */
+        private final java.util.concurrent.ExecutorService prefetchQueue = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+        private String sha1(String v) {
+            try {
+                byte[] d = java.security.MessageDigest.getInstance("SHA-1").digest(v.getBytes("UTF-8"));
+                StringBuilder sb = new StringBuilder();
+                for (byte x : d) sb.append(String.format("%02x", x));
+                return sb.toString();
+            } catch (Exception e) { return Integer.toHexString(v.hashCode()); }
+        }
+
+        /** A file id never changes its content, so one download is reused: the second tap (or a prefetch) opens at once. */
+        private java.io.File cacheTarget(String url, String name) {
+            String clean = url.contains("?") ? url.substring(0, url.indexOf('?')) : url;
+            java.io.File dir = new java.io.File(new java.io.File(getCacheDir(), "files"), sha1(clean));
+            String safe = (name == null || name.isEmpty() ? "file" : name).replaceAll("[\\\\/:*?\"<>|]", "_");
+            return new java.io.File(dir, safe);
+        }
+
+        private java.io.File download(String origin, String url, String name) throws java.io.IOException {
+            java.io.File f = cacheTarget(url, name);
+            if (f.isFile() && f.length() > 0) return f;
+            synchronized (this) {
+                if (f.isFile() && f.length() > 0) return f;
+                f.getParentFile().mkdirs();
+                String cookie = android.webkit.CookieManager.getInstance().getCookie(origin);
+                okhttp3.Request.Builder rb = new okhttp3.Request.Builder().url(url);
+                if (cookie != null) rb.header("Cookie", cookie);
+                java.io.File part = new java.io.File(f.getPath() + ".part");
+                try (okhttp3.Response r = new okhttp3.OkHttpClient().newCall(rb.build()).execute()) {
+                    if (!r.isSuccessful() || r.body() == null) throw new java.io.IOException("HTTP " + r.code());
+                    try (java.io.InputStream in = r.body().byteStream(); java.io.FileOutputStream out = new java.io.FileOutputStream(part)) {
+                        byte[] buf = new byte[65536];
+                        int n;
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    }
+                }
+                if (!part.renameTo(f)) throw new java.io.IOException("rename");
+                trimCache();
+                return f;
+            }
+        }
+
+        /** Keep the opened-files cache below ~400 MB (oldest folders go first). */
+        private void trimCache() {
+            try {
+                java.io.File root = new java.io.File(getCacheDir(), "files");
+                java.io.File[] dirs = root.listFiles();
+                if (dirs == null) return;
+                long total = 0;
+                for (java.io.File d : dirs) { java.io.File[] fs = d.listFiles(); if (fs != null) for (java.io.File x : fs) total += x.length(); }
+                if (total < 400L * 1024 * 1024) return;
+                java.util.Arrays.sort(dirs, (p, q) -> Long.compare(p.lastModified(), q.lastModified()));
+                for (java.io.File d : dirs) {
+                    java.io.File[] fs = d.listFiles();
+                    if (fs != null) for (java.io.File x : fs) { total -= x.length(); x.delete(); }
+                    d.delete();
+                    if (total < 300L * 1024 * 1024) break;
+                }
+            } catch (Exception ignored) { /* best effort */ }
+        }
+
+        private boolean ownUrl(String url) {
+            String origin = getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
+            return url != null && origin != null && url.startsWith(origin + "/");
+        }
+
+        private String originPref() {
+            return getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
+        }
+
+        /** Quietly fetch a received document in the background so that opening it later is instant. */
+        @JavascriptInterface
+        public void prefetchFile(String url, String name) {
+            if (!ownUrl(url)) return;
+            final String origin = originPref();
+            prefetchQueue.execute(() -> {
+                try { download(origin, url, name); } catch (Exception ignored) { /* it will be fetched on tap */ }
+            });
+        }
+
+        /** Open a received file in the matching app (Word, Excel, PDF ...). Already downloaded: at once. */
         @JavascriptInterface
         public void openFile(String url, String name, String mime) {
-            final String origin = getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
-            if (url == null || origin == null || !url.startsWith(origin + "/")) return;
+            if (!ownUrl(url)) return;
+            final String origin = originPref();
+            final boolean ready = cacheTarget(url, name).isFile();
+            if (!ready) runOnUiThread(() -> android.widget.Toast.makeText(MainActivity.this, "Загружаю файл…", android.widget.Toast.LENGTH_SHORT).show());
             new Thread(() -> {
                 try {
-                    String cookie = android.webkit.CookieManager.getInstance().getCookie(origin);
-                    okhttp3.Request.Builder rb = new okhttp3.Request.Builder().url(url);
-                    if (cookie != null) rb.header("Cookie", cookie);
-                    try (okhttp3.Response r = new okhttp3.OkHttpClient().newCall(rb.build()).execute()) {
-                        if (!r.isSuccessful() || r.body() == null) throw new java.io.IOException("HTTP " + r.code());
-                        java.io.File dir = new java.io.File(getCacheDir(), "opened");
-                        dir.mkdirs();
-                        String safe = (name == null || name.isEmpty() ? "file" : name).replaceAll("[\\\\/:*?\"<>|]", "_");
-                        java.io.File f = new java.io.File(dir, safe);
-                        try (java.io.InputStream in = r.body().byteStream(); java.io.FileOutputStream out = new java.io.FileOutputStream(f)) {
-                            byte[] buf = new byte[16384];
-                            int n;
-                            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    java.io.File f = download(origin, url, name);
+                    f.setLastModified(System.currentTimeMillis());
+                    String ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(Uri.fromFile(f).toString());
+                    String type = ext != null ? android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase()) : null;
+                    if (type == null) type = (mime != null && !mime.isEmpty() && !mime.equals("application/octet-stream")) ? mime : "*/*";
+                    Uri uri = androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", f);
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    i.setDataAndType(uri, type);
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    runOnUiThread(() -> {
+                        try { startActivity(Intent.createChooser(i, null)); } catch (ActivityNotFoundException e) {
+                            android.widget.Toast.makeText(MainActivity.this, "Нет приложения для этого файла", android.widget.Toast.LENGTH_LONG).show();
                         }
-                        String ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(Uri.fromFile(f).toString());
-                        String type = ext != null ? android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase()) : null;
-                        if (type == null) type = (mime != null && !mime.isEmpty() && !mime.equals("application/octet-stream")) ? mime : "*/*";
-                        Uri uri = androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", f);
-                        Intent i = new Intent(Intent.ACTION_VIEW);
-                        i.setDataAndType(uri, type);
-                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                        runOnUiThread(() -> {
-                            try { startActivity(Intent.createChooser(i, null)); } catch (ActivityNotFoundException e) {
-                                android.widget.Toast.makeText(MainActivity.this, "Нет приложения для этого файла", android.widget.Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    }
+                    });
                 } catch (Exception e) {
                     runOnUiThread(() -> android.widget.Toast.makeText(MainActivity.this, "Не удалось открыть файл", android.widget.Toast.LENGTH_LONG).show());
                 }
