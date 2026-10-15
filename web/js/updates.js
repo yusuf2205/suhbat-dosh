@@ -144,8 +144,13 @@ export function initUpdates() {
     if (document.visibilityState === 'visible') checkForUpdate({ silent: true });
   });
   if (bridge?.onUpdate) {
+    // desktop app: the update downloads by itself; a downloaded one is offered once, one click restarts into it
+    let offered = '';
     bridge.onUpdate((e) => {
-      // the desktop app installs the downloaded update when it is closed: no notice needed
+      if (e?.state === 'downloaded' && offered !== e.version) {
+        offered = e.version;
+        showBanner(t('update.desktop_ready', { v: e.version }), t('update.restart'), () => bridge.installUpdate());
+      }
     });
   }
 }
@@ -169,9 +174,15 @@ export function updatesSection() {
       if (bridge?.checkUpdate) {
         const r = await bridge.checkUpdate();
         if (r?.state === 'available' || r?.state === 'downloaded') {
-          status.textContent = r.state === 'downloaded' ? t('update.desktop_ready', { v: r.version }) : t('update.desktop_downloading', { v: r.version });
-          if (r.state === 'downloaded') actions.append(h('button', { class: 'btn', type: 'button', onclick: () => bridge.installUpdate() }, t('update.restart')));
-          btn.disabled = false;
+          // one click: download, then install and restart by itself (like Telegram Desktop)
+          const install = () => { status.textContent = t('update.starting'); bridge.installUpdate(); };
+          if (r.state === 'downloaded') { install(); return; }
+          status.textContent = t('update.downloading', { v: r.version, p: 0 });
+          bridge.onUpdate?.((e) => {
+            if (e?.state === 'downloaded') install();
+            else if (e?.state === 'available' && typeof e.percent === 'number') status.textContent = t('update.downloading', { v: r.version, p: e.percent });
+            else if (e?.state === 'error') { status.textContent = `${t('update.failed')}: ${e.message || ''}`; btn.disabled = false; }
+          });
           return;
         }
       }

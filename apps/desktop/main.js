@@ -174,7 +174,10 @@ async function checkUpdates() {
 }
 
 ipcMain.handle('suhbat:update-check', () => checkUpdates());
-ipcMain.handle('suhbat:update-install', () => { autoUpdater.quitAndInstall(false, true); });
+ipcMain.handle('suhbat:update-install', () => {
+  app.isQuitting = true; // let the window close for real instead of hiding into the tray
+  autoUpdater.quitAndInstall(true, true); // silent installer, then the app starts again
+});
 ipcMain.handle('suhbat:version', () => app.getVersion());
 
 // ---- notification windows: like Telegram Desktop, in the chosen screen corner, up to N at a time
