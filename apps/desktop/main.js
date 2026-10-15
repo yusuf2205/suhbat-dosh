@@ -262,16 +262,25 @@ ipcMain.handle('suhbat:open-file', async (_e, url, name) => {
 ipcMain.handle('suhbat:get-default', () => serverOrigin || DEFAULT_SERVER);
 ipcMain.handle('suhbat:set-server', async (_e, input) => {
   const origin = normalizeServer(input);
-  // reachability probe before saving: /healthz is unauthenticated
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 6000);
-  try {
-    const r = await fetch(`${origin}/healthz`, { signal: ctl.signal });
-    const j = await r.json();
-    if (j.status !== 'ok') throw new Error('not a Suhbat-dosh server');
-  } finally {
-    clearTimeout(timer);
+  // reachability probe before saving: /healthz is unauthenticated. A slow tunnel must not block the
+  // user, so: up to 3 tries of 15 s, and a timeout / network error is not fatal for https servers.
+  let hardFail = null;
+  for (let i = 0; i < 3; i++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 15000);
+    try {
+      const r = await fetch(`${origin}/healthz`, { signal: ctl.signal });
+      const j = await r.json();
+      if (j.status !== 'ok') { hardFail = new Error('not a Suhbat-dosh server'); }
+      else hardFail = null;
+      break;
+    } catch (e) {
+      hardFail = origin.startsWith('https:') ? null : e; // https + timeout: open anyway, the page retries itself
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  if (hardFail) throw hardFail;
   const needsFlag = origin.startsWith('http:') && origin !== serverOrigin;
   serverOrigin = origin;
   writeConfig({ ...readConfig(), server: origin });
