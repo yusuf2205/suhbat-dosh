@@ -161,3 +161,9 @@ body.dl-body { overflow-x: hidden; }
   .btn.web { width: 100%; justify-content: center; box-sizing: border-box; }
   .hero h1 { font-size: 1.9rem; }
 }
+
+.btn.cta .ver { margin-left: auto; padding: 2px 8px; border-radius: 10px; background: rgba(0,0,0,.12); font-size: .78rem; font-weight: 700; }
+.btn.cta.big .ver { margin-left: 8px; }
+.older { margin-top: 6px; font-size: .85rem; }
+.older summary { cursor: pointer; opacity: .75; padding: 4px 2px; }
+.older-link { display: block; padding: 6px 4px; color: inherit; opacity: .8; text-decoration: underline; }

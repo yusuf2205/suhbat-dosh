@@ -11,6 +11,7 @@ const T = {
     download: 'Скачать',
     recommended: 'Для вашего устройства',
     soon: 'Скоро',
+    older: 'Старые версии',
     size: 'Размер',
     pwa: 'Установить как приложение',
     win: 'Windows', linux: 'Linux', android: 'Android', macos: 'macOS', ios: 'iPhone / iPad',
@@ -31,6 +32,7 @@ const T = {
     download: 'Yuklab olish',
     recommended: 'Qurilmangiz uchun',
     soon: 'Tez orada',
+    older: 'Eski versiyalar',
     size: 'Hajmi',
     pwa: 'Ilova sifatida o‘rnatish',
     win: 'Windows', linux: 'Linux', android: 'Android', macos: 'macOS', ios: 'iPhone / iPad',
@@ -103,13 +105,31 @@ window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); inst
 const t = (k) => T[lang][k] ?? T.ru[k] ?? k;
 const apiId = (p) => p.api || p.id;
 const rank = (n) => (/.(exe|apk|dmg|appimage)$/i.test(n) ? 0 : /.deb$/i.test(n) ? 1 : /.tar.gz$/i.test(n) ? 2 : 3);
-const filesFor = (p) => files.filter((f) => f.platform === apiId(p)).sort((a, b) => rank(a.name) - rank(b.name));
+const verOf = (n) => /(\d+\.\d+\.\d+)/.exec(n)?.[1] || '';
+const vcmp = (a, b) => { const x = a.split('.').map(Number); const y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
+const hidden = (n) => /\.(blockmap|yml|part)$/i.test(n);
+/** Newest version of each kind of file (installer, zip, apk ...) for a platform, plus the older ones. */
+function split(p) {
+  const all = files.filter((f) => f.platform === apiId(p) && !hidden(f.name))
+    .sort((a, b) => vcmp(verOf(b.name), verOf(a.name)) || rank(a.name) - rank(b.name));
+  const seen = new Set();
+  const latest = [];
+  const older = [];
+  for (const f of all) {
+    const k = KIND_LABEL(f.name);
+    if (seen.has(k)) older.push(f); else { seen.add(k); latest.push(f); }
+  }
+  latest.sort((a, b) => rank(a.name) - rank(b.name));
+  return { latest, older };
+}
+const filesFor = (p) => split(p).latest;
 
 function dlButton(p, f, { big = false } = {}) {
   return h('a', { class: `btn cta${big ? ' big' : ''}`, href: `/downloads/${encodeURIComponent(f.name)}`, download: f.name },
     h('span', { class: 'cta-ico', 'aria-hidden': 'true' }, glyph('download', big ? 24 : 20)),
     h('span', { class: 'cta-text' }, big ? `${t('download')} — ${t(p.id)}` : `${t(KIND_LABEL(f.name))}`),
-    h('small', null, fmtSize(f.size)));
+    big && verOf(f.name) ? h('span', { class: 'ver' }, `v${verOf(f.name)}`) : null,
+    h('small', null, big || !verOf(f.name) ? fmtSize(f.size) : `v${verOf(f.name)} · ${fmtSize(f.size)}`));
 }
 
 function render() {
@@ -138,7 +158,9 @@ function render() {
       tile(p),
       h('h3', null, t(p.id)),
       ...(fl.length
-        ? fl.map((f) => dlButton(p, f))
+        ? [...fl.map((f) => dlButton(p, f)),
+          split(p).older.length ? h('details', { class: 'older' }, h('summary', null, t('older')),
+            ...split(p).older.map((f) => h('a', { class: 'older-link', href: `/downloads/${encodeURIComponent(f.name)}`, download: f.name }, `${t(KIND_LABEL(f.name))} v${verOf(f.name)} · ${fmtSize(f.size)}`))) : null]
         : [h('span', { class: 'pill' }, p.id === 'ios' ? 'PWA' : t('soon'))]));
     grid.append(card);
   });
