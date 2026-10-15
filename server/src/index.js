@@ -147,7 +147,15 @@ app.get('/downloads/:name', (req, res, next) => {
   res.sendFile(path.join(config.downloadsDir, f.name), { dotfiles: 'deny', cacheControl: false });
 });
 app.use('/shared', express.static(sharedDir, { maxAge: 0, setHeaders: (res) => res.setHeader('Cache-Control', 'private, no-cache, max-age=0, must-revalidate') }));
-app.use(express.static(webDir, { maxAge: 0, etag: true, index: 'index.html', setHeaders: (res) => res.setHeader('Cache-Control', 'private, no-cache, max-age=0, must-revalidate') }));
+// Libraries and images never change under the same name: the browser and Cloudflare keep them for a day
+// (and may serve a stale copy while refreshing). The app's own scripts and styles are always revalidated.
+const STABLE = /(\/js\/vendor\/|\.(png|ico|svg|woff2?|jpg|webp|tgs)$)/i;
+app.use(express.static(webDir, {
+  maxAge: 0, etag: true, index: 'index.html',
+  setHeaders: (res, file) => res.setHeader('Cache-Control', STABLE.test(file.replaceAll('\\', '/'))
+    ? 'public, max-age=86400, stale-while-revalidate=604800'
+    : 'private, no-cache, max-age=0, must-revalidate'),
+}));
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
