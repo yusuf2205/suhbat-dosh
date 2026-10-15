@@ -9,3 +9,4 @@ button { width: 100%; margin-top: 12px; padding: 12px; border: 0; border-radius:
 button:disabled { opacity: .6; }
 #err { color: #c0352b; min-height: 1.4em; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.logo { display: block; margin: 0 0 12px; border-radius: 50%; }

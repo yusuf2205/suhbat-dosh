@@ -1,7 +1,7 @@
 {
   "name": "suhbat-desktop",
   "productName": "Suhbat-dosh",
-  "version": "0.2.5",
+  "version": "0.2.7",
   "description": "Suhbat-dosh desktop client (Windows, macOS, Linux)",
   "author": "Suhbat-dosh <noreply@suhbat.local>",
   "main": "main.js",
@@ -29,10 +29,11 @@
       "notif.html",
       "notif.js",
       "package.json",
-      "build/icon.png"
+      "build/icon.png",
+      "logo.png"
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "zip"
@@ -43,7 +44,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Suhbat-dosh-Setup-${version}-windows-x64.${ext}"
+      "artifactName": "Suhbat-dosh-Setup-${version}-windows-x64.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
     "linux": {
       "icon": "build/icon.png",
@@ -69,11 +73,13 @@
         "provider": "generic",
         "url": "https://suhbat-dosh.uz/downloads"
       }
-    ]
+    ],
+    "afterPack": "build/afterPack.cjs"
   },
   "devDependencies": {
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.2"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
