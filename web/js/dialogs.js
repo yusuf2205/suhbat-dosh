@@ -1,3 +1,4 @@
+import { showQr } from './qr.js';
 import { LIMITS, PRIVACY_VALUES } from '/shared/contracts.js';
 import { h, clear, debounce, uuid } from './dom.js';
 import { t, errText, LANGS, getLang } from './i18n.js';
@@ -174,6 +175,7 @@ export async function renderInfo(m, chatId) {
         nodes.push(h('h3', null, t('info.invite')), h('div', { class: 'invite' }, link),
           h('div', { class: 'row', style: { marginTop: '8px' } },
             h('button', { class: 'btn secondary', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(link); toast(t('info.copied')); } catch { /* ignore */ } } }, t('info.copy')),
+            h('button', { class: 'btn secondary', type: 'button', onclick: () => showQr(chat.title || t('info.invite'), link) }, t('qr.show')),
             h('button', { class: 'btn link', type: 'button', onclick: async () => { await api('POST', `/api/chats/${chat.id}/invite/reset`).catch(fail); draw(); } }, t('info.reset'))));
       }
       if (isAdmin) {

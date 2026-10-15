@@ -1,9 +1,11 @@
+import { snapGet, snapSet } from './snap.js';
+import { canCompress, compressImage } from './imgcompress.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
 import { h, clear, linkify, formatBytes, formatDuration, uuid, debounce } from './dom.js';
 import { t, errText } from './i18n.js';
-import { S, bucket, chatTitle, fire, isMuted, on } from './state.js';
+import { S, bucket, chatTitle, fire, isMuted, on, savePrefs } from './state.js';
 import { api, flushOutbox, outbox, sendTyping } from './net.js';
 import {
   avatar, callLabel, confirmDialog, dayKey, fmtDay, fmtLastSeen, fmtTime, modal, popMenu, previewText, toast,
@@ -84,6 +86,13 @@ export async function openChat(id) {
     b.list = b.list.filter((m) => m.pending);
     b.detached = false;
     b.hasMore = true;
+    if (!c.secret) {
+      const cached = await snapGet(`m:${S.me.id}:${id}`);
+      if (cached?.length && S.active === id && !b.list.length) {
+        b.list = [...cached];
+        renderAll({ scroll: 'unread' });
+      }
+    }
     await loadLatest(id);
   }
   loadMembers(id);
@@ -108,6 +117,7 @@ async function loadLatest(id) {
     const pending = b.list.filter((m) => m.pending);
     b.list = [...r.messages, ...pending];
     b.hasMore = r.has_more;
+    if (!S.chats.get(id)?.secret) snapSet(`m:${S.me.id}:${id}`, r.messages);
   } catch (e) {
     if (e.status !== 0) toast(errText(e.code));
   } finally {
@@ -471,8 +481,23 @@ function syncComposerButtons() {
 let holdState = null; // the press that started a recording
 
 function wireActionButton(b) {
+  // long press (or right click) on the plane: send without sound / at a chosen time
+  let pressTimer = 0;
+  let menuShown = false;
+  const showSendMenu = () => {
+    if (actionMode() !== 'send' || editing) return;
+    menuShown = true;
+    popMenu(b, [
+      { label: t('send.silent'), onClick: () => sendText({ silent: true }) },
+      { label: t('when.schedule'), onClick: () => scheduleFromComposer(b) },
+    ]);
+  };
+  b.addEventListener('contextmenu', (e) => { e.preventDefault(); showSendMenu(); });
+  b.addEventListener('pointerdown', () => { clearTimeout(pressTimer); menuShown = false; pressTimer = setTimeout(showSendMenu, 550); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => clearTimeout(pressTimer));
   b.addEventListener('click', (e) => {
     const mode = actionMode();
+    if (menuShown) { menuShown = false; e.preventDefault(); return; }
     if (mode === 'send') sendText();
     else if (mode === 'sendrec') finishRecording(true);
     else e.preventDefault();
@@ -513,7 +538,7 @@ function cancelContext() {
 }
 
 // ---------------------------------------------------------------- sending
-async function sendText() {
+async function sendText({ silent = false } = {}) {
   const c = activeChat();
   const text = view.ta.value.trim();
   if (!text || !c?.can_post) return;
@@ -541,7 +566,7 @@ async function sendText() {
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
     reactions: {}, file: null, created_at: Date.now(),
   };
-  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null });
+  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -668,6 +693,9 @@ function attachFile(file, onDone) {
   const isImg = /^image\/(png|jpe?g|gif|webp)$/.test(file.type);
   const url = isImg ? URL.createObjectURL(file) : null;
   const cap = h('input', { class: 'input', placeholder: t('chat.placeholder'), maxLength: 1000, 'aria-label': t('chat.placeholder') });
+  const squeeze = canCompress(file)
+    ? h('input', { type: 'checkbox', checked: S.prefs.compress !== false })
+    : null;
   const m = modal({
     title: file.name,
     onClose: () => { if (url) URL.revokeObjectURL(url); onDone?.(); },
@@ -676,8 +704,16 @@ function attachFile(file, onDone) {
         : h('div', { class: 'filecard' }, h('span', { class: 'ficon' }, fileIcon(file.name, file.type, 40)),
           h('span', null, h('b', null, file.name), h('br'), h('span', { class: 'muted' }, formatBytes(file.size)))),
       h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
+      squeeze ? h('label', { class: 'row compress-opt' }, squeeze, h('span', null, t('upload.compress', { size: formatBytes(file.size) }))) : null,
       h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
-        h('button', { class: 'btn', type: 'button', onclick: () => { m.close(); uploadFile(c.id, file, file.name, { caption: cap.value.trim() }); } }, t('chat.send')))),
+        h('button', { class: 'btn', type: 'button', onclick: async () => {
+          const caption = cap.value.trim();
+          const want = squeeze?.checked;
+          if (squeeze && S.prefs.compress !== want) { S.prefs.compress = want; savePrefs(); }
+          m.close();
+          const out = want ? await compressImage(file) : file;
+          uploadFile(c.id, out, out.name, { caption });
+        } }, t('chat.send')))),
   });
 }
 

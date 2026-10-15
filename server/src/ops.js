@@ -147,7 +147,7 @@ export function listBackups() {
 
 function prune() {
   const all = listBackups();
-  for (const old of all.slice(20)) fs.rmSync(path.join(config.backupDir, old.name), { force: true });
+  for (const old of all.slice(40)) fs.rmSync(path.join(config.backupDir, old.name), { force: true });
 }
 
 const safeName = (n) => {
@@ -185,10 +185,42 @@ function check() {
   return s;
 }
 
+/**
+ * Uploaded files are copied (never moved, never deleted) next to the database snapshots, so a lost disk
+ * or a broken volume does not take the users' files with it. Only files that are not mirrored yet are copied.
+ */
+export const filesMirror = { last: null };
+async function mirrorFiles() {
+  const dest = process.env.BACKUP_FILES_DIR || path.join(config.backupDir, 'files');
+  let copied = 0;
+  let bytes = 0;
+  try {
+    await fs.promises.mkdir(dest, { recursive: true });
+    for (const ent of await fs.promises.readdir(config.filesDir, { withFileTypes: true })) {
+      if (!ent.isFile()) continue;
+      const src = path.join(config.filesDir, ent.name);
+      const to = path.join(dest, ent.name);
+      const st = await fs.promises.stat(src);
+      if (Date.now() - st.mtimeMs < 60_000) continue; // still being written
+      try { if ((await fs.promises.stat(to)).size === st.size) continue; } catch { /* not mirrored yet */ }
+      await fs.promises.copyFile(src, to + '.part');
+      await fs.promises.rename(to + '.part', to);
+      copied += 1;
+      bytes += st.size;
+    }
+    filesMirror.last = { at: now(), copied, bytes, error: null };
+    if (copied) log('info', 'files mirrored', { copied, bytes });
+  } catch (e) {
+    filesMirror.last = { at: now(), copied, bytes, error: String(e.message).slice(0, 120) };
+    log('error', 'files mirror failed', { err: e.message });
+  }
+}
+
 function autoBackup() {
+  mirrorFiles();
   try {
     const newest = listBackups().find((b) => b.kind === 'auto' || b.kind === 'manual');
-    if (!newest || now() - newest.created_at > 24 * 3600_000) {
+    if (!newest || now() - newest.created_at > 6 * 3600_000) {
       const b = createBackup('auto');
       log('info', 'auto backup', { name: b.name, size: b.size });
     }

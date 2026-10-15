@@ -101,6 +101,11 @@ function buildUi() {
     local, controls, fsBtn);
   const root = h('div', { class: 'call-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('nav.calls') }, card);
   document.body.append(root);
+  card.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button, .call-panel, .menu')) { wakeControls(); return; }
+    if (root.classList.contains('idle')) wakeControls();
+  });
+  card.addEventListener('pointermove', () => { if (root.classList.contains('idle')) wakeControls(); });
   return { root, card, remote, local, status, timer, who, controls, quality, stats, bg: root.querySelector('.call-bg'), panel: null };
 }
 
@@ -128,23 +133,40 @@ function renderControls() {
   }
   const hasCam = !!cur.local?.getVideoTracks().some((tr) => tr.readyState === 'live');
   const camOn = hasCam && !cur.camOff && !cur.sharing;
-  // screen sharing (desktop browsers and the desktop app)
-  if (navigator.mediaDevices?.getDisplayMedia) {
-    ui.controls.append(btn(cur.sharing ? 'on' : '', 'grid', cur.sharing ? t('call.screen_stop') : t('call.screen'), toggleScreen, t('call.screen_short')));
-  }
-  ui.controls.append(withMenu(btn(camOn ? 'on' : 'off', 'video', camOn ? t('call.camera_off') : t('call.camera_on'), toggleCamera,
-    camOn ? t('call.video_off') : t('call.video_on')), (anchor) => deviceMenu(anchor, 'cam')));
-  ui.controls.append(btn('decline end', 'phone', t('call.hangup'), () => hangup('hangup'), t('call.hangup_short')));
-  ui.controls.append(withMenu(btn(cur.muted ? 'off' : '', 'mic', cur.muted ? t('call.unmute') : t('call.mute'), () => {
+  // main row: the four things you need all the time, far enough apart to hit with a thumb
+  const main = h('div', { class: 'call-row cc-main' });
+  main.append(btn(cur.muted ? 'off' : '', 'mic', cur.muted ? t('call.unmute') : t('call.mute'), () => {
     cur.muted = !cur.muted;
     cur.local?.getAudioTracks().forEach((tr) => { tr.enabled = !cur.muted; });
     renderControls();
-  }, cur.muted ? t('call.unmute_short') : t('call.mute_short')), (anchor) => deviceMenu(anchor, 'mic')));
+  }, cur.muted ? t('call.unmute_short') : t('call.mute_short')));
+  main.append(btn(camOn ? 'on' : 'off', 'video', camOn ? t('call.camera_off') : t('call.camera_on'), toggleCamera,
+    camOn ? t('call.video_off') : t('call.video_on')));
   if (window.SuhbatNative?.setSpeaker) {
-    ui.controls.append(btn(cur.speaker ? 'on' : '', 'speaker', cur.speaker ? t('call.speaker_off') : t('call.speaker_on'), toggleSpeaker, cur.speaker ? t('call.earpiece_short') : t('call.speaker_short')));
+    main.append(btn(cur.speaker ? 'on' : '', 'speaker', cur.speaker ? t('call.speaker_off') : t('call.speaker_on'), toggleSpeaker, cur.speaker ? t('call.earpiece_short') : t('call.speaker_short')));
   }
-  if ((cur.cams?.length || 0) > 1 && camOn) ui.controls.append(btn('', 'chat', t('call.switch_camera'), switchCamera, t('call.flip')));
-  ui.controls.append(btn(ui.panel ? 'on' : '', 'settings', t('call.settings'), toggleDevicePanel, t('call.settings_short')));
+  main.append(btn('decline end', 'phone', t('call.hangup'), () => hangup('hangup'), t('call.hangup_short')));
+  // secondary row: smaller, labelled pills (devices and their menus live in "Settings")
+  const extra = h('div', { class: 'call-row cc-extra' });
+  const pill = (cls, ico, label, fn) => h('button', { class: `call-pill ${cls}`, type: 'button', onclick: fn }, icon(ico, 18), h('span', null, label));
+  if (navigator.mediaDevices?.getDisplayMedia) {
+    extra.append(pill(cur.sharing ? 'on' : '', 'grid', cur.sharing ? t('call.screen_stop') : t('call.screen'), toggleScreen));
+  }
+  if ((cur.cams?.length || 0) > 1 && camOn) extra.append(pill('', 'chat', t('call.flip'), switchCamera));
+  extra.append(pill(ui.panel ? 'on' : '', 'settings', t('call.settings_short'), toggleDevicePanel));
+  ui.controls.append(main, extra);
+  wakeControls();
+}
+
+// Video calls: the controls fade away after a few seconds, a tap on the picture brings them back.
+let idleTimer = 0;
+function wakeControls() {
+  if (!ui) return;
+  ui.root.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (!cur || cur.state === 'incoming' || ui.panel) return;
+  if (!ui.root.classList.contains('video') || !ui.root.classList.contains('live') || ui.root.classList.contains('rvoff')) return;
+  idleTimer = setTimeout(() => { if (ui && !ui.panel && !document.querySelector('.menu')) ui.root.classList.add('idle'); }, 4500);
 }
 
 /** A control with a small chevron that opens a device list (like Telegram's call window). */
@@ -492,7 +514,7 @@ function newPc() {
     ui.remote.play?.().catch(() => {});
     if (e.track.kind === 'video') {
       // the other side turned the camera / screen on or off: show video or fall back to the avatar
-      const show = () => { ui?.root.classList.add('video'); ui?.root.classList.remove('rvoff'); if (cur) cur.video = true; };
+      const show = () => { ui?.root.classList.add('video'); ui?.root.classList.remove('rvoff'); if (cur) cur.video = true; wakeControls(); };
       const hide = () => ui?.root.classList.add('rvoff');
       e.track.onmute = hide;
       e.track.onunmute = show;
@@ -529,7 +551,7 @@ function newPc() {
         startStats();
       }
       setStatus('');
-      ui?.root.classList.add('live');
+      ui?.root.classList.add('live'); wakeControls();
     } else if (st === 'disconnected' || st === 'failed') {
       setStatus(t('call.reconnecting'));
       scheduleRestart(st === 'failed' ? 0 : 3000);

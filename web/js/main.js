@@ -26,6 +26,7 @@ import { handleBack } from './backnav.js';
 import { renderGroupCallBar as renderGcallBar, restorePendingUploads } from './chat.js';
 import { checkForUpdate, initUpdates } from './updates.js';
 import { clearAll as clearMediaCache } from './mediacache.js';
+import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 
 const root = document.getElementById('root');
 let appEl = null;
@@ -103,6 +104,7 @@ async function loadChats() {
     if (c.peer) S.users.set(c.peer.id, c.peer);
   }
   fire('chats');
+  snapSaveBoot(() => ({ user: S.me, chats: [...S.chats.values()] }));
   loadFolders();
   refreshGroupCalls();
 }
@@ -138,7 +140,7 @@ on('gcalls', () => { if (S.active) renderGcallBar(); });
 
 // ---------------------------------------------------------------- realtime events
 function notify(chat, m) {
-  if (isMuted(chat) || m.sender_id === S.me.id) return;
+  if (isMuted(chat) || m.sender_id === S.me.id || m.silent) return;
   const visibleHere = document.visibilityState === 'visible' && S.active === chat.id;
   if (visibleHere) return;
   if (isQuietNow()) return; // "do not disturb" hours
@@ -294,6 +296,21 @@ function handleHash() {
 }
 window.addEventListener('hashchange', handleHash);
 
+let paintedFor = null;
+
+/** Start from the last snapshot: the chat list shows at once, the network only refreshes it. */
+async function paintFromSnapshot() {
+  const snap = await Promise.race([snapGet('boot'), new Promise((r) => setTimeout(r, 400))]);
+  if (!snap?.user || !Array.isArray(snap.chats) || S.me) return;
+  S.me = snap.user;
+  S.users.set(snap.user.id, snap.user);
+  buildApp();
+  for (const c of snap.chats) { S.chats.set(c.id, c); if (c.peer) S.users.set(c.peer.id, c.peer); }
+  paintedFor = snap.user.id;
+  fire('chats');
+  syncView();
+}
+
 async function enter(user) {
   // Android app: tell the native side which server to keep a background connection to (also right after a sign-in)
   try { window.SuhbatNative?.configure?.(location.origin); } catch { /* not the Android app */ }
@@ -302,7 +319,8 @@ async function enter(user) {
   S.me = user;
   S.users.set(user.id, user);
   outbox.clearForOtherUsers();
-  buildApp();
+  if (paintedFor !== user.id) buildApp();
+  paintedFor = null;
   try { setConfig(await api('GET', '/api/config')); } catch { /* defaults */ }
   try {
     await loadChats();
@@ -331,6 +349,8 @@ async function askForEmail() {
 
 function loggedOut() {
   clearMediaCache().catch(() => {});
+  snapClear();
+  paintedFor = null;
   disconnect();
   S.me = null;
   S.chats.clear();
@@ -373,6 +393,7 @@ on('me', () => {
     });
   }
   try {
+    await paintFromSnapshot().catch(() => {});
     const r = await api('GET', '/api/me');
     await enter(r.user);
     syncPush();
@@ -406,7 +427,15 @@ on('me', () => {
     const wanted = Number(new URLSearchParams(location.search).get('chat'));
     if (Number.isInteger(wanted) && wanted > 0 && S.chats.has(wanted)) fire('open-chat', wanted);
   } catch (e) {
-    if (e.status === 0 && S.me) return;
+    if (e.status === 0 && S.me) {
+      // started from the snapshot while offline: keep trying until the server answers
+      const again = async () => {
+        try { await enter((await api('GET', '/api/me')).user); } catch (e2) { if (e2.status === 0) setTimeout(again, 5000); else loggedOut(); }
+      };
+      setTimeout(again, 3000);
+      return;
+    }
+    if (S.me) { S.me = null; S.chats.clear(); snapClear(); }
     showLogin(root, { onLoggedIn: enter });
     if (e.status === 0) toast(t('net.offline'));
   }
@@ -420,6 +449,10 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (S.active && appEl.dataset.view === 'chat' && matchMedia('(max-width: 600px)').matches) closeChat();
     fire('focus-search');
+  } else if (mod && (e.key === '/' || e.key === '?')) {
+    e.preventDefault();
+    const rows = [['Ctrl + K', 'keys.search'], ['Ctrl + ,', 'keys.settings'], ['Ctrl + I', 'keys.info'], ['Alt + ↑ / ↓', 'keys.switch'], ['Esc', 'keys.close'], ['Enter', 'keys.send'], ['Shift + Enter', 'keys.newline'], ['Ctrl + /', 'keys.help']];
+    modal({ title: t('keys.title'), body: h('div', { class: 'keys-list' }, rows.map(([k2, l]) => h('div', { class: 'prop-row' }, h('kbd', null, k2), h('span', null, t(l))))) });
   } else if (mod && e.key === ',') {
     e.preventDefault();
     import('./dialogs.js').then((d) => d.openSettings());

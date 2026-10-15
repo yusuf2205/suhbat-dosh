@@ -1487,3 +1487,31 @@ html[data-motion="lite"] *, html[data-motion="lite"] *::before, html[data-motion
   .print-page { display: block; width: 100%; page-break-after: always; }
 }
 @media (max-width: 700px) { .pdf-title { display: none; } .pdf-thumbs { width: 110px; } .pdf-sep { display: none; } }
+
+/* ===== call controls: roomy, two rows, auto-hide in video calls ===== */
+.call-card .call-controls { display: grid; gap: 18px; justify-items: center; padding: 0 16px calc(26px + env(safe-area-inset-bottom)); flex-wrap: nowrap; transition: opacity .35s ease, transform .35s ease; }
+.call-row { display: flex; justify-content: center; align-items: flex-start; }
+.call-row.cc-main { gap: clamp(22px, 7vw, 40px); }
+.call-row.cc-extra { gap: 12px; flex-wrap: wrap; }
+.call-card .call-ctl .call-btn { width: 64px; height: 64px; }
+.call-card .call-btn.end { width: 72px; height: 72px; }
+.call-row.cc-main .call-ctl:last-child { margin-left: clamp(8px, 3vw, 20px); }
+.call-ctl { gap: 10px; }
+.call-ctl span { font-size: .78rem; max-width: 92px; }
+.call-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 22px; background: rgba(255,255,255,.16); color: #fff; backdrop-filter: blur(8px); font: inherit; font-size: .85rem; cursor: pointer; transition: background-color .2s, transform .15s; }
+.call-pill:hover { background: rgba(255,255,255,.28); }
+.call-pill:active { transform: scale(.95); }
+.call-pill.on { background: rgba(255,255,255,.32); }
+.call-top, .call-fs { transition: opacity .35s ease; }
+.call-overlay.idle .call-controls, .call-overlay.idle .call-top, .call-overlay.idle .call-fs { opacity: 0; pointer-events: none; }
+.call-overlay.idle .call-controls { transform: translateY(14px); }
+.call-overlay.idle .call-card { cursor: none; }
+.call-local { transition: bottom .35s ease; }
+.call-overlay.idle .call-local { bottom: calc(24px + env(safe-area-inset-bottom)); }
+@media (max-width: 380px) { .call-card .call-ctl .call-btn { width: 58px; height: 58px; } .call-card .call-btn.end { width: 66px; height: 66px; } }
+
+.qr-box { display: grid; gap: 12px; justify-items: center; text-align: center; }
+.qr-canvas { width: min(280px, 70vw); height: auto; image-rendering: pixelated; border-radius: 12px; border: 1px solid rgba(0,0,0,.1); }
+.qr-actions { justify-content: center; gap: 10px; }
+.compress-opt { gap: 10px; align-items: center; margin: 10px 0; cursor: pointer; }
+.keys-list kbd { font: inherit; font-size: .85rem; background: rgba(127,127,127,.18); padding: 2px 8px; border-radius: 6px; }

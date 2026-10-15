@@ -234,7 +234,7 @@ public class PushService extends Service {
     }
 
     private void onMessage(JSONObject m, String cookie, String origin) {
-        if (m == null || appVisible) return;
+        if (m == null || appVisible || m.optBoolean("silent")) return;
         if (m.optLong("sender_id") == myId) return;
         String kind = m.optString("kind");
         if ("call".equals(kind)) return;

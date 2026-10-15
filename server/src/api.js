@@ -992,7 +992,7 @@ function assertCanPost(chat, me, userId) {
 }
 
 /** Insert + fan out one message. Idempotent on (chat, sender, client_id). */
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null }) {
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1017,7 +1017,8 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     details: { kind, reply_to: replyTo, forwarded_from: forwardFrom, file: message.file ? { id: message.file.id, name: message.file.name, size: message.file.size, mime: message.file.mime } : null, length: text.length },
   });
   const ids = memberIds(chat.id);
-  emit(ids, { type: EVENTS.MESSAGE_NEW, message });
+  // "send without sound": the flag only travels with the live event, nobody is notified or beeped
+  emit(ids, { type: EVENTS.MESSAGE_NEW, message: silent ? { ...message, silent: true } : message });
   // recipients with a live socket have received it: advance their delivered marker
   for (const uid of ids) {
     if (uid === user.id || !isOnline(uid)) continue;
@@ -1026,7 +1027,7 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   }
   try { notifyBots(chat, getMessage(id)); } catch (e) { log('error', 'notifyBots', { err: e.message }); }
   try { handleFatherMessage(chat, getMessage(id)); } catch (e) { log('error', 'botfather', { err: e.message }); }
-  try { pushNewMessage(chat, getMessage(id)); } catch (e) { log('error', 'push', { err: e.message }); }
+  if (!silent) { try { pushNewMessage(chat, getMessage(id)); } catch (e) { log('error', 'push', { err: e.message }); } }
   try { checkSpam(user, chat, text); } catch (e) { log('error', 'spam', { err: e.message }); }
   return { message, duplicate: false };
 }
@@ -1082,7 +1083,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 
