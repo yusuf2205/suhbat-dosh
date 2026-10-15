@@ -7,7 +7,7 @@ const T = {
     lead: 'Свой мессенджер: переписка, файлы и голосовые сообщения. Данные хранятся на сервере владельца.',
     web: 'Открыть веб-версию',
     howto: 'Как установить',
-    foot: 'Приложения подключаются к серверу Suhbat-dosh. Входите через Telegram.',
+    foot: 'Приложения подключаются к серверу Suhbat-dosh. Вход по логину и паролю.',
     download: 'Скачать',
     recommended: 'Для вашего устройства',
     soon: 'Скоро',
@@ -15,7 +15,7 @@ const T = {
     size: 'Размер',
     pwa: 'Установить как приложение',
     win: 'Windows', linux: 'Linux', android: 'Android', macos: 'macOS', ios: 'iPhone / iPad',
-    installer: 'Установщик', portable: 'Портативная версия (zip)', archive: 'Архив (tar.gz)', appimage: 'AppImage', deb: 'Пакет .deb', apk: 'APK-файл', dmg: 'Образ .dmg',
+    installer: 'Установщик', portable: 'Портативная (zip)', archive: 'Архив (tar.gz)', appimage: 'AppImage', deb: 'Пакет .deb', apk: 'APK-файл', dmg: 'Образ .dmg',
     none: 'Файлы ещё не загружены. Загляните позже.',
     h_win: ['Скачайте и запустите установщик.', 'Если Windows покажет предупреждение SmartScreen: «Подробнее» → «Выполнить в любом случае» (приложение пока без цифровой подписи).', 'При первом запуске введите адрес сервера (подставится автоматически).'],
     h_android: ['Скачайте APK на телефон и откройте его.', 'Разрешите установку из этого источника, когда Android попросит.', 'Если Play Protect предупредит — выберите «Всё равно установить».'],
@@ -28,7 +28,7 @@ const T = {
     lead: 'O‘z messenjeringiz: yozishmalar, fayllar va ovozli xabarlar. Ma’lumotlar egasining serverida saqlanadi.',
     web: 'Veb-versiyani ochish',
     howto: 'O‘rnatish',
-    foot: 'Ilovalar Suhbat-dosh serveriga ulanadi. Telegram orqali kiring.',
+    foot: 'Ilovalar Suhbat-dosh serveriga ulanadi. Login va parol bilan kiring.',
     download: 'Yuklab olish',
     recommended: 'Qurilmangiz uchun',
     soon: 'Tez orada',
@@ -36,7 +36,7 @@ const T = {
     size: 'Hajmi',
     pwa: 'Ilova sifatida o‘rnatish',
     win: 'Windows', linux: 'Linux', android: 'Android', macos: 'macOS', ios: 'iPhone / iPad',
-    installer: 'O‘rnatuvchi', portable: 'Portativ versiya (zip)', archive: 'Arxiv (tar.gz)', appimage: 'AppImage', deb: '.deb paketi', apk: 'APK fayl', dmg: '.dmg obrazi',
+    installer: 'O‘rnatuvchi', portable: 'Portativ (zip)', archive: 'Arxiv (tar.gz)', appimage: 'AppImage', deb: '.deb paketi', apk: 'APK fayl', dmg: '.dmg obrazi',
     none: 'Fayllar hali yuklanmagan. Keyinroq qaytib keling.',
     h_win: ['O‘rnatuvchini yuklab oling va ishga tushiring.', 'SmartScreen ogohlantirsa: «Batafsil» → «Baribir bajarish» (ilova hali raqamli imzosiz).', 'Birinchi ishga tushirishda server manzilini kiriting (avtomatik to‘ldiriladi).'],
     h_android: ['APK’ni telefonga yuklab oching.', 'Android so‘raganda ushbu manbadan o‘rnatishga ruxsat bering.', 'Play Protect ogohlantirsa — «Baribir o‘rnatish».'],
@@ -125,6 +125,12 @@ function split(p) {
 const filesFor = (p) => split(p).latest;
 
 function dlButton(p, f, { big = false } = {}) {
+  if (!big) {
+    const v = verOf(f.name);
+    return h('a', { class: 'file-row', href: `/downloads/${encodeURIComponent(f.name)}`, download: f.name },
+      h('span', { class: 'fr-main' }, h('b', null, t(KIND_LABEL(f.name))), h('small', null, [v ? `v${v}` : '', fmtSize(f.size)].filter(Boolean).join(' · '))),
+      h('span', { class: 'fr-dl', 'aria-hidden': 'true' }, glyph('download', 20)));
+  }
   return h('a', { class: `btn cta${big ? ' big' : ''}`, href: `/downloads/${encodeURIComponent(f.name)}`, download: f.name },
     h('span', { class: 'cta-ico', 'aria-hidden': 'true' }, glyph('download', big ? 24 : 20)),
     h('span', { class: 'cta-text' }, big ? `${t('download')} — ${t(p.id)}` : `${t(KIND_LABEL(f.name))}`),
@@ -146,8 +152,8 @@ function render() {
       primary.append(h('div', { class: 'rec-badge' }, t('recommended')));
     }
     if (installEvent) {
-      primary.append(h('button', { class: 'btn big cta', type: 'button', onclick: async () => { installEvent.prompt(); installEvent = null; render(); } },
-        h('span', { class: 'cta-ico', 'aria-hidden': 'true' }, glyph('plus', 22)), h('span', { class: 'cta-text' }, t('pwa'))));
+      primary.append(h('button', { class: 'btn secondary pwa', type: 'button', onclick: async () => { installEvent.prompt(); installEvent = null; render(); } },
+        glyph('plus', 18), h('span', null, t('pwa'))));
     }
   }
 
@@ -175,7 +181,7 @@ function render() {
 
 // small feedback when a download starts: arrow drops into the tray and turns into a check
 document.addEventListener('click', (e) => {
-  const a = e.target.closest?.('a.cta[download]');
+  const a = e.target.closest?.('a.cta[download], a.file-row[download]');
   if (!a) return;
   a.classList.add('busy');
   setTimeout(() => a.classList.remove('busy'), 2200);
