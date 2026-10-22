@@ -199,57 +199,128 @@ export async function openScheduled() {
 
 // ---------------------------------------------------------------- polls
 export function openPollCreate(chatId) {
-  const q = h('input', { class: 'input', maxLength: 255, placeholder: t('poll.question'), 'aria-label': t('poll.question') });
+  let kind = 'poll';
+  let correct = 0;
+  const q = h('input', { class: 'input', maxLength: 255, 'aria-label': t('poll.question') });
   const opts = h('div', { class: 'poll-opts' });
   const multi = h('input', { type: 'checkbox', id: 'poll-multi' });
+  const multiRow = h('label', { class: 'row', for: 'poll-multi' }, multi, t('poll.allow_multi'));
+  const expl = h('input', { class: 'input', maxLength: 200, placeholder: t('poll.explanation'), 'aria-label': t('poll.explanation') });
   const err = h('div', { class: 'err', role: 'alert' });
-  const add = () => {
+  const tabs = h('div', { class: 'poll-tabs', role: 'tablist' });
+  const addBtn = h('button', { class: 'btn secondary', type: 'button', onclick: () => addRow() }, `+ ${t('poll.add')}`);
+
+  const addRow = () => {
     if (opts.children.length >= 10) return;
-    opts.append(h('input', { class: 'input', maxLength: 100, placeholder: `${t('poll.option')} ${opts.children.length + 1}`, 'aria-label': t('poll.option') }));
+    const idx = opts.children.length;
+    const input = kind === 'slots'
+      ? h('input', { class: 'input', type: 'datetime-local', 'aria-label': t('poll.slot') })
+      : h('input', { class: 'input', maxLength: 100, placeholder: `${t('poll.option')} ${idx + 1}`, 'aria-label': t('poll.option') });
+    const kids = [];
+    if (kind === 'quiz') {
+      const r = h('input', { type: 'radio', name: 'poll-correct', 'aria-label': t('poll.right'), title: t('poll.right') });
+      r.checked = idx === correct;
+      r.addEventListener('change', () => { correct = idx; });
+      kids.push(r);
+    }
+    kids.push(input);
+    opts.append(h('div', { class: 'poll-row' }, ...kids));
   };
-  add(); add();
-  const addBtn = h('button', { class: 'btn secondary', type: 'button', onclick: add }, `+ ${t('poll.add')}`);
+  const build = () => {
+    clear(tabs).append(...['poll', 'quiz', 'slots'].map((k) => h('button', {
+      class: 'chip', type: 'button', role: 'tab', 'aria-selected': String(kind === k), 'aria-pressed': String(kind === k),
+      onclick: () => { kind = k; correct = 0; build(); },
+    }, t(`poll.k_${k}`))));
+    q.placeholder = kind === 'slots' ? t('poll.slots_q') : t('poll.question');
+    clear(opts);
+    addRow(); addRow();
+    multiRow.hidden = kind !== 'poll';
+    expl.hidden = kind !== 'quiz';
+    err.textContent = '';
+  };
+  build();
+  const slotLabel = (v) => new Date(v).toLocaleString(getLang() === 'uz' ? 'uz-UZ' : 'ru-RU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const m = modal({
     title: t('poll.new'),
-    body: [q, opts, addBtn, h('label', { class: 'row', for: 'poll-multi' }, multi, t('poll.allow_multi')), err,
+    body: [tabs, q, opts, addBtn, multiRow, expl, err,
       h('button', { class: 'btn', type: 'button', onclick: async () => {
-        const options = [...opts.querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean);
+        let options = [...opts.querySelectorAll('input:not([type=radio])')].map((i) => i.value.trim());
+        if (kind === 'slots') options = options.filter(Boolean).map(slotLabel);
+        // keep the right-answer index pointing at the same option after empty rows are dropped
+        let right = correct;
+        if (kind === 'quiz') {
+          const kept = [];
+          options.forEach((v, i) => { if (v) { if (i === correct) right = kept.length; kept.push(v); } });
+          options = kept;
+          if (!options[right] || opts.querySelectorAll('input:not([type=radio])')[correct]?.value.trim() === '') { err.textContent = t('poll.need_right'); return; }
+        } else options = options.filter(Boolean);
         if (!q.value.trim() || options.length < 2) { err.textContent = t('poll.need'); return; }
         try {
-          await api('POST', `/api/chats/${chatId}/polls`, { question: q.value.trim(), options, multiple: multi.checked });
+          await api('POST', `/api/chats/${chatId}/polls`, {
+            question: q.value.trim(), options, kind, multiple: kind === 'poll' && multi.checked,
+            ...(kind === 'quiz' ? { correct: right, explanation: expl.value.trim() } : {}),
+          });
           m.close();
         } catch (e) { err.textContent = errText(e.code); }
       } }, t('chat.send'))],
   });
 }
 
+const quizResults = new Map(); // poll id -> { correct, explanation }
+
 export function pollNode(m) {
   const p = m.poll;
+  const quiz = p.kind === 'quiz';
+  const slots = p.kind === 'slots';
   const mine = new Set();
   p.options.forEach((o, i) => { if (o.votes.includes(S.me.id)) mine.add(i); });
   const total = p.options.reduce((a, o) => a + o.votes.length, 0) || 0;
+  const best = slots ? Math.max(0, ...p.options.map((o) => o.votes.length)) : 0;
   const vote = async (i) => {
     const next = new Set(mine);
     if (p.multiple) { if (next.has(i)) next.delete(i); else next.add(i); } else if (next.has(i)) next.clear(); else { next.clear(); next.add(i); }
     try { await api('POST', `/api/polls/${p.id}/vote`, { options: [...next] }); } catch (e) { toast(errText(e.code)); }
   };
+  const nameOf = (id) => S.users.get(id)?.name || (id === S.me.id ? S.me.name : '');
   const rows = p.options.map((o, i) => {
     const pct = total ? Math.round((o.votes.length / total) * 100) : 0;
     const bar = h('i', { class: 'poll-bar' });
     bar.dataset.w = String(pct);
     queueMicrotask(() => { bar.style.width = `${pct}%`; });
-    const names = o.votes.map((id) => S.users.get(id)?.name || (id === S.me.id ? S.me.name : '')).filter(Boolean).join(', ');
-    return h('button', {
-      class: `poll-opt${mine.has(i) ? ' mine' : ''}`, type: 'button', disabled: p.closed || m.pending, title: names, onclick: () => vote(i),
+    const names = o.votes.map(nameOf).filter(Boolean).join(', ');
+    const isBest = slots && best > 0 && o.votes.length === best;
+    const lockedQuiz = quiz && (mine.size > 0 || p.closed);
+    const btn = h('button', {
+      class: `poll-opt${mine.has(i) ? ' mine' : ''}${isBest ? ' best' : ''}`, type: 'button', disabled: p.closed || m.pending || lockedQuiz, title: names, onclick: () => vote(i),
       'aria-pressed': String(mine.has(i)),
-    }, h('span', { class: 'poll-mark' }, mine.has(i) ? icon('check', 14) : null), h('span', { class: 'poll-text' }, o.text),
-    h('span', { class: 'poll-pct' }, `${pct}%`), bar);
+    }, h('span', { class: 'poll-mark' }, mine.has(i) ? icon('check', 14) : null), h('span', { class: 'poll-text' }, isBest ? `\u2605 ${o.text}` : o.text),
+    h('span', { class: 'poll-pct' }, slots ? String(o.votes.length) : `${pct}%`), bar);
+    // "when are you free": the names are always visible under the slot
+    return slots && names ? h('div', { class: 'poll-slot' }, btn, h('small', { class: 'poll-who' }, names)) : btn;
   });
+  const optButtons = () => rows.map((r) => (r.classList.contains('poll-opt') ? r : r.querySelector('.poll-opt')));
+  const note = h('div', { class: 'poll-expl', hidden: true });
+  const paintQuiz = (res) => {
+    if (!res || res.correct == null) return;
+    optButtons().forEach((b, i) => {
+      b.classList.toggle('right', i === res.correct);
+      b.classList.toggle('wrong', mine.has(i) && i !== res.correct);
+    });
+    if (res.explanation) { note.textContent = res.explanation; note.hidden = false; }
+  };
+  if (quiz) {
+    const done = p.correct != null ? { correct: p.correct, explanation: p.explanation } : quizResults.get(p.id);
+    if (done) queueMicrotask(() => paintQuiz(done));
+    else if (mine.size || p.closed || m.sender_id === S.me.id) {
+      api('GET', `/api/polls/${p.id}/result`).then((r) => { if (r.correct != null) { quizResults.set(p.id, r); paintQuiz(r); } }).catch(() => {});
+    }
+  }
   const author = m.sender_id === S.me.id;
-  return h('div', { class: 'poll' },
+  const sub = p.closed ? t('poll.closed') : quiz ? t('poll.quiz') : slots ? t('poll.slots_hint') : p.multiple ? t('poll.multi') : t('poll.single');
+  return h('div', { class: `poll${quiz ? ' quiz' : ''}${slots ? ' slots' : ''}` },
     h('div', { class: 'poll-q' }, p.question),
-    h('div', { class: 'poll-sub' }, p.closed ? t('poll.closed') : p.multiple ? t('poll.multi') : t('poll.single')),
-    rows,
+    h('div', { class: 'poll-sub' }, sub),
+    rows, note,
     h('div', { class: 'poll-foot' }, `${p.total_voters} ${t('poll.voters')}`,
       author && !p.closed ? h('button', { class: 'btn link', type: 'button', onclick: () => api('POST', `/api/polls/${p.id}/close`).catch((e) => toast(errText(e.code))) }, t('poll.close')) : null));
 }

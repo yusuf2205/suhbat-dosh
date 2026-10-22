@@ -10,7 +10,7 @@ import { REGISTRATION_MODES, createInvite, getSetting, registrationMode, setSett
 import { broadcast } from './notify.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
-import { backupPath, createBackup, deleteBackup, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot } from './ops.js';
+import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
 export const admin = express.Router();
@@ -350,7 +350,7 @@ admin.post('/broadcast', (req, res) => {
 // ------------------------------------------------------------------ server health & backups
 admin.get('/system', (_req, res) => res.json(systemSnapshot()));
 
-admin.get('/backups', (_req, res) => res.json({ backups: listBackups(), mirror: { ...mirrorConfig(), last: mirrorStatus.last } }));
+admin.get('/backups', (_req, res) => res.json({ backups: listBackups(), mirror: { ...mirrorConfig(), last: mirrorStatus.last }, files_mirror: filesMirror.last }));
 
 admin.post('/backups', (req, res) => {
   const b = createBackup('manual');

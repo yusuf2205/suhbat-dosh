@@ -93,7 +93,9 @@ export function pollOut(row) {
   for (const v of q.all('SELECT user_id, option FROM poll_votes WHERE poll_id = ? ORDER BY rowid', p.id)) votes[v.option]?.push(v.user_id);
   const voters = new Set(q.all('SELECT DISTINCT user_id FROM poll_votes WHERE poll_id = ?', p.id).map((r) => r.user_id));
   return {
-    id: p.id, question: p.question, multiple: !!p.multiple, closed: !!p.closed, total_voters: voters.size,
+    id: p.id, kind: p.kind || 'poll', question: p.question, multiple: !!p.multiple, closed: !!p.closed, total_voters: voters.size,
+    // the right answer of a quiz is revealed only when it is over (a voter gets it from /polls/:id/result)
+    ...(p.kind === 'quiz' && p.closed ? { correct: p.correct, explanation: p.explanation } : {}),
     options: options.map((text, i) => ({ text, votes: votes[i] })),
   };
 }

@@ -649,7 +649,22 @@ async function viewServer() {
       : h('p', null, h('span', { class: 'pill warn' }, 'не настроен'), ' Без TURN звонки (особенно видео) между мобильными сетями и за строгим NAT часто не соединяются. ',
         turn.error ? `Ошибка Cloudflare: ${turn.error}. ` : '',
         'Самый простой путь: Cloudflare → Realtime → TURN → создать ключ, затем указать CF_TURN_KEY_ID и CF_TURN_API_TOKEN в .env на NAS и перезапустить контейнер.'));
-  setView(kpis, turnPanel,
+  // one glance: is everything fine?
+  const age = bk.backups[0] ? Date.now() - bk.backups[0].created_at : Infinity;
+  const fm = bk.files_mirror;
+  const mark = (ok, warn) => h('span', { class: `pill ${ok ? 'ok' : warn ? 'warn' : 'bad'}` }, ok ? 'в порядке' : warn ? 'внимание' : 'проблема');
+  const ago = (ms) => (ms === Infinity ? 'нет копий' : ms < 3600e3 ? `${Math.max(1, Math.round(ms / 60e3))} мин назад` : ms < 86400e3 ? `${Math.round(ms / 3600e3)} ч назад` : `${Math.round(ms / 86400e3)} д назад`);
+  const healthRows = [
+    ['Копия базы', mark(age < 8 * 3600e3, age < 36 * 3600e3), `последняя: ${ago(age)}`],
+    ['Копия файлов пользователей', fm ? mark(!fm.error, false) : mark(false, true), fm ? (fm.error ? fm.error : `проверка ${ago(Date.now() - fm.at)}, добавлено: ${fm.copied} (${fmtBytes(fm.bytes)})`) : 'ещё не запускалась (первый запуск через минуту после старта)'],
+    ['Место на диске', mark(used < 85, used < 93), `свободно ${fmtBytes(n.disk_free)} из ${fmtBytes(n.disk_total)}`],
+    ['Звонки (TURN)', mark(!!(n.turn && n.turn.configured), false), n.turn && n.turn.configured ? 'подключён' : 'не настроен: видеозвонки через мобильные сети могут не соединяться'],
+    ['Работа без перезапуска', mark(true, false), fmtUp(n.uptime)],
+  ];
+  const healthPanel = h('div', { class: 'panel' }, h('h2', null, icon('shield', 18), 'Состояние сервера'),
+    h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('tbody', null,
+      ...healthRows.map(([name, pill, text]) => h('tr', null, h('td', null, name), h('td', null, pill), h('td', { class: 'muted' }, text)))))));
+  setView(healthPanel, kpis, turnPanel,
     h('div', { class: 'grid2' },
       h('div', { class: 'panel' }, h('h2', null, 'Процессор, % (последние сутки)'), spark(S.map((x) => x.cpu), { max: 100, unit: '%' })),
       h('div', { class: 'panel' }, h('h2', null, 'Память, %'), spark(S.map((x) => x.mem), { max: 100, unit: '%', color: '#3b82f6' }))),
@@ -657,7 +672,7 @@ async function viewServer() {
       h('div', { class: 'panel' }, h('h2', null, 'Запросов в минуту'), spark(S.map((x) => x.req), { color: '#22c55e' })),
       h('div', { class: 'panel' }, h('h2', null, 'Подключений в реальном времени'), spark(S.map((x) => x.ws), { color: '#a855f7' }))),
     h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Резервные копии базы'),
-      h('p', { class: 'muted' }, 'Копия базы (пользователи, чаты, сообщения) делается автоматически раз в сутки и хранится в папке backups на NAS; последние 20 сохраняются. Вложения лежат в папке data/files и копируются скриптом резервного копирования.'),
+      h('p', { class: 'muted' }, 'Копия базы (пользователи, чаты, сообщения) делается автоматически каждые 6 часов и хранится в папке backups на NAS; последние 40 сохраняются. Загруженные файлы копируются в backups/files: копируются только новые, ничего не удаляется.'),
       h('div', { class: 'toolbar' }, make),
       h('p', { class: 'muted' }, mirrorLine(bk.mirror)),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },

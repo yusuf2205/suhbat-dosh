@@ -1535,3 +1535,36 @@ html.locked body > *:not(.lock-screen) { visibility: hidden; }
 @keyframes lockshake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
 .lock-input { text-align: center; font-size: 1.6rem; letter-spacing: .4em; }
 .theme-tile.schedule .tt-prev { background: linear-gradient(180deg, #fff7d6 50%, #1c1d22 50%); }
+
+/* ===== quizzes and slot polls ===== */
+.poll-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.poll-tabs .chip[aria-selected='true'] { background: var(--brand); color: var(--brand-ink); }
+.poll-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.poll-row .input { flex: 1; }
+.poll-opt.right { outline: 2px solid #22c55e; background: color-mix(in srgb, #22c55e 18%, var(--surface)); }
+.poll-opt.wrong { outline: 2px solid #ef4444; background: color-mix(in srgb, #ef4444 14%, var(--surface)); }
+.poll-opt.best { outline: 2px solid var(--brand); }
+.poll-slot { display: grid; gap: 2px; margin-bottom: 4px; }
+.poll-who { color: var(--muted); padding: 0 8px 4px; font-size: .78rem; }
+.poll-expl { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-size: .9rem; }
+
+/* ===== round video messages ===== */
+.vn-overlay { position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; background: rgba(10, 9, 6, .82); backdrop-filter: blur(8px); padding: 16px; }
+.vn-box { display: grid; justify-items: center; gap: 14px; color: #fff; text-align: center; max-width: 360px; width: 100%; }
+.vn-box h2 { margin: 0; font-size: 1.1rem; }
+.vn-circle, .vn-msg { position: relative; border-radius: 50%; overflow: hidden; background: #111; flex: none; }
+.vn-circle { width: min(72vw, 300px); aspect-ratio: 1; }
+.vn-video, .vn-msg-video { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 50%; }
+.vn-video { transform: scaleX(-1); }
+.vn-ring { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; --p: 0deg;
+  background: conic-gradient(var(--brand) var(--p), transparent 0); -webkit-mask: radial-gradient(circle, transparent calc(50% - 5px), #000 calc(50% - 4px)); mask: radial-gradient(circle, transparent calc(50% - 5px), #000 calc(50% - 4px)); }
+.vn-time { font-variant-numeric: tabular-nums; font-size: 1.1rem; }
+.vn-hint { margin: 0; opacity: .8; font-size: .9rem; }
+.vn-actions { display: flex; align-items: center; justify-content: center; gap: 28px; }
+.vn-rec { width: 68px; height: 68px; border-radius: 50%; border: 4px solid #fff; background: #e5484d; cursor: pointer; transition: transform .15s, border-radius .2s; }
+.vn-rec.on { border-radius: 18px; transform: scale(.82); }
+.vn-side { width: 48px; height: 48px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .16); color: #fff; display: grid; place-items: center; cursor: pointer; }
+.vn-side:hover { background: rgba(255, 255, 255, .3); }
+.vn-msg { width: min(62vw, 240px); aspect-ratio: 1; border: 0; padding: 0; cursor: pointer; display: block; }
+.vn-dur { position: absolute; left: 10px; bottom: 10px; padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, .55); color: #fff; font-size: .78rem; }
+.vn-msg::after { content: ''; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .35); pointer-events: none; }

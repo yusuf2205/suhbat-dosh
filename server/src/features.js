@@ -177,8 +177,18 @@ features.post('/chats/:id/polls', (req, res) => {
   const raw = Array.isArray(req.body?.options) ? req.body.options : [];
   const options = raw.map((o) => (typeof o === 'string' ? str(o, 'option', { max: 100 }) : '')).filter(Boolean);
   if (options.length < 2 || options.length > 10) throw new HttpError(400, 'invalid_input', 'options 2..10');
+  const kind = ['poll', 'quiz', 'slots'].includes(req.body?.kind) ? req.body.kind : 'poll';
+  let correct = null;
+  let explanation = '';
+  if (kind === 'quiz') {
+    correct = Number(req.body?.correct);
+    if (!Number.isInteger(correct) || correct < 0 || correct >= options.length) throw new HttpError(400, 'invalid_input', 'correct');
+    explanation = str(req.body?.explanation || '', 'explanation', { max: 200 });
+  }
+  const multiple = kind === 'slots' ? 1 : kind === 'quiz' ? 0 : (req.body?.multiple ? 1 : 0);
   const out = host.postMessage({ chat, user: req.user, text: question, kind: 'poll' });
-  q.run('INSERT INTO polls (message_id, question, options, multiple) VALUES (?,?,?,?)', out.message.id, question, JSON.stringify(options), req.body?.multiple ? 1 : 0);
+  q.run('INSERT INTO polls (message_id, question, options, multiple, kind, correct, explanation) VALUES (?,?,?,?,?,?,?)',
+    out.message.id, question, JSON.stringify(options), multiple, kind, correct, explanation);
   res.status(201).json({ message: pollMessageUpdate(out.message.id) });
 });
 
@@ -191,11 +201,23 @@ features.post('/polls/:id/vote', (req, res) => {
   const n = JSON.parse(p.options).length;
   const picks = [...new Set((Array.isArray(req.body?.options) ? req.body.options : []).map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < n);
   if (!p.multiple && picks.length > 1) throw new HttpError(400, 'invalid_input');
+  if (p.kind === 'quiz' && q.get('SELECT 1 AS x FROM poll_votes WHERE poll_id = ? AND user_id = ?', p.id, req.user.id)) throw new HttpError(400, 'already_voted'); // one try per person
   tx(() => {
     q.run('DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?', p.id, req.user.id);
     for (const i of picks) q.run('INSERT INTO poll_votes (poll_id, user_id, option) VALUES (?,?,?)', p.id, req.user.id, i);
   });
   res.json({ message: pollMessageUpdate(p.message_id) });
+});
+
+// A quiz tells its right answer only to people who have answered (or to everybody once it is closed).
+features.get('/polls/:id/result', (req, res) => {
+  const p = q.get('SELECT * FROM polls WHERE id = ?', int(req.params.id, 'id'));
+  if (!p) throw new HttpError(404, 'not_found');
+  const m = getMessage(p.message_id);
+  requireMember(m.chat_id, req.user.id);
+  const voted = !!q.get('SELECT 1 AS x FROM poll_votes WHERE poll_id = ? AND user_id = ?', p.id, req.user.id);
+  if (p.kind !== 'quiz' || !(voted || p.closed || m.sender_id === req.user.id)) return res.json({ correct: null });
+  return res.json({ correct: p.correct, explanation: p.explanation });
 });
 
 features.post('/polls/:id/close', (req, res) => {

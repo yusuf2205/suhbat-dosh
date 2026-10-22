@@ -1,5 +1,7 @@
 import { snapGet, snapSet } from './snap.js';
 import { canCompress, compressImage } from './imgcompress.js';
+import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
+import { canCompressVideo, compressVideo } from './videocompress.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
@@ -447,6 +449,11 @@ function renderComposer() {
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
       { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
+      { label: t('vnote.title'), onClick: async () => {
+        const chatId = S.active;
+        const r = await recordVideoNote();
+        if (r) uploadFile(chatId, r.blob, `circle.${r.ext}`, { duration: r.duration });
+      } },
     ].filter((it, i) => !(isSecret(c) && i > 0))) }, icon('plus', 22)),
     h('div', { class: 'field-wrap' },
       view.ta,
@@ -697,18 +704,31 @@ function attachFile(file, onDone) {
   const squeeze = canCompress(file)
     ? h('input', { type: 'checkbox', checked: S.prefs.compress !== false })
     : null;
+  const vsqueeze = canCompressVideo(file) ? h('input', { type: 'checkbox' }) : null;
+  const abortCompress = new AbortController();
   const m = modal({
     title: file.name,
-    onClose: () => { if (url) URL.revokeObjectURL(url); onDone?.(); },
+    onClose: () => { abortCompress.abort(); if (url) URL.revokeObjectURL(url); onDone?.(); },
     body: h('div', null,
       url ? h('div', { class: 'media' }, h('img', { src: url, alt: '', style: { cursor: 'default' } }))
         : h('div', { class: 'filecard' }, h('span', { class: 'ficon' }, fileIcon(file.name, file.type, 40)),
           h('span', null, h('b', null, file.name), h('br'), h('span', { class: 'muted' }, formatBytes(file.size)))),
       h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
       squeeze ? h('label', { class: 'row compress-opt' }, squeeze, h('span', null, t('upload.compress', { size: formatBytes(file.size) }))) : null,
+      vsqueeze ? h('label', { class: 'row compress-opt' }, vsqueeze, h('span', null, t('upload.compress_video'))) : null,
       h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
-        h('button', { class: 'btn', type: 'button', onclick: async () => {
+        h('button', { class: 'btn', type: 'button', onclick: async (ev) => {
           const caption = cap.value.trim();
+          if (vsqueeze?.checked) {
+            // re-encoding runs about as long as the video: show the progress on the button, closing the dialog cancels
+            const btn = ev.currentTarget;
+            btn.disabled = true;
+            const out = await compressVideo(file, (p) => { btn.textContent = `${t('upload.compressing')} ${Math.round(p * 100)}%`; }, abortCompress.signal);
+            if (abortCompress.signal.aborted) return;
+            m.close();
+            uploadFile(c.id, out, out.name, { caption });
+            return;
+          }
           const want = squeeze?.checked;
           if (squeeze && S.prefs.compress !== want) { S.prefs.compress = want; savePrefs(); }
           m.close();
@@ -1052,6 +1072,13 @@ function buildMessage(m, c) {
   }
   bubble.append(h('button', { class: 'more', type: 'button', 'aria-label': t('msg.more'), onclick: (e) => messageMenu(e.currentTarget, m) }, '⋯'));
   bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); messageMenu(bubble, m); });
+  // double tap / double click: a quick heart, like in Telegram
+  if (typeof m.id === 'number' && !m.pending && m.kind !== 'call') {
+    bubble.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, a, video, audio, input, .poll')) return;
+      api('POST', `/api/messages/${m.id}/reactions`, { emoji: REACTIONS[1] }).catch(() => {});
+    });
+  }
   const el = h('div', { class: `msg ${mine ? 'out' : 'in'} ${m.pending ? 'pending' : ''} ${highlightId === m.id ? 'hl' : ''} ${m._enter ? 'enter' : ''}` }, bubble);
   if (selectMode && typeof m.id === 'number') {
     const on = selected.has(m.id);
@@ -1202,6 +1229,7 @@ function buildFile(m) {
     if (ratio) img.style.aspectRatio = ratio;
     return h('button', { class: 'media media-btn', type: 'button', 'aria-label': f.name, onclick: open }, img);
   }
+  if (isVideoNote(m)) return videoNoteNode(m);
   if (m.kind === 'video') {
     const poster = f.thumb ? h('img', { src: f.thumb, alt: f.name, loading: 'lazy', draggable: false }) : h('div', { class: 'poster-empty' });
     if (ratio && f.thumb) poster.style.aspectRatio = ratio;
@@ -1248,6 +1276,17 @@ function messageMenu(anchor, m) {
   if (m.text) items.push({ label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
   if (m.text && m.kind === 'text') items.push({ label: t('msg.translate'), onClick: () => translateMessage(m) });
   items.push({ label: t('msg.forward'), onClick: () => openForward(m) });
+  if (!isSecret(c) && typeof m.id === 'number' && !c.saved && m.kind !== 'call') {
+    // bookmark = a copy in "Saved messages"
+    items.push({ label: t('msg.bookmark'), onClick: async () => {
+      try {
+        const saved = (await api('POST', '/api/chats/saved')).chat;
+        S.chats.set(saved.id, saved);
+        await api('POST', `/api/chats/${saved.id}/messages`, { forward_of: m.id, client_id: uuid() });
+        toast(t('msg.bookmarked'));
+      } catch (e) { toast(errText(e.code)); }
+    } });
+  }
   if (m.file) {
     items.push({ label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });
   }

@@ -192,3 +192,4 @@ table.t tr.click:hover td { background: var(--brand-soft); }
 .adm-login-card h1 { margin: 0; font-size: 1.4rem; }
 .adm-login-card .input { width: 100%; }
 .adm-login-card .btn { width: 100%; }
+.pill.bad { color: #fff; background: #dc2626; border-color: transparent; }
