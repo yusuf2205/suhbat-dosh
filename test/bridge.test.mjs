@@ -178,10 +178,15 @@ test('an ordinary person sees and answers the personal chats but cannot delete t
   assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { auto_private: false, chats: [] })).status, 403);
   assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, kind: 'user', title: 'x', remove: true }] })).status, 403);
   assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}/personal`, { auto_private: false })).status, 403);
-  // an ordinary person's bridge is for personal chats: groups and channels are for administrators
-  assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: false }] })).status, 403);
-  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.groups_allowed, false);
-  assert.equal((await call(friend.cookie, 'GET', '/api/bridge/dialogs')).data.dialogs.every((d) => d.type === 'user'), true);
+  // groups and channels: the person picks their own, selectively, and the administrator sees them too
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.groups_allowed, true);
+  assert.equal((await mock(friend.user.id, { chat: -1001, kind: 'group', msg: 5, author: 'Бабушка', text: 'ещё не выбрана' })).forwarded, false, 'nothing from a group by default');
+  const addGroup = await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: false }] });
+  assert.equal(addGroup.status, 200);
+  const grp = addGroup.data.chats.find((c) => c.tg_chat === '-1001');
+  assert.ok(grp, 'the group is in the person\'s list');
+  await mock(friend.user.id, { chat: -1001, kind: 'group', msg: 6, author: 'Бабушка', text: 'Приходите на обед' });
+  assert.ok(await until(async () => JSON.stringify((await call(admin.cookie, 'GET', `/api/admin/chats/${grp.chat_id}/messages`)).data).includes('Приходите на обед')), 'the administrator reads the group too');
   // the person may turn "answer from here" off for a chat
   const off = await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, kind: 'user', title: 'Дилшод', two_way: false }] });
   assert.equal(off.status, 200);

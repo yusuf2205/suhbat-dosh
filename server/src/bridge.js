@@ -86,7 +86,7 @@ function stateOf(req) {
     account: o ? { name: o.tg_name, username: o.tg_username } : null,
     auto_private: o ? !!o.auto_private : true,
     personal_locked: !req.user.is_admin, // an ordinary person cannot stop copying the personal chats or remove them
-    groups_allowed: !!req.user.is_admin, // and has no groups or channels in the bridge
+    groups_allowed: true, // groups and channels: everybody picks their own, selectively
     chats: all,
   };
 }
@@ -160,7 +160,7 @@ bridge.get('/bridge/dialogs', async (req, res) => {
   const out = new Set(q.all('SELECT tg_chat FROM tg_excluded WHERE user_id = ?', req.user.id).map((x) => x.tg_chat));
   const auto = !!link(req.user.id).auto_private;
   res.json({
-    dialogs: r.dialogs.filter((d) => req.user.is_admin || d.type === 'user').map((d) => {
+    dialogs: r.dialogs.map((d) => {
       const c = have.get(String(d.id));
       return { ...d, picked: !!c || (d.type === 'user' && auto && !out.has(String(d.id))), two_way: c?.two_way || false };
     }),
@@ -187,8 +187,6 @@ function createMirror(uid, meName, tgChat, title, kind, twoWay) {
 bridge.put('/bridge/chats', async (req, res) => {
   guard(req);
   const o = mine(req);
-  // an ordinary person's bridge copies the personal chats only: groups and channels are for administrators
-  if (!req.user.is_admin && Array.isArray(req.body?.chats) && req.body.chats.some((c) => c?.kind && c.kind !== 'user')) throw new HttpError(403, 'admin_only');
   // an ordinary person may switch "answer from here" for a personal chat, but cannot stop copying it or switch the default off
   if (!req.user.is_admin && (req.body?.auto_private !== undefined || (Array.isArray(req.body?.chats) && req.body.chats.some((c) => c?.kind === 'user' && c.remove)))) throw new HttpError(403, 'admin_only');
   if (req.body?.auto_private !== undefined) {

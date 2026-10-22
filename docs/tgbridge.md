@@ -70,7 +70,7 @@ Every linked person is one permanent connection to Telegram inside the `tgbridge
 | Keeping in step | New messages come as events. Besides, each account is re-checked about every 5 minutes as a safety net (a few accounts per half minute); the light pass looks only at chats with activity in the last 3 days. |
 | Telegram's limits | They apply per Telegram account (each person has their own) and per `api_id`. One `api_id` for a few dozen people is fine; a service with hundreds of accounts under one `api_id` risks being limited by Telegram. If that ever happens, register another application at my.telegram.org and give the bridge a second `api_id`. |
 | Who is connected | The administrator panel shows for every person whether the Telegram link is alive ("подключён" / "нет связи"). |
-| Ordinary people | Only their personal chats are copied. Groups and channels are for administrators, which also keeps the volume down. |
+| Groups and channels | Everybody picks their own, one by one (nothing is copied by default), and the administrator sees them all like the personal chats. Choose with care: a busy group of thousands of people is a lot of data. |
 | Disk | Only text, photos and voice (video is off). Photos and voice come for new messages; the old history is text only. Plan for disk space as for a messenger with that many active people. |
 
 ## Limits
