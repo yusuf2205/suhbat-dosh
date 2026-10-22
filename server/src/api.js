@@ -1443,7 +1443,9 @@ api.post('/chats/:id/files', async (req, res) => {
     if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', id)?.peer_pub) { removeFile(fid); throw new HttpError(409, 'secret_not_ready'); }
     try { capt = checkEnvelope(caption); } catch (e) { removeFile(fid); throw e; }
   }
-  const type = secretChat ? null : sniff(readHead(dest), voice);
+  let type = secretChat ? null : sniff(readHead(dest), voice);
+  // a recording of a call is webm with sound only: it is audio, not a video
+  if (req.query.audio === '1' && type?.mime === 'video/webm') type = { mime: 'audio/webm', kind: 'audio' };
   // Unknown content is stored as an opaque download — it is never rendered inline.
   const mime = type?.mime ?? 'application/octet-stream';
   const kind = secretChat ? 'secret' : (type?.kind ?? 'file');

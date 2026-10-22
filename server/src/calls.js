@@ -130,6 +130,7 @@ export function handleSignal(userId, m) {
       if (!call || (userId !== call.caller && userId !== call.callee) || !call.answeredAt) return undefined;
       if (!rateLimit(`sync:${userId}`, 400, 10_000)) return undefined;
       const data = syncData(m.data);
+      if (data?.k === 'rec' && data.a === 'on' && !call.recAudited) { call.recAudited = true; audit(userId, 'call.record', { chat_id: call.chatId, target_type: 'user', target_id: other(call, userId) }); }
       if (data) emit([other(call, userId)], { type: 'call.sync', call_id: call.id, data });
       return undefined;
     }

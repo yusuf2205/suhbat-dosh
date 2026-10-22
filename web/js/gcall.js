@@ -7,6 +7,7 @@ import { icon } from './icons.js';
 import { avatar, beep, toast } from './ui.js';
 import { inCall } from './call.js';
 import { createTogether } from './together.js';
+import { createRecording } from './recording.js';
 
 let cur = null; // { chatId, local, video, peers: Map(userId -> peer), ui, started, timer, ice }
 S.gcalls ||= new Map(); // chatId -> { participants: [{id,name,audio,video}], video, started_by }
@@ -70,6 +71,7 @@ export function handleGroupCallEvent(ev) {
       if (cur?.chatId === ev.chat_id) onSignal(ev.from, ev.data).catch(() => {});
       break;
     case 'gcall.sync':
+      if (cur?.chatId === ev.chat_id && ev.data?.k === 'rec') recOf().handle(ev.data, ev.from);
       if (cur?.chatId === ev.chat_id && ev.data?.k === 'tg') {
         togetherOf().handle(ev.data, ev.from);
         if (togetherOf().active()) cur.ui.classList.remove('min'); // somebody started a video: open the room window
@@ -200,6 +202,14 @@ export async function joinGroupCall(chatId, video = false, { room = false } = {}
   fire('gcalls');
 }
 
+function recOf() {
+  cur.rec ||= createRecording({
+    host: cur.ui, chatId: cur.chatId, peers: () => cur.peers.size, send: (data) => wsSend({ type: 'gcall.sync', chat_id: cur.chatId, data }),
+    streams: () => [cur?.local, ...[...(cur?.peers.values() || [])].map((p) => p.stream)],
+  });
+  return cur.rec;
+}
+
 function togetherOf() {
   cur.tg ||= createTogether({ host: cur.ui, chatId: cur.chatId, send: (data) => wsSend({ type: 'gcall.sync', chat_id: cur.chatId, data }) });
   return cur.tg;
@@ -211,6 +221,7 @@ function buildUi(c) {
   const mic = h('button', { class: 'gc-btn', type: 'button', 'aria-label': t('call.mute') }, icon('mic', 24));
   const cam = h('button', { class: 'gc-btn', type: 'button', 'aria-label': t('call.camera_on') }, icon('video', 24));
   const tog = h('button', { class: 'gc-btn', type: 'button', 'aria-label': t('tg.title'), title: t('tg.title'), onclick: () => { const tg = togetherOf(); if (tg.active()) tg.close(); else { cur.ui.classList.remove('min'); tg.pick(); } } }, icon('play', 24));
+  const recBtn = h('button', { class: 'gc-btn', type: 'button', 'aria-label': t('rec.start'), title: t('rec.start'), onclick: () => recOf().toggle() }, icon('disk', 24));
   const end = h('button', { class: 'gc-btn end', type: 'button', 'aria-label': t('gcall.leave') }, icon('phone', 24));
   const min = h('button', { class: 'gc-btn small', type: 'button', 'aria-label': t('gcall.minimize'), onclick: () => cur.ui.classList.toggle('min') }, icon('back', 20));
   mic.onclick = () => {
@@ -235,7 +246,7 @@ function buildUi(c) {
     h('div', { class: 'gc-head' }, min, h('b', { class: 'ellipsis' }, `${cur.room ? t('room.title') : t('gcall.title')} · ${chatTitle(c)}`), time),
     (cur.dock = h('div', { class: 'gc-dock' })),
     grid,
-    h('div', { class: 'gc-controls' }, mic, cam, tog, ...(spk ? [spk] : []), end));
+    h('div', { class: 'gc-controls' }, mic, cam, tog, recBtn, ...(spk ? [spk] : []), end));
   cur.grid = grid;
   cur.cam = cam;
   cur.timeEl = time;
@@ -372,7 +383,7 @@ function teardown() {
   if (!cur) return;
   clearInterval(cur.timer);
   clearInterval(cur.meter);
-  try { cur.tg?.destroy(); } catch { /* ignore */ }
+  try { cur.rec?.destroy(); cur.tg?.destroy(); } catch { /* ignore */ }
   try { cur.ac?.close(); } catch { /* ignore */ }
   for (const p of cur.peers.values()) { try { p.pc?.close(); } catch { /* ignore */ } }
   cur.local.getTracks().forEach((x) => x.stop());

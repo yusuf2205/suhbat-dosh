@@ -1783,3 +1783,17 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .ann-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; touch-action: none; }
 .ann-canvas.on { pointer-events: auto; cursor: crosshair; }
 @media (max-width: 700px) { .tg-stage { inset: 48px 6px 230px; } }
+
+/* ===== call recording ===== */
+.rec-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; background: #d6453d; color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); max-width: calc(100% - 24px); font-size: .9rem; }
+.rec-banner.remote { background: #8c2a24; }
+.rec-banner .btn { min-height: 30px; padding: 2px 12px; background: #fff; color: #d6453d; }
+.rec-dot2 { width: 10px; height: 10px; border-radius: 50%; background: #fff; animation: rec-pulse 1.2s infinite; flex: none; }
+@keyframes rec-pulse { 50% { opacity: .25; } }
+.rec-clock { font-variant-numeric: tabular-nums; opacity: .9; }
+.rec-ask { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.min-box { display: grid; gap: 8px; margin-top: 6px; padding: 10px; border-radius: 12px; background: var(--surface-2); }
+.min-box h4 { margin: 4px 0 0; font-size: .85rem; color: var(--muted); }
+.min-row { display: flex; gap: 8px; align-items: flex-start; }
+.min-row span { flex: 1; overflow-wrap: anywhere; }
+.min-row .btn { flex: none; min-height: 28px; padding: 0 10px; }

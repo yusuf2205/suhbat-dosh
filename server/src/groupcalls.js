@@ -96,6 +96,7 @@ export function handleGroupSignal(userId, m) {
       const r = rooms.get(chatId);
       if (!r || !r.parts.has(userId) || !rateLimit(`gsync:${userId}`, 400, 10_000)) return;
       const data = syncData(m.data);
+      if (data?.k === 'rec' && data.a === 'on' && !r.recAudited) { r.recAudited = true; audit(userId, 'gcall.record', { chat_id: chatId }); }
       if (data) for (const id of r.parts.keys()) if (id !== userId) emit([id], { type: 'gcall.sync', chat_id: chatId, from: userId, data });
       return;
     }

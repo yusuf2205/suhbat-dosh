@@ -9,6 +9,7 @@ import { LANGS, captionsSupported, defaultCapLang, startCaptions, translateCapti
 import { getLang } from './i18n.js';
 import { createTogether } from './together.js';
 import { createAnnotations } from './annotate.js';
+import { createRecording } from './recording.js';
 
 // 1:1 WebRTC calls. Signalling goes over the existing WebSocket; media is peer-to-peer (or via TURN).
 // Quality: Opus audio with echo cancellation / noise suppression / AGC, up to 1080p30 video that is
@@ -163,6 +164,7 @@ function renderControls() {
     extra.append(pill(cur.ann?.mode() ? 'on' : '', 'edit', t('ann.pen'), () => { const a = ensureAnn(); a.setMode(!a.mode()); renderControls(); }));
     if (cur.ann?.mode()) extra.append(pill('', 'check', t('ann.color'), () => { cur.ann.nextColor(); renderControls(); }));
   }
+  extra.append(pill(cur.rec?.state() === 'recording' ? 'on' : '', 'mic', cur.rec?.state() === 'recording' ? t('rec.stop') : cur.rec?.state() === 'asking' ? t('rec.waiting') : t('rec.start'), () => { if (!cur.connectedAt) toast(t('rec.wait_connect')); else ensureRec().toggle(); }));
   if (captionsSupported()) extra.append(pill(cur.capStop ? 'on' : '', 'chat', t('cap.button'), (e) => toggleCaptions(e.currentTarget)));
   extra.append(pill(ui.panel ? 'on' : '', 'settings', t('call.settings_short'), toggleDevicePanel));
   ui.controls.append(main, extra);
@@ -173,6 +175,14 @@ function renderControls() {
 function ensureTogether() {
   cur.tg ||= createTogether({ host: ui.card, chatId: cur.chatId, send: (data) => wsSend({ type: 'call.sync', call_id: cur.id, data }) });
   return cur.tg;
+}
+function ensureRec() {
+  cur.rec ||= createRecording({
+    host: ui.card, chatId: cur.chatId, peers: () => 1, send: (data) => wsSend({ type: 'call.sync', call_id: cur.id, data }),
+    streams: () => [cur?.local, ui?.remote?.srcObject].filter(Boolean),
+  });
+  cur.rec.onChange(() => renderControls());
+  return cur.rec;
 }
 function ensureAnn() {
   cur.ann ||= createAnnotations({
@@ -671,7 +681,7 @@ function cleanup() {
     clearInterval(cur.statsTimer);
     clearTimeout(cur.restartTimer);
     try { cur.capStop?.(); } catch { /* ignore */ }
-    try { cur.tg?.destroy(); cur.ann?.destroy(); } catch { /* ignore */ }
+    try { cur.rec?.destroy(); cur.tg?.destroy(); cur.ann?.destroy(); } catch { /* ignore */ }
     if (cur.summary && cur.connectedAt) {
       const dur = Math.round((Date.now() - cur.connectedAt) / 1000);
       wsSend({ type: 'call.stats', call_id: cur.id, stats: cur.summary.toJSON(dur) });
@@ -822,6 +832,7 @@ export async function handleCallEvent(ev) {
     case 'call.sync':
       if (cur?.id === ev.call_id && ui && ev.data) {
         if (ev.data.k === 'tg') ensureTogether().handle(ev.data, cur.peer?.id || 0);
+        else if (ev.data.k === 'rec') ensureRec().handle(ev.data, cur.peer?.id || 0);
         else ensureAnn().handle(ev.data);
       }
       break;
