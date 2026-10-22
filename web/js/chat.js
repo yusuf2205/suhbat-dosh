@@ -414,7 +414,7 @@ function subtitle(c) {
     return (c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden')) + pres;
   }
   if (c.saved) return '';
-  if (c.imported) return t('imp.subtitle');
+  if (c.imported) return t(c.imported === 'tgbridge' ? 'br.subtitle' : 'imp.subtitle');
   return `${c.members_count} ${c.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;
 }
 
@@ -931,6 +931,7 @@ function closeRecorder(rerender = true) {
 
 // ---------------------------------------------------------------- message store
 export function upsert(chatId, m) {
+  if (m.bridge_failed) toast(t('br.send_failed'));
   const cf = S.chats.get(chatId);
   if (cf?.forum && (m.topic_id || 0) !== (currentTopic(chatId) || 0)) { refreshTopics(chatId); return; }
   const b = bucket(chatId);

@@ -2035,3 +2035,20 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .aud-lists { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .aud-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 10px; }
 .aud-row:hover { background: var(--surface-2); }
+
+/* Telegram bridge */
+.bridge-modal h4 { margin: 14px 0 6px; }
+.br-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: .92rem; }
+.br-list.warn li::marker { color: #d6453d; }
+.br-ack { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; padding: 12px; border-radius: 14px; background: var(--surface-2); }
+.br-cmd { display: block; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); overflow-x: auto; font-size: .82rem; margin-top: 8px; }
+.br-account { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--surface-2); }
+.br-account .att-badge { margin-left: auto; }
+.br-chats, .br-picks { display: grid; gap: 6px; margin: 6px 0 10px; max-height: 340px; overflow: auto; }
+.br-chat { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+.br-pick { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 14px; background: var(--surface-2); }
+.br-pick-main, .br-pick-two { display: flex; gap: 8px; align-items: center; }
+.br-pick-two { font-size: .8rem; color: var(--muted); }
+.br-danger { margin-top: 18px; display: grid; gap: 6px; }
+.att-badge { padding: 4px 12px; border-radius: 999px; font-size: .78rem; font-weight: 700; }
+.att-badge.ok { background: color-mix(in srgb, #22b573 18%, transparent); color: #15803d; }

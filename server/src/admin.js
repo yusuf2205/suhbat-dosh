@@ -1,4 +1,5 @@
 import express from 'express';
+import { bridgeCleanup } from './bridge.js';
 import { q, tx } from './db.js';
 import { HttpError, escapeLike, int, now, str } from './util.js';
 import { dropSession, emit, isOnline } from './realtime.js';
@@ -309,6 +310,7 @@ admin.delete('/users/:id', (req, res) => {
     }
     fileIds.push(...q.all('SELECT id FROM files WHERE owner_id = ? AND chat_id IS NULL', u.id).map((r) => r.id));
     for (const s of q.all('SELECT id FROM sessions WHERE user_id = ?', u.id)) dropSession(s.id);
+    bridgeCleanup(u.id);
     q.run('DELETE FROM users WHERE id = ?', u.id);
   });
   for (const f of fileIds) removeFile(f);
@@ -319,7 +321,7 @@ admin.delete('/users/:id', (req, res) => {
 
 // ------------------------------------------------------------------ registration, invitations
 admin.get('/settings', (_req, res) => {
-  res.json({ registration: registrationMode(), modes: REGISTRATION_MODES, set: getSetting('registration') !== null, quota_default_mb: Number(getSetting('quota_default_mb', '0')), gcall_max: roomMax(), gcall_max_top: ROOM_MAX_TOP, stories_audience: getSetting('stories_audience', '0') === '1' });
+  res.json({ registration: registrationMode(), modes: REGISTRATION_MODES, set: getSetting('registration') !== null, quota_default_mb: Number(getSetting('quota_default_mb', '0')), gcall_max: roomMax(), gcall_max_top: ROOM_MAX_TOP, stories_audience: getSetting('stories_audience', '0') === '1', bridge_access: getSetting('bridge_access', 'admins') });
 });
 
 admin.put('/settings', (req, res) => {
@@ -327,13 +329,19 @@ admin.put('/settings', (req, res) => {
     const mb = int(req.body.quota_default_mb, 'quota_default_mb', { min: 0, max: 1_000_000 });
     setSetting('quota_default_mb', mb);
     audit(req.user.id, 'admin.settings', { ip: req.ip, details: { quota_default_mb: mb } });
-    if (req.body.registration === undefined && req.body.gcall_max === undefined && req.body.stories_audience === undefined) return res.json({ quota_default_mb: mb });
+    if (req.body.registration === undefined && req.body.gcall_max === undefined && req.body.stories_audience === undefined && req.body.bridge_access === undefined) return res.json({ quota_default_mb: mb });
   }
   if (req.body?.gcall_max !== undefined) {
     const n = int(req.body.gcall_max, 'gcall_max', { min: 2, max: ROOM_MAX_TOP });
     setSetting('gcall_max', n);
     audit(req.user.id, 'admin.settings', { ip: req.ip, details: { gcall_max: n } });
     if (req.body.registration === undefined) return res.json({ gcall_max: n });
+  }
+  if (req.body?.bridge_access !== undefined) {
+    if (!['off', 'admins', 'all'].includes(req.body.bridge_access)) throw new HttpError(400, 'invalid_input');
+    setSetting('bridge_access', req.body.bridge_access);
+    audit(req.user.id, 'admin.settings', { ip: req.ip, details: { bridge_access: req.body.bridge_access } });
+    if (req.body.registration === undefined) return res.json({ bridge_access: req.body.bridge_access });
   }
   if (req.body?.stories_audience !== undefined) {
     setSetting('stories_audience', req.body.stories_audience ? '1' : '0');

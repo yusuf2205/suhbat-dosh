@@ -21,3 +21,6 @@ release/
 
 .upd/
 /*.png
+
+tgbridge-data/
+.env.bridge

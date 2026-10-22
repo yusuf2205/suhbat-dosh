@@ -14,6 +14,7 @@ import { compose as composeStory, openStoryArchive } from './stories.js';
 import { openScanner } from './scanner.js';
 import { screenGuardNative } from './screenguard.js';
 import { openSelfNotes } from './selfnotes.js';
+import { openBridge } from './tgbridge.js';
 import { openBotFather } from './bots.js';
 import { openSaved, setView } from './rail.js';
 import { updatesSection } from './updates.js';
@@ -291,7 +292,8 @@ export function openSettings() {
           row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
           row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
           row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
-          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } })),
+          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
+          S.bridgeOk ? row('telegram', t('br.title'), { hint: t('br.hint'), onclick: () => { m.close(); openBridge(); } }) : null),
         heading(t('st.sec_app')),
         group(
           row('speaker', t('st.av'), { onclick: () => go(pages.av) }),

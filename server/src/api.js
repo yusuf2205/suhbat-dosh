@@ -38,6 +38,7 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { personal } from './personal.js';
+import { bridge, bridgeConfigured, bridgeIn, bridgeOut, bridgeTwoWay } from './bridge.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -426,6 +427,7 @@ api.get('/config', (_req, res) => {
     translate: translatorReady(),
     semantic: embedderReady(),
     stories_audience: getSetting('stories_audience', '0') === '1',
+    bridge: bridgeConfigured(),
     registration_open: registrationMode() !== 'closed',
     registration: registrationMode(),
     dev_otp: config.otpMode === 'dev',
@@ -466,7 +468,9 @@ api.get('/auth/qr/poll', (req, res) => {
   res.json({ status: 'approved', user: selfUser(user) });
 });
 
+api.use(bridgeIn); // the bridge container's own door: shared secret, no session
 api.use(requireAuth);
+api.use(bridge);
 
 api.get('/auth/qr/info', (req, res) => {
   const e = qrLogins.get(String(req.query.token ?? ''));
@@ -1097,6 +1101,7 @@ export function topicFor(req, chat, me, replyTo = null) {
 function assertCanPost(chat, me, userId) {
   if (chat.type === 'channel' && me.role === 'member') throw new HttpError(403, 'channel_readonly');
   if (me.role === 'member' && !me.can_send) throw new HttpError(403, 'restricted');
+  if (chat.imported_from === 'tgbridge' && !bridgeTwoWay(chat.id)) throw new HttpError(403, 'bridge_read_only');
   if (chat.type === 'direct') {
     const peer = directPeerId(chat.id, userId);
     if (isBlockedEitherWay(userId, peer)) throw new HttpError(403, 'blocked');
@@ -1139,6 +1144,7 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     if (dup) return { message: messageOut(dup), duplicate: true };
   }
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
+  if (chat.imported_from === 'tgbridge' && kind !== 'text') throw new HttpError(400, 'bridge_text_only');
   if (topicId === null && chat.forum && !threadOf) {
     const want = requestContext.getStore()?.topic || 0;
     topicId = want && q.get('SELECT 1 AS x FROM topics WHERE id = ? AND chat_id = ? AND closed = 0', want, chat.id) ? want : null;
@@ -1150,6 +1156,11 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, t,
   );
   const id = Number(r.lastInsertRowid);
+  if (chat.imported_from === 'tgbridge') {
+    // a message written in a mirrored chat is also sent to Telegram (text only)
+    const rk = replyTo ? q.get('SELECT import_key FROM messages WHERE id = ?', replyTo)?.import_key : null;
+    bridgeOut(chat, id, text, rk);
+  }
   if (threadOf) {
     // a comment under a channel post: it lives in its thread, not in the feed, and nobody is pushed about it
     const comment = messageOut(getMessage(id));

@@ -45,6 +45,29 @@ services:
     volumes:
       - ./embed-models:/models
 
+  # Bridge to your own Telegram account (see docs/tgbridge.md). BRIDGE_TOKEN goes in .env (both containers need it);
+  # TGBRIDGE_KEY, TG_API_ID and TG_API_HASH go in .env.bridge so that only this container ever sees them.
+  # Start with:  docker compose --profile tgbridge up -d --build tgbridge
+  tgbridge:
+    build: ./tgbridge
+    image: suhbat-tgbridge:latest
+    profiles: ["tgbridge"]
+    restart: unless-stopped
+    mem_limit: 512m
+    env_file:
+      - path: .env.bridge
+        required: false
+    environment:
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      SERVER_URL: http://suhbat:3000
+    volumes:
+      - ./tgbridge-data:/data       # the encrypted Telegram session and the list of chosen chats
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # no ports are published: only the suhbat container can reach it
+
   # Translation of chats on your own server (LibreTranslate). Start with:  docker compose --profile translate up -d translate
   # (the server finds it at http://translate:5000 by itself; TRANSLATE_URL in .env changes that)
   translate:

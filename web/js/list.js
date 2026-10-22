@@ -170,8 +170,8 @@ function lastLine(c) {
   }
   const m = c.last_message;
   if (!m) return '';
-  const mine = m.sender_id === S.me.id;
-  const prefix = mine ? (c.type === 'channel' || c.saved ? '' : `${t('chat.you')}: `) : c.type !== 'direct' ? `${S.users.get(m.sender_id)?.name ?? ''}: ` : '';
+  const mine = c.imported ? m.import_author === c.import_me : m.sender_id === S.me.id;
+  const prefix = c.imported ? (mine ? `${t('chat.you')}: ` : `${m.import_author || ''}: `) : mine ? (c.type === 'channel' || c.saved ? '' : `${t('chat.you')}: `) : c.type !== 'direct' ? `${S.users.get(m.sender_id)?.name ?? ''}: ` : '';
   return `${prefix}${previewText(m)}`;
 }
 

@@ -31,6 +31,7 @@ import { showLock } from './applock.js';
 import './tasks.js';
 import { startE2e } from './e2egroup.js';
 import { startScreenGuard } from './screenguard.js';
+import { checkBridge } from './tgbridge.js';
 import { openPalette, wirePullDown } from './palette.js';
 import { resumeLives } from './share.js';
 import './topics.js';
@@ -129,6 +130,7 @@ async function loadChats() {
   refreshGroupCalls();
   startE2e();
   startScreenGuard();
+  checkBridge();
   resumeLives();
 }
 

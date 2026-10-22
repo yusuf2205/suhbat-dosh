@@ -283,7 +283,8 @@ export function chatOut(chatId, viewerId) {
   const pins = pinRows.map((r) => getMessage(r.message_id)).filter(Boolean).map(messageOut);
   const pinned = pins.length ? pins[pins.length - 1] : null;
   const themeOf = (v) => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
-  const canPost =
+  const bridgeLocked = c.imported_from === 'tgbridge' && !q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ? AND two_way = 1', chatId);
+  const canPost = !bridgeLocked &&
     !(c.type === 'channel' && m.role === 'member') && !(m.role === 'member' && !m.can_send) && !blocked_by_me && !blocked_me;
   return {
     id: c.id,

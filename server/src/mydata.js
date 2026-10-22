@@ -1,5 +1,6 @@
 // "My data": what the server holds about me, my security log, and deleting my own account.
 import express from 'express';
+import { bridgeCleanup } from './bridge.js';
 import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, now, rateLimit } from './util.js';
@@ -68,6 +69,7 @@ mydata.delete('/me', (req, res) => {
     }
     fileIds.push(...q.all('SELECT id FROM files WHERE owner_id = ? AND chat_id IS NULL', u.id).map((r) => r.id));
     for (const s of q.all('SELECT id FROM sessions WHERE user_id = ?', u.id)) dropSession(s.id);
+    bridgeCleanup(u.id);
     q.run('DELETE FROM users WHERE id = ?', u.id);
   });
   for (const f of fileIds) removeFile(f);
