@@ -228,9 +228,9 @@ function buildView() {
   view.wrap = h('div', { class: 'composer-wrap' }, view.ctx, view.composer, view.state);
   clear(root).append(
     h('div', { class: 'chat-head' }, view.back, view.who,
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.search'), onclick: () => openChatSearch(S.active) }, icon('search', 22)),
-      h('button', { class: 'icon-btn call-start hide-narrow', type: 'button', 'aria-label': t('chat.call'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, false) : startCall(S.active, false)) }, icon('phone', 22)),
-      h('button', { class: 'icon-btn call-start video hide-narrow', type: 'button', 'aria-label': t('chat.video'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, true) : startCall(S.active, true)) }, icon('video', 22)),
+      h('button', { class: 'icon-btn hide-narrow', type: 'button', 'aria-label': t('chat.search'), onclick: () => openChatSearch(S.active) }, icon('search', 22)),
+      h('button', { class: 'icon-btn call-start', type: 'button', 'aria-label': t('chat.call'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, false) : startCall(S.active, false)) }, icon('phone', 22)),
+      h('button', { class: 'icon-btn call-start video', type: 'button', 'aria-label': t('chat.video'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, true) : startCall(S.active, true)) }, icon('video', 22)),
       (view.moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.more'), 'aria-haspopup': 'menu', onclick: () => chatMoreMenu(view.moreBtn) }, icon('more', 22)))),
     view.pin, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.list, view.jump, view.wrap, fileInput,
   );
@@ -1454,6 +1454,7 @@ function chatMoreMenu(anchor) {
   const c = activeChat();
   if (!c) return;
   const items = [
+    { label: t('chat.search'), onClick: () => openChatSearch(c.id) }, // the header button is hidden on narrow phone screens
     isMuted(c)
       ? { label: t('ctx.unmute'), onClick: () => setMute(c, 'off') }
       : { label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },
