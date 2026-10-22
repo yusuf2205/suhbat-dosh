@@ -13,13 +13,25 @@
   <link rel="shortcut icon" href="/favicon.ico">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css?v=7">
+  <link rel="stylesheet" href="/splash.css?v=1">
 </head>
 <body>
+  <div id="splash" aria-hidden="true">
+    <svg class="sp-mark" viewBox="170 230 440 360">
+      <circle class="sp-eye" cx="288" cy="305" r="45" fill="#2b2b2e"/>
+      <circle class="sp-eye" cx="475" cy="291" r="59" fill="#2b2b2e"/>
+      <rect x="198" y="392" width="379" height="145" rx="72.5" fill="#2b2b2e"/>
+      <path d="M272 520 272 569 336 537Z" fill="#2b2b2e"/>
+      <g fill="#f7f9ff"><circle class="sp-dot" cx="289" cy="465" r="30"/><circle class="sp-dot" cx="388" cy="465" r="30"/><circle class="sp-dot" cx="488" cy="465" r="30"/></g>
+    </svg>
+    <div class="sp-word">Suhbat-dosh</div>
+  </div>
   <div id="root"></div>
   <div id="toasts" aria-live="polite" role="status"></div>
   <div id="modal-root"></div>
   <noscript>Suhbat-dosh requires JavaScript.</noscript>
   <script src="/js/guard.js?v=7"></script>
+  <script src="/js/splash.js?v=1"></script>
   <script type="module" src="/js/main.js?v=7"></script>
 </body>
 </html>
