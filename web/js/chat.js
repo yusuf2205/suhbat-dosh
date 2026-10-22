@@ -30,6 +30,7 @@ import { fileIcon } from './fileicons.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
 import { fileBlob } from './downloads.js';
+import { syncGroup } from './e2egroup.js';
 import { cancel as cancelTask, enqueue as enqueueUpload, onUpload, pause as pauseUpload, restore as restoreUploads, resume as resumeUpload } from './uploads.js';
 import { contactNode, initPhoneMenu, locationNode, openContactShare, sendLocation } from './share.js';
 import { groupCallOf, groupCallChatId, joinGroupCall } from './gcall.js';
@@ -109,6 +110,7 @@ export async function openChat(id) {
   loadMembers(id);
   renderAll({ scroll: 'unread' });
   markRead();
+  if (c.secret?.group) syncGroup(c);
 }
 
 export function closeChat() {
@@ -395,7 +397,7 @@ function composerBlockReason(c) {
 const secretStatuses = new Map();
 /** Why a secret chat cannot be written to right now (null = it can). The key state is read from this device asynchronously. */
 function secretReason(c) {
-  const key = `${c.id}:${c.secret.state}`;
+  const key = `${c.id}:${c.secret.state}:${c.secret.epoch || 0}`;
   const st = secretStatuses.get(key);
   if (!st) {
     secretStatus(c).then((s) => {
@@ -404,6 +406,7 @@ function secretReason(c) {
     });
     return 'secret_checking';
   }
+  if (c.secret.group) return { 'pending-peer': 'secret_gpending', 'no-key': 'secret_gwait', ready: null }[st] ?? null;
   return { 'pending-peer': 'secret_pending', invited: 'secret_invited', 'no-key': 'secret_nokey', ready: null }[st] ?? null;
 }
 
@@ -425,7 +428,7 @@ function renderComposer() {
     if (reason === 'secret_invited') {
       view.state.append(' ', h('button', { class: 'btn', type: 'button', onclick: async () => {
         const r = await acceptSecretChat(c);
-        if (r) { secretStatuses.delete(`${c.id}:pending`); secretStatuses.delete(`${c.id}:ready`); view.ckey = ''; renderComposer(); renderMessages(); }
+        if (r) { secretStatuses.clear(); view.ckey = ''; renderComposer(); renderMessages(); }
       } }, t('secret.accept')));
     }
     if (reason === 'blocked_by_me') {
@@ -691,7 +694,7 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
     if (blob.size > 100 * 1048576) return toast(t('secret.too_big'));
     try {
       const sealed = await sealBlob(c, blob);
-      opts.caption = await sealPayload(c, { f: { name, mime: blob.type, size: blob.size, iv: sealed.iv } });
+      opts.caption = await sealPayload(c, { f: { name, mime: blob.type, size: blob.size, iv: sealed.iv, ep: sealed.ep } });
       opts.voice = false;
       opts.label = name;
       sendBlob = sealed.blob;
@@ -1203,7 +1206,7 @@ function secretFile(m, c, f) {
   const decrypt = async () => {
     card.disabled = true;
     try {
-      const blob = await openBlob(c, m.file.url, f.iv, f.mime);
+      const blob = await openBlob(c, m.file.url, f.iv, f.mime, f.ep);
       const url = URL.createObjectURL(blob);
       if (/^image\/(png|jpe?g|gif|webp)$/.test(f.mime)) {
         holder.replaceChildren(h('img', { class: 'secret-img', src: url, alt: f.name }));
@@ -1564,5 +1567,11 @@ function chatMoreMenu(anchor) {
   if (c.type === 'direct' && !c.saved) items.push({ label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
   popMenu(anchor, items);
 }
+
+// the key of an encrypted group arrived: unlock the composer and the messages that could not be read yet
+on('e2e-keys', (id) => {
+  secretStatuses.clear();
+  if (view && S.active === id) { nodeCache.clear(); view.ckey = ''; renderComposer(); renderMessages(); }
+});
 
 initPhoneMenu();

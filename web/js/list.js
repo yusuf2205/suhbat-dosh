@@ -10,6 +10,7 @@ import { openInfo, openNewChat, openNewGroup, openSettings } from './dialogs.js'
 import { openSaved, setView } from './rail.js';
 import { folderPicker, openFolders, openGlobalSearch } from './extras.js';
 import { groupCallOf } from './gcall.js';
+import { openSecretByDefault } from './secret.js';
 import { openBotFather } from './bots.js';
 import { storiesBar } from './stories.js';
 
@@ -224,6 +225,7 @@ function personRow(u, onclick) {
 
 async function openPerson(u) {
   try {
+    if (await openSecretByDefault(u)) { S.view = 'chats'; fire('view'); return; }
     const r = await api('POST', '/api/chats/direct', { user_id: u.id });
     S.chats.set(r.chat.id, r.chat);
     searchInput.value = '';

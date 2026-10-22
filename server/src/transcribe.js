@@ -6,7 +6,7 @@ import { q } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, int, log, now, rateLimit } from './util.js';
 import { emit } from './realtime.js';
-import { getMessage, memberIds, messageOut, requireMember } from './service.js';
+import { getMessage, isEncrypted, memberIds, messageOut, requireMember } from './service.js';
 import { filePath } from './files.js';
 
 export const transcribe = express.Router();
@@ -79,7 +79,7 @@ transcribe.post('/messages/:id/transcribe', async (req, res) => {
   const m = getMessage(int(req.params.id, 'id'));
   if (!m) throw new HttpError(404, 'not_found');
   requireMember(m.chat_id, req.user.id);
-  const isSecret = !!q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', m.chat_id);
+  const isSecret = isEncrypted(m.chat_id);
   if (isSecret || m.kind === 'secret') throw new HttpError(403, 'secret_no_transcribe'); // the server cannot read these
   const f = m.file_id ? q.get('SELECT * FROM files WHERE id = ?', m.file_id) : null;
   const okKind = f && (m.kind === 'voice' || m.kind === 'audio' || (m.kind === 'video' && /^circle\./i.test(f.name)));

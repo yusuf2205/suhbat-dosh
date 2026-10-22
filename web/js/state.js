@@ -54,6 +54,6 @@ export function isMuted(c) {
 
 export function chatTitle(c) {
   if (c.saved) return t('saved.title');
-  if (c.secret) return `🔒 ${c.peer?.name ?? '…'}`;
+  if (c.secret) return c.secret.group ? `🔒 ${c.title}` : `🔒 ${c.peer?.name ?? '…'}`;
   return c.type === 'direct' ? c.peer?.name ?? '…' : c.title;
 }

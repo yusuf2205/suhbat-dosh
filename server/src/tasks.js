@@ -4,7 +4,7 @@ import { q } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, int, now, rateLimit, str } from './util.js';
 import { emit } from './realtime.js';
-import { chatOut, getMessage, memberIds, membership, messageOut, requireMember } from './service.js';
+import { chatOut, getMessage, isEncrypted, memberIds, membership, messageOut, requireMember } from './service.js';
 
 let host = { postMessage: null };
 export function wireTasks(h) { host = h; }
@@ -46,7 +46,7 @@ tasks.post('/chats/:id/tasks', (req, res) => {
   const me = requireMember(id, req.user.id);
   const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
   if (chat.type === 'channel' && me.role === 'member') throw new HttpError(403, 'channel_readonly');
-  if (q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', id)) throw new HttpError(403, 'secret_no_tasks');
+  if (isEncrypted(id)) throw new HttpError(403, 'secret_no_tasks');
   if (!rateLimit(`task:${req.user.id}`, 40, 60_000)) throw new HttpError(429, 'slow_down');
   const title = str(req.body?.title, 'title', { min: 1, max: 200 });
   const due = dueOf(req.body?.due_at);

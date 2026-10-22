@@ -29,6 +29,7 @@ import { clearAll as clearMediaCache } from './mediacache.js';
 import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 import { showLock } from './applock.js';
 import './tasks.js';
+import { startE2e } from './e2egroup.js';
 import { focusMutes } from './focus.js';
 import './nearby.js'; // receives "nearby" messages even when its screen is closed
 
@@ -121,6 +122,7 @@ async function loadChats() {
   snapSaveBoot(() => ({ user: S.me, chats: [...S.chats.values()] }));
   loadFolders();
   refreshGroupCalls();
+  startE2e();
 }
 
 /** Called on every (re)connect: pull what we missed while offline, then flush the outbox. */

@@ -14,7 +14,7 @@ import {
 } from './util.js';
 import { dropSession, emit, isOnline } from './realtime.js';
 import {
-  chatOut, directKey, directPeerId, getMessage, getUser, isAdmin, isBlockedEitherWay, listChats, memberIds,
+  chatOut, directKey, directPeerId, getMessage, getUser, isAdmin, isBlockedEitherWay, isEncrypted, listChats, memberIds,
   membership, messageOut, publicUser, refreshLastMessage, requireMember, selfUser, audit,
 } from './service.js';
 import { admin } from './admin.js';
@@ -31,6 +31,7 @@ import { tasks, wireTasks } from './tasks.js';
 import { digest } from './digest.js';
 import { importer } from './importer.js';
 import { notes, wireNotes } from './notes.js';
+import { e2e, e2eNeed, e2eRotate } from './e2e.js';
 import { normalizeFocus } from '../../shared/focus.js';
 import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
@@ -422,6 +423,7 @@ api.use(tasks);
 api.use(digest);
 api.use(importer);
 api.use(notes);
+api.use(e2e);
 api.use(transcribe);
 api.use(pushRouter);
 api.use(safety);
@@ -776,12 +778,13 @@ api.post('/chats', (req, res) => {
   const title = str(b.title, 'title', { min: 1, max: LIMITS.TITLE_MAX });
   const description = str(b.description ?? '', 'description', { max: LIMITS.DESCRIPTION_MAX });
   const ids = Array.isArray(b.member_ids) ? [...new Set(b.member_ids.map((x) => int(x, 'member_ids')))] : [];
+  const encrypted = b.e2e === true && type === 'group';
   if (ids.length > LIMITS.GROUP_MAX_MEMBERS) throw new HttpError(400, 'too_many_members');
   if (!rateLimit(`mkchat:${req.user.id}`, config.maxChatsPerHour, 3600_000)) throw new HttpError(429, 'too_many_requests');
   const chatId = tx(() => {
     const r = q.run(
-      'INSERT INTO chats (type, title, description, owner_id, invite_code, last_message_at, created_at) VALUES (?,?,?,?,?,?,?)',
-      type, title, description, req.user.id, rid(9), now(), now(),
+      'INSERT INTO chats (type, title, description, owner_id, invite_code, last_message_at, created_at, e2e) VALUES (?,?,?,?,?,?,?,?)',
+      type, title, description, req.user.id, rid(9), now(), now(), encrypted ? 1 : 0,
     );
     const cid = Number(r.lastInsertRowid);
     q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)", cid, req.user.id, now());
@@ -883,6 +886,7 @@ api.post('/chats/:id/members', (req, res) => {
   q.run("INSERT OR IGNORE INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", id, uid, now());
   aud(req, 'chat.member_add', { chat_id: id, target_type: 'user', target_id: uid });
   pushChat(id);
+  e2eNeed(id);
   res.json({ ok: true });
 });
 
@@ -913,6 +917,7 @@ function removeMember(chatId, uid, ban) {
   if (ban) q.run('UPDATE members SET banned = 1 WHERE chat_id = ? AND user_id = ?', chatId, uid);
   else q.run('DELETE FROM members WHERE chat_id = ? AND user_id = ?', chatId, uid);
   emit([uid], { type: EVENTS.CHAT_REMOVE, chat_id: chatId });
+  e2eRotate(chatId); // a person left: the next group key must not reach their devices
 }
 
 api.delete('/chats/:id/members/:uid', (req, res) => {
@@ -981,6 +986,7 @@ api.post('/invite/:code/join', (req, res) => {
     q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", c.id, req.user.id, now());
     aud(req, 'chat.join_by_link', { chat_id: c.id, target_type: 'chat', target_id: c.id });
     pushChat(c.id);
+    e2eNeed(c.id);
   }
   res.json({ chat: chatOut(c.id, req.user.id) });
 });
@@ -1104,8 +1110,8 @@ api.post('/chats/:id/messages', (req, res) => {
     if (isSecretChat(chat.id)) {
       // end-to-end encrypted chat: only ciphertext envelopes are accepted
       if (b.kind !== 'secret') throw new HttpError(400, 'secret_requires_encryption');
-      if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', chat.id)?.peer_pub) throw new HttpError(409, 'secret_not_ready');
-      text = checkEnvelope(text);
+      if (!secretReady(chat.id)) throw new HttpError(409, 'secret_not_ready');
+      text = checkEnvelope(text, chat.id);
       kind = 'secret';
     } else if (b.kind === 'secret') {
       throw new HttpError(400, 'invalid_input');
@@ -1132,13 +1138,26 @@ api.post('/chats/:id/messages', (req, res) => {
 
 // ------------------------------------------------------------------ secret (end-to-end encrypted) chats
 const PUB_RE = /^[A-Za-z0-9+/=_-]{80,140}$/;
-const isSecretChat = (chatId) => !!q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', chatId);
+// "secret" here means: the server cannot read the messages (a one-to-one secret chat or an end-to-end encrypted group)
+const isSecretChat = (chatId) => isEncrypted(chatId);
+const secretReady = (chatId) => {
+  const sc = q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', chatId);
+  if (sc) return !!sc.peer_pub;
+  return (q.get('SELECT e2e_epoch FROM chats WHERE id = ? AND e2e = 1', chatId)?.e2e_epoch || 0) > 0;
+};
 
 /** The text of an encrypted message is an envelope {v:1, iv, ct}; the server cannot read it, only check its shape. */
-function checkEnvelope(text) {
+function checkEnvelope(text, chatId) {
   let e;
   try { e = JSON.parse(text); } catch { throw new HttpError(400, 'invalid_input'); }
-  if (e?.v !== 1 || typeof e.iv !== 'string' || typeof e.ct !== 'string' || e.iv.length > 40 || e.ct.length > LIMITS.TEXT_MAX * 2) throw new HttpError(400, 'invalid_input');
+  if ((e?.v !== 1 && e?.v !== 2) || typeof e.iv !== 'string' || typeof e.ct !== 'string' || e.iv.length > 40 || e.ct.length > LIMITS.TEXT_MAX * 2) throw new HttpError(400, 'invalid_input');
+  const group = q.get('SELECT e2e_epoch FROM chats WHERE id = ? AND e2e = 1', chatId);
+  // version 2 is the envelope of an encrypted group: it names the key epoch it was sealed with
+  if (e.v === 2) {
+    if (!group || !Number.isInteger(e.ep) || e.ep < 1 || e.ep > group.e2e_epoch) throw new HttpError(400, 'invalid_input');
+    return JSON.stringify({ v: 2, ep: e.ep, iv: e.iv, ct: e.ct });
+  }
+  if (group) throw new HttpError(400, 'invalid_input');
   return JSON.stringify({ v: 1, iv: e.iv, ct: e.ct });
 }
 
@@ -1391,8 +1410,8 @@ api.post('/uploads/:id/complete', (req, res) => {
   const secretChat = isSecretChat(u.chat_id);
   let capt = u.caption;
   if (secretChat) {
-    if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', u.chat_id)?.peer_pub) { fs.renameSync(dest, part); throw new HttpError(409, 'secret_not_ready'); }
-    try { capt = checkEnvelope(u.caption); } catch (e) { fs.renameSync(dest, part); throw e; }
+    if (!secretReady(u.chat_id)) { fs.renameSync(dest, part); throw new HttpError(409, 'secret_not_ready'); }
+    try { capt = checkEnvelope(u.caption, u.chat_id); } catch (e) { fs.renameSync(dest, part); throw e; }
   }
   const type = secretChat ? null : sniff(readHead(dest), !!u.voice);
   const mime = type?.mime ?? 'application/octet-stream';
@@ -1440,8 +1459,8 @@ api.post('/chats/:id/files', async (req, res) => {
   const secretChat = isSecretChat(id);
   let capt = caption;
   if (secretChat) {
-    if (!q.get('SELECT peer_pub FROM secret_chats WHERE chat_id = ?', id)?.peer_pub) { removeFile(fid); throw new HttpError(409, 'secret_not_ready'); }
-    try { capt = checkEnvelope(caption); } catch (e) { removeFile(fid); throw e; }
+    if (!secretReady(id)) { removeFile(fid); throw new HttpError(409, 'secret_not_ready'); }
+    try { capt = checkEnvelope(caption, id); } catch (e) { removeFile(fid); throw e; }
   }
   let type = secretChat ? null : sniff(readHead(dest), voice);
   // a recording of a call is webm with sound only: it is audio, not a video

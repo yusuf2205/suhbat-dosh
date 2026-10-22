@@ -40,6 +40,7 @@ function userPicker({ onPick, exclude = new Set(), placeholder = t('new.search_p
 
 async function openDirect(user) {
   try {
+    if (await openSecretByDefault(user)) return;
     const r = await api('POST', '/api/chats/direct', { user_id: user.id });
     S.chats.set(r.chat.id, r.chat);
     fire('chats');
@@ -66,10 +67,13 @@ export function openNewGroup(type) {
   };
   const picker = userPicker({ onPick: (u) => { chosen.set(u.id, u); redraw(); } });
   const create = h('button', { class: 'btn', type: 'button' }, t('new.create'));
+  const secure = h('input', { type: 'checkbox', id: 'new-e2e' });
+  const secureRow = type === 'group' && e2eSupported()
+    ? h('label', { class: 'focus-row', for: 'new-e2e' }, h('span', null, h('b', null, `🔒 ${t('e2e.create')}`), h('small', { class: 'muted' }, t('e2e.create_hint'))), secure) : null;
   const m = modal({
     title: type === 'channel' ? t('new.channel') : t('new.group'),
     body: [
-      h('div', { class: 'field' }, title), h('div', { class: 'field' }, desc),
+      h('div', { class: 'field' }, title), h('div', { class: 'field' }, desc), ...(secureRow ? [secureRow] : []),
       h('h3', null, t('new.members')), chips, picker.el, err,
       h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '12px' } }, create),
     ],
@@ -79,10 +83,12 @@ export function openNewGroup(type) {
     if (!title.value.trim()) { err.textContent = t('new.title_ph'); title.focus(); return; }
     create.disabled = true;
     try {
+      if (secure.checked) await registerDevice(); // the key of this device must exist before the group does
       const r = await api('POST', '/api/chats', {
-        type, title: title.value.trim(), description: desc.value.trim(), member_ids: [...chosen.keys()],
+        type, title: title.value.trim(), description: desc.value.trim(), member_ids: [...chosen.keys()], ...(secure.checked ? { e2e: true } : {}),
       });
       S.chats.set(r.chat.id, r.chat);
+      if (r.chat.secret?.group) await syncGroup(r.chat);
       fire('chats');
       m.close();
       fire('open-chat', r.chat.id);
@@ -98,6 +104,8 @@ export function openNewGroup(type) {
 export { openSettings } from './settings.js';
 import { formatBirthday, isBirthdayToday, photoGrid } from './settings.js';
 import { openBotFather } from './bots.js';
+import { e2eSupported, registerDevice, syncGroup } from './e2egroup.js';
+import { openSecretByDefault } from './secret.js';
 
 function shortUA(ua = '') {
   const br = /(Edg|Chrome|Firefox|Safari|OPR)\//.exec(ua)?.[1];

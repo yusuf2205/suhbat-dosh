@@ -4,7 +4,7 @@
 import express from 'express';
 import { q } from './db.js';
 import { HttpError, int, log, rateLimit } from './util.js';
-import { getUser, requireMember } from './service.js';
+import { getUser, isEncrypted, requireMember } from './service.js';
 
 export const digest = express.Router();
 
@@ -114,7 +114,7 @@ const namesFor = (rows) => {
 digest.get('/chats/:id/digest', async (req, res) => {
   const id = int(req.params.id, 'id');
   const mem = requireMember(id, req.user.id);
-  if (q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', id)) throw new HttpError(403, 'secret_no_digest');
+  if (isEncrypted(id)) throw new HttpError(403, 'secret_no_digest');
   if (!rateLimit(`digest:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'slow_down');
   const since = req.query.since_id !== undefined ? int(req.query.since_id, 'since_id', { min: 0 }) : mem.last_read_id || 0;
   const rows = unreadRows(id, req.user.id, since);
@@ -131,7 +131,7 @@ digest.get('/digest', (req, res) => {
   const uid = req.user.id;
   const chats = q.all(
     `SELECT c.id, mb.last_read_id, COALESCE(c.title, '') AS title FROM chats c JOIN members mb ON mb.chat_id = c.id AND mb.user_id = ? AND mb.banned = 0 AND mb.hidden = 0
-     WHERE c.last_message_id > mb.last_read_id AND NOT EXISTS (SELECT 1 FROM secret_chats s WHERE s.chat_id = c.id)
+     WHERE c.last_message_id > mb.last_read_id AND c.e2e = 0 AND NOT EXISTS (SELECT 1 FROM secret_chats s WHERE s.chat_id = c.id)
      ORDER BY c.last_message_at DESC LIMIT 12`, uid);
   const me = getUser(uid);
   const out = [];
