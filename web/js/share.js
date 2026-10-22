@@ -53,11 +53,22 @@ export function stopLive(id, tell = true) {
 export function startLive(id, until) {
   if (lives.has(id) || !navigator.geolocation || until <= Date.now()) return;
   let last = 0;
-  const watch = navigator.geolocation.watchPosition((p) => {
-    if (Date.now() > until) { stopLive(id, false); return; }
-    if (Date.now() - last < 8000) return;
+  let pending = null;
+  let timer = 0;
+  const send = () => {
+    timer = 0;
+    if (!pending) return;
+    const p = pending;
+    pending = null;
     last = Date.now();
     api('PUT', `/api/messages/${id}/live`, { lat: p.coords.latitude, lon: p.coords.longitude }).catch((e) => { if (e.status === 409 || e.status === 404) stopLive(id, false); });
+  };
+  const watch = navigator.geolocation.watchPosition((p) => {
+    if (Date.now() > until) { stopLive(id, false); return; }
+    pending = p; // the newest fix is sent as soon as the pause since the previous one is over
+    const wait = 8000 - (Date.now() - last);
+    if (wait <= 0) send();
+    else if (!timer) timer = setTimeout(send, wait);
   }, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
   lives.set(id, { until, watch });
   saveLives();
