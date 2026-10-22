@@ -451,35 +451,59 @@ async function viewChats() {
       h('thead', null, h('tr', null, ['Чат', 'Тип', 'Участников', 'Сообщений', 'Владелец', 'Последняя активность'].map((x) => h('th', null, x)))), body)));
 }
 
-function messageNode(m) {
-  const kindIcon = { image: '🖼', video: '🎬', audio: '🎵', voice: '🎤', file: '' }[m.kind] || '';
-  return h('div', { class: 'amsg' },
-    h('div', null, h('div', { class: 'who' }, m.sender ? userLink(m.sender.id) : '—'),
-      h('div', { class: 'when' }, fmtDT(m.created_at), m.edited_at ? ` · изм. ${fmtDT(m.edited_at)}` : '')),
-    h('div', null,
-      m.forward_from ? h('div', { class: 'muted' }, `Переслано от ${m.forward_from}`) : '',
-      m.reply_to ? h('div', { class: 'muted' }, `↩ ${m.reply_to.sender_name || ''}: ${m.reply_to.text}`) : '',
-      m.kind === 'call' ? h('div', { class: 'body' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
-      m.text && m.kind !== 'call' ? h('div', { class: 'body' }, m.text) : '',
-      m.file ? h('div', null, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`,
-        m.kind === 'image' ? h('img', { src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' }) : '') : '',
-      m.edits.length ? h('div', { class: 'edits' }, h('b', null, 'История изменений:'),
-        m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : ''));
+const DAY_FMT = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const dayOf = (ts) => new Date(ts).toDateString();
+const clock = (ts) => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+/** Who wrote a message: the Telegram name for copied chats, else the account. */
+const authorOf = (m) => m.import_author || m.sender?.name || '—';
+
+/** One message as a chat bubble: the owner of the chat on the right, everybody else on the left. */
+function messageNode(m, ctx, prev) {
+  const kindIcon = { image: '🖼', video: '🎬', audio: '🎵', voice: '🎤', file: '📎' }[m.kind] || '';
+  const mine = ctx.imported ? m.import_author === ctx.import_me : (m.sender?.id != null && m.sender.id === ctx.me);
+  const sameAuthor = prev && authorOf(prev) === authorOf(m) && dayOf(prev.created_at) === dayOf(m.created_at) && m.created_at - prev.created_at < 5 * 60_000;
+  const nodes = [];
+  if (!prev || dayOf(prev.created_at) !== dayOf(m.created_at)) nodes.push(h('div', { class: 'aday' }, h('span', null, DAY_FMT.format(new Date(m.created_at)).replace(/^./, (c) => c.toUpperCase()).replace(/ г\.$/, ''))));
+  const showName = !sameAuthor && (!mine || ctx.group);
+  const name = m.sender && !ctx.imported ? userLink(m.sender.id) : h('b', null, authorOf(m));
+  nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}` },
+    showName ? h('div', { class: 'abub-who' }, name) : '',
+    m.forward_from ? h('div', { class: 'abub-quote' }, `Переслано от ${m.forward_from}`) : '',
+    m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', m.reply_to.text) : '',
+    m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
+    m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
+    m.file && (m.kind === 'voice' || m.kind === 'audio') ? h('audio', { class: 'abub-audio', controls: true, preload: 'none', src: `/api/admin/files/${m.file.id}` }) : '',
+    m.file && !['image', 'voice', 'audio'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
+    m.text && m.kind !== 'call' ? h('div', { class: 'abub-text' }, m.text) : '',
+    m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
+    m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
+      m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
+    h('div', { class: 'abub-time', title: fmtDT(m.created_at) }, m.edited_at ? 'изм. ' : '', clock(m.created_at))));
+  return nodes;
 }
 
 async function openChat(id) {
   setTab('chats', false);
   const [info, hist] = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?limit=100`)]);
-  const list = h('div');
-  let oldest = hist.messages[0]?.id;
+  const list = h('div', { class: 'aconv' });
+  const all = [...hist.messages];
   let more = hist.has_more;
+  const ctx = {
+    imported: info.chat.imported === 'tgbridge', import_me: info.chat.import_me, me: info.chat.owner_id || info.members[0]?.id,
+    group: info.chat.type !== 'direct' && info.members.length > 2,
+  };
+  const draw = () => {
+    clear(list);
+    all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
+  };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
-  list.append(...hist.messages.map(messageNode));
+  draw();
   moreBtn.onclick = async () => {
-    const r = await get(`/api/admin/chats/${id}/messages?limit=100&before=${oldest}`);
-    list.prepend(...r.messages.map(messageNode));
-    oldest = r.messages[0]?.id ?? oldest;
+    const r = await get(`/api/admin/chats/${id}/messages?limit=100&before=${all[0]?.id}`);
+    all.unshift(...r.messages);
     moreBtn.hidden = !r.has_more;
+    draw();
   };
   const c = info.chat;
   setView(

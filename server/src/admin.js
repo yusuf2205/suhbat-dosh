@@ -190,7 +190,7 @@ admin.get('/chats/:id', (req, res) => {
     `SELECT u.id, u.name, u.username, u.phone, m.role, m.banned, m.can_send, m.joined_at
      FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? ORDER BY m.joined_at`, id,
   );
-  res.json({ chat: { id: c.id, type: c.type, title: c.title, description: c.description, created_at: c.created_at }, members });
+  res.json({ chat: { id: c.id, type: c.type, title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '' }, members });
 });
 
 // Full history of a chat, with who wrote each message and what happened to it afterwards.

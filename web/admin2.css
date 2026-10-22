@@ -79,3 +79,27 @@
 
 .adm-back, .adm-back span, .adm-back .ico { color: var(--ink-text) !important; }
 @media (min-width: 901px) { .adm-back { background: var(--ink-2) !important; } }
+
+/* a conversation read like a chat */
+.aconv { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; max-width: 860px; margin: 0 auto; }
+.aday { display: flex; justify-content: center; margin: 14px 0 8px; }
+.aday span { background: var(--surface-2); color: var(--muted); border-radius: 999px; padding: 4px 14px; font-size: .78rem; }
+.abub { max-width: min(76%, 560px); padding: 8px 12px 6px; border-radius: 20px; display: grid; gap: 3px; overflow-wrap: anywhere; box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
+.abub.theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+.abub.mine { align-self: flex-end; background: linear-gradient(135deg, #ffe433, #fbc700); color: #17171a; border-bottom-right-radius: 6px; }
+.abub.cont.theirs { border-top-left-radius: 8px; }
+.abub.cont.mine { border-top-right-radius: 8px; }
+.abub-who { font-size: .82rem; font-weight: 700; color: var(--brand-text); }
+.abub.mine .abub-who, .abub.mine .abub-who a { color: #17171a; }
+.abub-text { white-space: pre-wrap; line-height: 1.4; }
+.abub-quote { border-left: 3px solid rgba(0, 0, 0, .25); padding: 2px 8px; font-size: .84rem; color: var(--muted); background: rgba(0, 0, 0, .05); border-radius: 8px; }
+.abub.mine .abub-quote { color: rgba(23, 23, 26, .75); }
+.abub-time { justify-self: end; font-size: .72rem; color: var(--muted); }
+.abub.mine .abub-time { color: rgba(23, 23, 26, .6); }
+.abub-img { max-width: 100%; max-height: 320px; border-radius: 14px; display: block; }
+.abub-audio { width: min(280px, 100%); height: 36px; }
+.abub-flag { font-size: .78rem; border-radius: 10px; padding: 2px 8px; justify-self: start; }
+.abub-flag.bad { background: color-mix(in srgb, #d6453d 18%, transparent); color: #b3261e; }
+.abub-edits { font-size: .8rem; color: var(--muted); }
+.abub-edits summary { cursor: pointer; }
+@media (max-width: 700px) { .abub { max-width: 90%; } }
