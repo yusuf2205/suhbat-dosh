@@ -24,7 +24,17 @@ let recentEl;
 let wired = false;
 let remote = { users: [], messages: [], loading: false, term: '' };
 
-const TABS = ['all', 'direct', 'group', 'channel', 'unread'];
+const TABS = ['all', 'inbox', 'direct', 'group', 'channel', 'unread'];
+
+/** "Inbox": what wants an answer from you: unread chats that are not muted, chats where you were mentioned, chats with your open tasks. */
+function inInbox(c) {
+  if (c.archived) return false;
+  if (S.taskCount?.chats?.includes(c.id)) return true;
+  if (c.unread <= 0) return false;
+  if (!isMuted(c)) return true;
+  const me = S.me?.username;
+  return !!me && new RegExp(`@${me}\\b`, 'i').test(c.last_message?.text || '');
+}
 
 export function mount(sidebar) {
   el = sidebar;
@@ -70,6 +80,7 @@ export function mount(sidebar) {
   if (!wired) {
     wired = true;
     on('chats', render);
+    on('tasks', render);
     on('folders', () => { drawTabs(); render(); });
     on('gcalls', render);
     document.addEventListener('keydown', (e) => {
@@ -141,6 +152,7 @@ function passesFilter(c) {
   if (S.filter.startsWith('f:')) return !!S.folders?.find((x) => `f:${x.id}` === S.filter)?.chat_ids.includes(c.id);
   switch (S.filter) {
     case 'unread': return c.unread > 0;
+    case 'inbox': return inInbox(c);
     case 'direct': return c.type === 'direct';
     case 'group': return c.type === 'group';
     case 'channel': return c.type === 'channel';

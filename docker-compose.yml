@@ -34,6 +34,19 @@ services:
     volumes:
       - ./whisper-models:/models    # downloaded models stay here
 
+  # Translation of chats on your own server (LibreTranslate). Start with:  docker compose --profile translate up -d translate
+  # then add  TRANSLATE_URL=http://translate:5000  to the suhbat service environment.
+  translate:
+    image: libretranslate/libretranslate:latest
+    profiles: ["translate"]
+    restart: unless-stopped
+    mem_limit: 3g
+    environment:
+      LT_LOAD_ONLY: en,ru,uz
+      LT_DISABLE_WEB_UI: "true"
+    volumes:
+      - ./translate-models:/home/libretranslate/.local
+
   # Public access through your own Cloudflare Tunnel (profile 'tunnel'; no open ports needed).
   # Set up with: sh scripts/set-tunnel-token.sh
   cloudflared:

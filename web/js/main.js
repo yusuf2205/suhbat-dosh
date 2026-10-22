@@ -382,6 +382,11 @@ on('logged-out', loggedOut);
 on('logged-out-request', async () => {
   try { await api('POST', '/api/auth/logout'); } catch { /* already gone */ }
   try { window.SuhbatNative?.stopBackground?.(); } catch { /* not the Android app */ }
+  // another account is signed in on this device: go to it instead of the login screen
+  try {
+    const other = (await api('GET', '/api/accounts')).accounts.find((a) => !a.current);
+    if (other) { await api('POST', '/api/accounts/switch', { user_id: other.id }); location.reload(); return; }
+  } catch { /* the login screen */ }
   loggedOut();
 });
 

@@ -6,6 +6,7 @@ import { S, fire } from './state.js';
 import { api } from './net.js';
 import { modal, toast } from './ui.js';
 import { parseExport } from './tgparse.js';
+import { readZip } from './zip.js';
 
 const MAX_JSON = 450 * 1024 * 1024;
 const norm = (p) => String(p).replace(/\\/g, '/').replace(/^\.?\//, '').toLowerCase();
@@ -37,10 +38,11 @@ async function importChat(c, { meName, withMedia, files, maxBytes }, ui, ctl) {
   };
   for (const m of c.messages) {
     if (ctl.stop) break;
-    const file = withMedia && m.media ? files.get(norm(m.media.path)) : null;
+    const entry = withMedia && m.media ? files.get(norm(m.media.path)) : null; // a File, or a zip entry that is unpacked on demand
     const reply = m.reply ? idOf.get(m.reply) : undefined;
-    if (file && file.size > 0 && file.size <= maxBytes) {
+    if (entry && entry.size > 0 && entry.size <= maxBytes) {
       await flush();
+      const file = entry.file ? await entry.file() : entry;
       const q = new URLSearchParams({ key: m.key, name: m.media.name, ts: String(m.ts), author: m.author, caption: m.text, ...(reply ? { reply_to: String(reply) } : {}), ...(m.media.kind === 'voice' ? { voice: '1' } : {}), ...(m.media.duration ? { duration: String(Math.round(m.media.duration)) } : {}) });
       try {
         const r = await api('POST', `/api/import/telegram/${chatId}/file?${q}`, undefined, { raw: file, headers: { 'content-type': 'application/octet-stream' } });
@@ -79,7 +81,7 @@ export function openImport() {
 
   const pickInput = (opts) => h('input', { type: 'file', class: 'sr', tabIndex: -1, ...opts, onchange: (e) => onPicked([...e.target.files]) });
   const dirInput = pickInput({ webkitdirectory: true, multiple: true });
-  const jsonInput = pickInput({ accept: '.json,application/json' });
+  const jsonInput = pickInput({ accept: '.json,.zip,application/json,application/zip' });
 
   function intro() {
     clear(body).append(
@@ -92,9 +94,20 @@ export function openImport() {
       dirInput, jsonInput);
   }
 
+  /** A .zip (a backup of ours, or a zipped export): the entries become the file index. */
+  async function indexZip(zipFile) {
+    const entries = await readZip(zipFile);
+    let prefix = '';
+    let json = null;
+    for (const [name, e] of entries) if (/(^|\/)result\.json$/i.test(name)) { json = e; prefix = name.slice(0, name.length - 'result.json'.length); break; }
+    const files = new Map();
+    for (const [name, e] of entries) files.set(norm(prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name), e);
+    return { files, json: json ? await json.file() : null };
+  }
+
   async function onPicked(list) {
     if (!list.length) return;
-    fileIndex = indexFiles(list);
+    try { fileIndex = list.length === 1 && /\.zip$/i.test(list[0].name) ? await indexZip(list[0]) : indexFiles(list); } catch { toast(t('imp.bad_json')); return; }
     if (!fileIndex.json) { toast(t('imp.no_json')); return; }
     if (fileIndex.json.size > MAX_JSON) { toast(t('imp.too_big')); return; }
     clear(body).append(h('p', { class: 'muted' }, t('imp.reading')));

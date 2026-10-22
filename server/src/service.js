@@ -271,6 +271,7 @@ export function chatOut(chatId, viewerId) {
     sound: m.sound || null,
     saved: c.type === 'direct' && /^(\d+):\1$/.test(c.direct_key || ''),
     secret: c.e2e ? { group: true, state: c.e2e_epoch > 0 ? 'ready' : 'pending', epoch: c.e2e_epoch, rotate: !!c.e2e_rotate, initiator_id: c.owner_id } : sc ? { state: sc.peer_pub ? 'ready' : 'pending', initiator_id: sc.initiator_id, peer_id: sc.peer_id, init_pub: sc.init_pub, peer_pub: sc.peer_pub } : null,
+    ...(c.is_public ? { public: true } : {}),
     ...(c.imported_from ? { imported: c.imported_from, import_me: c.import_me || '' } : {}),
     can_post: canPost,
     draft: m.draft,

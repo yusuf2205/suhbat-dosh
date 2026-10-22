@@ -178,6 +178,13 @@ export async function renderInfo(m, chatId) {
         draw();
       } }, chat.blocked_by_me ? t('chat.unblock') : t('info.block')));
     } else {
+      if (chat.my_role === 'owner' && !chat.secret && !chat.imported) {
+        const pub = h('input', { type: 'checkbox', checked: !!chat.public });
+        pub.addEventListener('change', async () => {
+          try { const r = await api('POST', `/api/chats/${chat.id}/public`, { public: pub.checked }); S.chats.set(r.chat.id, r.chat); fire('chats'); } catch (e) { pub.checked = !pub.checked; fail(e); }
+        });
+        nodes.push(h('label', { class: 'focus-row' }, h('span', null, h('b', null, t('dir.make_public')), h('small', { class: 'muted' }, t('dir.make_public_hint'))), pub));
+      }
       if (isAdmin && chat.invite_code) {
         const link = `${location.origin}/#/join/${chat.invite_code}`;
         nodes.push(h('h3', null, t('info.invite')), h('div', { class: 'invite' }, link),

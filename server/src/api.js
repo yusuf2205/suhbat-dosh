@@ -33,6 +33,10 @@ import { importer } from './importer.js';
 import { notes, wireNotes } from './notes.js';
 import { e2e, e2eNeed, e2eRotate } from './e2e.js';
 import { linkpreview } from './linkpreview.js';
+import { quick } from './quick.js';
+import { translate, translatorReady } from './translate.js';
+import { accountsRouter } from './accounts.js';
+import { directory, wireDirectory } from './directory.js';
 import { normalizeFocus } from '../../shared/focus.js';
 import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
@@ -405,12 +409,16 @@ api.get('/config', (_req, res) => {
   res.json({
     max_upload_bytes: config.maxUploadBytes,
     transcribe: transcriberReady(),
+    translate: translatorReady(),
     registration_open: registrationMode() !== 'closed',
     registration: registrationMode(),
     dev_otp: config.otpMode === 'dev',
     ice_servers: currentIceServers(),
   });
 });
+
+// accounts on this device: they check the cookies themselves (the current session may be gone)
+api.use(accountsRouter());
 
 // everything below needs a session
 api.use(requireAuth);
@@ -426,6 +434,9 @@ api.use(importer);
 api.use(notes);
 api.use(e2e);
 api.use(linkpreview);
+api.use(quick);
+api.use(translate);
+api.use(directory);
 api.use(transcribe);
 api.use(pushRouter);
 api.use(safety);
@@ -635,13 +646,13 @@ api.get('/users/:id/avatar', (req, res) => {
 api.get('/users/search', (req, res) => {
   if (!rateLimit(`usearch:${req.user.id}`, 40, 60_000)) throw new HttpError(429, 'too_many_requests');
   const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 64 }).replace(/^@/, '');
-  const like = `${escapeLike(term)}%`;
+  const like = `${escapeLike(term.toLowerCase())}%`;
   const rows = q.all(
     `SELECT * FROM users u
-     WHERE u.id != ? AND (u.username LIKE ? ESCAPE '\\' OR u.name LIKE ? ESCAPE '\\' OR u.phone = ?)
+     WHERE u.id != ? AND (lc(u.username) LIKE ? ESCAPE '\\' OR lc(u.name) LIKE ? ESCAPE '\\' OR u.phone = ?)
        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.user_id = u.id AND b.blocked_id = ?)
      ORDER BY (u.username = ? COLLATE NOCASE) DESC, u.name LIMIT 20`,
-    req.user.id, like, `%${escapeLike(term)}%`, /^\+?\d{8,15}$/.test(term) ? (term.startsWith('+') ? term : `+${term}`) : '',
+    req.user.id, like, `%${escapeLike(term.toLowerCase())}%`, /^\+?\d{8,15}$/.test(term) ? (term.startsWith('+') ? term : `+${term}`) : '',
     req.user.id, term,
   );
   res.json({ users: rows.map((u) => publicUser(u, req.user.id)) });
@@ -721,6 +732,7 @@ const pushChat = (chatId, ids = memberIds(chatId)) => {
 
 wireBots({ postMessage, pushChat });
 wireNotify({ postMessage, pushChat });
+wireDirectory({ pushChat });
 wireFeatures({ postMessage });
 wireMini({ postMessage });
 wireTasks({ postMessage });
@@ -1673,9 +1685,9 @@ api.get('/search/messages', (req, res) => {
   if (!rateLimit(`msearch:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'too_many_requests');
   const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 100 });
   const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
-  const params = [req.user.id, `%${escapeLike(term)}%`];
+  const params = [req.user.id, `%${escapeLike(term.toLowerCase())}%`];
   let sql = `SELECT m.* FROM messages m JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
-             WHERE m.text LIKE ? ESCAPE '\\'`;
+             WHERE lc(m.text) LIKE ? ESCAPE '\\'`;
   if (chatId !== undefined) { sql += ' AND m.chat_id = ?'; params.push(chatId); }
   sql += ' ORDER BY m.id DESC LIMIT 40';
   res.json({ messages: db.prepare(sql).all(...params).map(messageOut) });

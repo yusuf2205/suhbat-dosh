@@ -10,6 +10,8 @@ import { openDigest } from './digest.js';
 import { noteNode, openNoteCreate } from './notes.js';
 import { firstUrl, linkCard } from './linkcard.js';
 import { editImage, scanDocument } from './photoedit.js';
+import { attachQuick, openQuickManager } from './quick.js';
+import { autoAvailable, autoOn, autoTrNode, setAuto } from './autotr.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -261,6 +263,7 @@ function buildView() {
     if (ta.value && !editing) typingPing();
     saveDraft();
   });
+  attachQuick(ta, view.wrap, () => !!activeChat()?.peer?.is_bot);
   ta.addEventListener('paste', (e) => {
     const fl = e.clipboardData?.files;
     if (fl?.length) {
@@ -463,6 +466,7 @@ function renderComposer() {
     h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': t('chat.attach'), onclick: (e) => popMenu(e.currentTarget, [
       { label: t('attach.file'), onClick: () => view.fileInput.click() },
       { label: t('attach.location'), onClick: () => sendLocation(S.active, (m) => upsert(S.active, m)) },
+      { label: t('quick.title'), onClick: () => openQuickManager({ onPick: (text) => insertAtCursor(text) }) },
       { label: t('sc.title'), onClick: async () => { const chatId = S.active; const f = await scanDocument(); if (f) attachFiles(chatId, [f]); } },
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
       { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
@@ -1012,7 +1016,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1093,6 +1097,7 @@ function buildMessage(m, c) {
   else if (m.kind === 'contact') bubble.append(contactNode(m));
   else if (bigEmoji && isSingleEmoji(m.text)) bubble.append(animatedEmoji(m.text.trim()) ?? h('div', { class: 'text' }, m.text));
   else if (m.text) bubble.append(h('div', { class: 'text' }, linkify(m.text)));
+  if (m.kind === 'text' && !mine && !c.secret && m.text && autoOn(c.id)) { const tr = autoTrNode(m.text); if (tr) bubble.append(tr); }
   if (m.kind === 'text' && !c.secret && m.text && typeof m.id === 'number') { const card = linkCard(firstUrl(m.text)); if (card) bubble.append(card); }
   if (m.markup?.inline_keyboard) bubble.append(keyboardNode(m));
   const reacts = Object.entries(m.reactions || {});
@@ -1562,6 +1567,10 @@ function chatMoreMenu(anchor) {
     { label: t('sched.title'), onClick: () => openScheduled() },
     ...(!isSecret(c) ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
     { label: t('task.title'), onClick: () => openTasks() },
+    ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
+      if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
+      setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages();
+    } }] : []),
     ...(c.type === 'direct' || c.my_role !== 'member' ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
     { label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) },
     ...(c.type === 'group' ? [

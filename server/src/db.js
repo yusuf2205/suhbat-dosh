@@ -30,6 +30,8 @@ const migrationsDir = path.resolve(here, '../migrations');
 }());
 
 export const db = new DatabaseSync(config.dbFile);
+// SQLite's own LIKE and LOWER know only Latin letters: searching "привет" must also find "Привет"
+db.function('lc', { deterministic: true }, (s) => (s == null ? '' : String(s).toLowerCase()));
 db.exec('PRAGMA journal_mode = WAL;');
 db.exec('PRAGMA foreign_keys = ON;');
 db.exec('PRAGMA busy_timeout = 5000;');

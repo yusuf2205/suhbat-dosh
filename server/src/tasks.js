@@ -136,5 +136,8 @@ tasks.get('/tasks/count', (req, res) => {
   const overdue = q.get(
     `SELECT COUNT(*) AS n FROM tasks k JOIN members mb ON mb.chat_id = k.chat_id AND mb.user_id = ? AND mb.banned = 0
      WHERE k.done = 0 AND k.assignee_id = ? AND k.due_at IS NOT NULL AND k.due_at < ?`, req.user.id, req.user.id, now()).n;
-  res.json({ open: n, overdue });
+  const chats = q.all(
+    `SELECT DISTINCT k.chat_id FROM tasks k JOIN members mb ON mb.chat_id = k.chat_id AND mb.user_id = ? AND mb.banned = 0
+     WHERE k.done = 0 AND k.assignee_id = ?`, req.user.id, req.user.id).map((r) => r.chat_id);
+  res.json({ open: n, overdue, chats });
 });

@@ -42,7 +42,7 @@ function actions() {
     ['imp.title', 'telegram', lazy('./import.js', 'openImport')],
     ['scan.title', 'qr', lazy('./scanner.js', 'openScanner')],
     ['st.storage', 'disk', lazy('./storage.js', 'openStorage')],
-    ['qr.title', 'chat', lazy('./quick.js', 'openQuickManager')],
+    ['quick.title', 'chat', lazy('./quick.js', 'openQuickManager')],
     ['dir.title', 'globe', lazy('./directory.js', 'openDirectory')],
     ['acc.title', 'user', lazy('./accounts.js', 'openAccounts')],
     ['bk.title', 'download', lazy('./backup.js', 'openBackup')],

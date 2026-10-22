@@ -27,6 +27,10 @@ import { focusSummary, openFocus } from './focus.js';
 import { openDigestAll } from './digest.js';
 import { openImport } from './import.js';
 import { openStorage } from './storage.js';
+import { openQuickManager } from './quick.js';
+import { openDirectory } from './directory.js';
+import { openAccounts } from './accounts.js';
+import { openBackup } from './backup.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -253,6 +257,10 @@ export function openSettings() {
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
+          row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
+          row('user', t('acc.title'), { onclick: () => { m.close(); openAccounts(); } }),
+          row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
+          row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
           row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
           row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
           row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),

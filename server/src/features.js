@@ -343,7 +343,7 @@ features.get('/search/global', (req, res) => {
   if (term.length < 2 && !from && !type && !since && !until) throw new HttpError(400, 'invalid_input', 'query too short');
   const where = ['m.id > MAX(mb.cleared_before, 0)'];
   const params = [req.user.id];
-  if (term.length >= 2) { where.push("m.text LIKE ? ESCAPE '\\'"); params.push(`%${escapeLike(term)}%`); }
+  if (term.length >= 2) { where.push("lc(m.text) LIKE ? ESCAPE '\\'"); params.push(`%${escapeLike(term.toLowerCase())}%`); }
   if (from) { where.push('m.sender_id = ?'); params.push(from); }
   if (since !== undefined) { where.push('m.created_at >= ?'); params.push(since); }
   if (until !== undefined) { where.push('m.created_at <= ?'); params.push(until); }
