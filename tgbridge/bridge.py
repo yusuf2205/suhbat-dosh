@@ -33,6 +33,11 @@ MOCK = os.environ.get("TGBRIDGE_MOCK") == "1"
 BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "150"))
 BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
 TELEGRAM_SERVICE = 777000
+# media: photos and voice messages are copied; videos are prepared but OFF until BRIDGE_VIDEO=1
+MEDIA_MAX = int(os.environ.get("BRIDGE_MEDIA_MAX_MB", "25")) * 1024 * 1024
+VIDEO_ON = os.environ.get("BRIDGE_VIDEO") == "1"
+VIDEO_MAX = int(os.environ.get("BRIDGE_VIDEO_MAX_MB", "50")) * 1024 * 1024
+BACKFILL_MEDIA = os.environ.get("BACKFILL_MEDIA") == "1"   # also download the pictures of the old history (heavy)
 
 
 def log(*a):
@@ -217,6 +222,45 @@ def private_ok(entity_id: int, entity) -> bool:
     return not getattr(entity, "bot", False) and not getattr(entity, "is_self", False)
 
 
+def media_kind(msg):
+    """Which kind of file this message carries and we are willing to copy: 'image', 'voice', 'video' (only when switched on) or None."""
+    if getattr(msg, "voice", None):
+        return "voice"
+    if getattr(msg, "photo", None):
+        return "image"
+    if VIDEO_ON and (getattr(msg, "video", None) or getattr(msg, "video_note", None)) and not getattr(msg, "gif", None):
+        return "video"
+    return None
+
+
+async def upload_media(a: Acct, msg, kind: str, meta: dict) -> bool:
+    """Download the file of a message and hand it to Suhbat-dosh. False means: send the text placeholder instead."""
+    f = getattr(msg, "file", None)
+    size = getattr(f, "size", 0) or 0
+    if size > (VIDEO_MAX if kind == "video" else MEDIA_MAX):
+        return False
+    try:
+        data = await msg.download_media(file=bytes)
+    except Exception as e:
+        log("media download failed:", type(e).__name__)
+        return False
+    return await post_media(a, kind, data, {**meta, "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""})
+
+
+async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
+    if not data:
+        return False
+    params = {"owner": a.uid, "kind": kind, **{k: ("1" if v is True else "" if v is None or v is False else str(v)) for k, v in meta.items()}}
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=180)) as http:
+            async with http.post(f"{SERVER}/api/bridge/media", params=params, data=data,
+                                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"}) as r:
+                return r.status < 300
+    except Exception as e:
+        log("media upload failed:", type(e).__name__)
+        return False
+
+
 def attach_handlers(a: Acct):
     from telethon import events, utils
 
@@ -242,6 +286,13 @@ def attach_handlers(a: Acct):
             if chat is None and kind == "user":
                 chat = await event.get_chat()
             sender = await event.get_sender()
+            mk = media_kind(event.message)
+            if mk and await upload_media(a, event.message, mk, {
+                "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
+                "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
+                "ts": int(event.message.date.timestamp() * 1000), "reply_to": event.message.reply_to.reply_to_msg_id if event.message.reply_to else None,
+            }):
+                return
             await to_server({
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
@@ -278,6 +329,12 @@ async def run_backfill(a: Acct):
                     msgs.append(m)
             for m in reversed(msgs):
                 sender = await m.get_sender()
+                mk = media_kind(m) if BACKFILL_MEDIA else None
+                if mk and await upload_media(a, m, mk, {
+                    "tg_chat": str(d.id), "chat_kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+                    "out": bool(m.out), "caption": (m.message or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": m.reply_to.reply_to_msg_id if m.reply_to else None,
+                }):
+                    continue
                 await to_server({
                     "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
                     "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000),
@@ -532,6 +589,29 @@ async def mock_message(r):
     return web.json_response({"forwarded": True})
 
 
+TINY = {
+    "image": base64.b64decode("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="),
+    "voice": b"OggS\x00\x02" + b"\x00" * 40,
+    "video": b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 40,
+}
+
+
+async def mock_media(r):
+    """Tests only: a picture / voice message / video arrived in Telegram (a video only when videos are switched on)."""
+    if not MOCK:
+        return web.json_response({"error": "forbidden"}, status=403)
+    a = who(r)
+    b = await r.json()
+    kind = b["kind"]
+    key = str(b["chat"])
+    if not a.me or (key not in a.chats and not a.auto_private) or (kind == "video" and not VIDEO_ON):
+        return web.json_response({"forwarded": False})
+    ok = await post_media(a, kind, TINY[kind], {"tg_chat": key, "chat_kind": b.get("chat_kind", "user"), "title": b.get("title", ""), "tg_msg": b["msg"],
+                                               "author": b.get("author", "Кто-то"), "out": bool(b.get("out")), "caption": b.get("caption", ""), "ts": int(time.time() * 1000),
+                                               "duration": b.get("duration", ""), "w": b.get("w", ""), "h": b.get("h", "")})
+    return web.json_response({"forwarded": ok})
+
+
 def app():
     a = web.Application(middlewares=[guard], client_max_size=256 * 1024)
     a.add_routes([
@@ -539,7 +619,7 @@ def app():
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/mock/message", mock_message),
+        web.post("/mock/message", mock_message), web.post("/mock/media", mock_media),
     ])
     return a
 

@@ -2059,3 +2059,6 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .br-chat-name { display: grid; min-width: 0; }
 .br-chat-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .br-sync { padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #f59e0b 16%, var(--surface)); }
+
+/* the animated QR is smooth, not pixelated */
+.qr-canvas { image-rendering: auto; }

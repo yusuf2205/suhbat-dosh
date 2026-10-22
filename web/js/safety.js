@@ -58,7 +58,7 @@ export async function openSafety(peer, onChange) {
       h('div', { class: 'sf-head' }, avatar(S.me, 'md'), h('span', { class: 'sf-link' }, '⇄'), avatar(peer, 'md')),
       h('p', { class: 'muted', style: { textAlign: 'center' } }, t('sf.intro', { name: peer.name })),
       banner,
-      h('div', { class: 'sf-qr' }, qrCanvas(link, 200)),
+      h('div', { class: 'sf-qr' }, qrCanvas(link, 220, { logo: false, animate: false })),
       h('div', { class: 'sf-number', 'aria-label': t('sf.number') }, [0, 1, 2].map((r) => h('div', null, rows.slice(r * 4, r * 4 + 4).map((g) => h('span', null, g))))),
       h('div', { class: 'sf-actions' },
         h('button', { class: 'btn', type: 'button', onclick: async () => { m.close(); (await import('./scanner.js')).openScanner(); } }, icon('qr', 18), h('span', null, t('sf.scan'))),

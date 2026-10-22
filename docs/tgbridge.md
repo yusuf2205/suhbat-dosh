@@ -51,7 +51,11 @@ Keep the `tgbridge-data` Docker volume out of any cloud copy of the NAS, and kee
 
 ## Limits
 
-* Text only. Photos, voice, files, stickers show as a mark such as "[Photo]".
+* **Copied:** text, photos and voice messages (up to 25 MB each). Photos and voice of the *old history* come only as a mark such as "[Photo]"
+  (set `BACKFILL_MEDIA=1` in `.env.bridge` to download them too; it is heavy). Files, stickers, polls arrive as a mark such as "[File]".
+* **Voice messages** are Telegram's Ogg/Opus: Chrome, Edge, Firefox and Android play them; Safari on iPhone may not.
+* **Video is prepared but off.** Switch it on with `BRIDGE_VIDEO=1` in `.env.bridge` (size limit `BRIDGE_VIDEO_MAX_MB`, default 50; round video messages included),
+  then `docker compose --profile tgbridge up -d tgbridge`. The test suite runs the same scenario with `TEST_BRIDGE_VIDEO=1`.
 * Telegram may restrict an account that behaves like a bot. Normal personal use is far below the limits; the first history copy is paced (about a chat every 0.6 s).
 * Messages of people's contacts are stored on your server; they do not know it.
 

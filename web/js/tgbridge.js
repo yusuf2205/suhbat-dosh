@@ -48,7 +48,7 @@ export function openBridge() {
   async function qrStep() {
     let s;
     try { s = await api('POST', '/api/bridge/start'); } catch (e) { fail(e); return; }
-    const box = h('div', { class: 'qrlogin-box' }, qrCanvas(s.url, 240));
+    const box = h('div', { class: 'qrlogin-box' }, qrCanvas(s.url, 240, { logo: false, animate: false }));
     const status = h('p', { class: 'muted', role: 'status' }, t('br.waiting'));
     win.setBody(
       h('p', null, t('br.scan_intro')),
@@ -61,7 +61,7 @@ export function openBridge() {
       if (Date.now() > until + 5000) { status.textContent = t('qrl.expired'); again(); return; }
       try {
         const r = await api('GET', '/api/bridge/poll');
-        if (r.url && r.url !== s.url && r.status === 'waiting') { s.url = r.url; box.replaceChildren(qrCanvas(r.url, 240)); }
+        if (r.url && r.url !== s.url && r.status === 'waiting') { s.url = r.url; box.replaceChildren(qrCanvas(r.url, 240, { logo: false, animate: false })); }
         if (r.status === 'done') { toast(t('br.linked')); draw(); setTimeout(() => { if (alive && win.el.querySelector('.br-account') && !win.el.querySelector('.br-pick')) draw(); }, 6000); return; }
         if (r.status === 'password') { passwordStep(); return; }
         if (r.status === 'expired' || r.status === 'error') { status.textContent = t(r.status === 'error' ? 'br.error' : 'qrl.expired'); again(); return; }

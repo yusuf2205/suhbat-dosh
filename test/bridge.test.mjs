@@ -14,6 +14,7 @@ const PORT = 6860 + Math.floor(Math.random() * 40);
 const BPORT = 6900 + Math.floor(Math.random() * 40);
 const BASE = `http://127.0.0.1:${PORT}`;
 const TOKEN = crypto.randomBytes(24).toString('base64url');
+const VIDEO = process.env.TEST_BRIDGE_VIDEO === '1'; // run the same test with videos switched on
 const pyEnv = { ...process.env, ...(process.env.TGBRIDGE_PYPATH ? { PYTHONPATH: process.env.TGBRIDGE_PYPATH } : {}) };
 const havePy = spawnSync('python', ['-c', 'import aiohttp, cryptography'], { env: pyEnv }).status === 0;
 let server; let bridgeProc; let bdir;
@@ -23,7 +24,7 @@ before(async () => {
   bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-brd-'));
   bridgeProc = spawn('python', ['tgbridge/bridge.py'], {
     cwd: root, stdio: 'inherit',
-    env: { ...pyEnv, TGBRIDGE_MOCK: '1', PORT: String(BPORT), DATA_DIR: bdir, BRIDGE_TOKEN: TOKEN, TGBRIDGE_KEY: crypto.randomBytes(32).toString('base64'), SERVER_URL: BASE, MOCK_LOGIN_DELAY: '0.4' },
+    env: { ...pyEnv, TGBRIDGE_MOCK: '1', PORT: String(BPORT), DATA_DIR: bdir, BRIDGE_TOKEN: TOKEN, TGBRIDGE_KEY: crypto.randomBytes(32).toString('base64'), SERVER_URL: BASE, MOCK_LOGIN_DELAY: '0.4', ...(VIDEO ? { BRIDGE_VIDEO: '1' } : {}) },
   });
   const env = {
     ...process.env, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', OTP_MODE: 'dev', LOG_LEVEL: 'error', OTP_REQUESTS_PER_IP: '300',
@@ -49,6 +50,7 @@ async function phoneUser(phone, name) {
   return { cookie: v.cookie, user: v.data.user };
 }
 const mock = (uid, body) => fetch(`http://127.0.0.1:${BPORT}/mock/message?u=${uid}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+const mockMedia = (uid, body) => fetch(`http://127.0.0.1:${BPORT}/mock/media?u=${uid}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 120)); } return null; };
 async function link(u) {
   assert.equal((await call(u.cookie, 'POST', '/api/bridge/start')).status, 200);
@@ -98,6 +100,24 @@ test('personal chats are mirrored by default and quietly, history comes along, g
   const after1 = await until(async () => { const c = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}`)).data.chat; return c.unread === 1 ? c : null; });
   assert.ok(after1, 'one new unread message');
   assert.equal((await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages.length, 4);
+  // pictures and voice messages are copied as files; videos are prepared but switched off
+  assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'image', msg: 60, caption: 'Фото с вечера', w: 640, h: 480 })).forwarded, true);
+  assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'voice', msg: 61, duration: 7 })).forwarded, true);
+  assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'video', msg: 62 })).forwarded, VIDEO, VIDEO ? 'videos are on' : 'videos are off for now');
+  const media = await until(async () => { const r = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages; return r.find((m) => m.kind === 'voice') ? r : null; });
+  assert.ok(media, 'the voice message arrived');
+  const photo = media.find((m) => m.kind === 'image');
+  assert.equal(photo.text, 'Фото с вечера');
+  assert.equal(photo.file.mime, 'image/jpeg');
+  assert.equal(photo.import_author, 'Кто-то');
+  if (VIDEO) assert.ok((await until(async () => (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages.find((m) => m.kind === 'video'))), 'the video arrived');
+  const voice = media.find((m) => m.kind === 'voice');
+  assert.equal(voice.duration, 7);
+  assert.equal(voice.file.mime, 'audio/ogg');
+  const served = await fetch(BASE + photo.file.url, { headers: { cookie: admin.cookie } });
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/jpeg');
+  assert.equal((await fetch(BASE + photo.file.url)).status, 401, 'a copied file is private like any other');
   // a brand-new personal chat appears by itself
   await mock(admin.user.id, { chat: 999, kind: 'user', title: 'Новый человек', msg: 1, author: 'Новый человек', text: 'Здравствуйте' });
   assert.ok(await until(async () => (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '999')));

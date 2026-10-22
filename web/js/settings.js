@@ -8,10 +8,10 @@ import { S, fire, savePrefs } from './state.js';
 import { icon } from './icons.js';
 import { api } from './net.js';
 import { avatar, confirmDialog, lightbox, modal, popMenu, toast } from './ui.js';
-import qrcode from './vendor/qrcode.js';
 import { dndRows, openFolders, openGlobalSearch, quietSettings } from './extras.js';
 import { compose as composeStory, openStoryArchive } from './stories.js';
 import { openScanner } from './scanner.js';
+import { qrCanvas } from './qr.js';
 import { screenGuardNative } from './screenguard.js';
 import { openSelfNotes } from './selfnotes.js';
 import { openBridge } from './tgbridge.js';
@@ -95,31 +95,9 @@ export function isBirthdayToday(v) {
 /** Profile link in a QR code: scanning it with any camera opens the messenger and the chat with this person. */
 export function openQr(user) {
   const link = `${location.origin}/?u=${encodeURIComponent(user.username)}`;
-  const qr = qrcode(0, 'M');
-  qr.addData(link);
-  qr.make();
-  const n = qr.getModuleCount();
-  const pad = 3;
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${n + pad * 2} ${n + pad * 2}`);
-  svg.setAttribute('class', 'qr-svg');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'QR');
-  const bg = document.createElementNS(NS, 'rect');
-  bg.setAttribute('width', String(n + pad * 2));
-  bg.setAttribute('height', String(n + pad * 2));
-  bg.setAttribute('fill', '#ffffff');
-  svg.append(bg);
-  let d = '';
-  for (let r = 0; r < n; r += 1) for (let c = 0; c < n; c += 1) if (qr.isDark(r, c)) d += `M${c + pad} ${r + pad}h1v1h-1z`;
-  const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', d);
-  path.setAttribute('fill', '#1b1b1f');
-  svg.append(path);
   modal({
     title: t('st.qr'), className: 'qr-modal',
-    body: [h('div', { class: 'qr-box' }, svg, h('b', null, user.name), h('span', { class: 'accent' }, `@${user.username}`)),
+    body: [h('div', { class: 'qr-box' }, qrCanvas(link, 280), h('b', null, user.name), h('span', { class: 'accent' }, `@${user.username}`)),
       h('p', { class: 'muted', style: { textAlign: 'center' } }, t('st.qr_hint')),
       h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: async () => { try { await navigator.clipboard.writeText(link); toast(t('bots.copied')); } catch { toast(link, 6000); } } }, t('st.copy_link')),
       h('button', { class: 'btn', type: 'button', style: { width: '100%', marginTop: '8px' }, onclick: () => openScanner() }, t('scan.title'))],

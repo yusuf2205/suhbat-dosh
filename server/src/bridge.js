@@ -10,7 +10,9 @@ import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
-import { HttpError, int, log, now, rateLimit, str } from './util.js';
+import { HttpError, int, log, now, rateLimit, rid, str } from './util.js';
+import { config } from './config.js';
+import { filePath, readHead, receive, removeFile, sniff } from './files.js';
 import { audit, chatOut, getMessage, getUser, memberIds, messageOut } from './service.js';
 import { emit } from './realtime.js';
 
@@ -258,39 +260,36 @@ bridgeAdmin.put('/:uid', async (req, res) => {
 const same = (a, b) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 const syncTimers = new Map();
 
-/** One Telegram message. Dedupes by (chat, key); quiet: nothing is pushed, the chats are muted. */
-bridgeIn.post('/bridge/in', (req, res) => {
-  const given = String(req.headers.authorization || '');
-  if (!bridgeConfigured() || !same(given, `Bearer ${TOKEN()}`)) throw new HttpError(403, 'forbidden');
-  const b = req.body || {};
+/** One Telegram message (text, or a file with its caption). Dedupes by (chat, key); quiet: nothing is pushed, the chats are muted. */
+function deliver(b, file = null) {
   const uid = Number(b.owner);
   const o = Number.isInteger(uid) ? link(uid) : null;
-  if (!o) return res.json({ ok: true, skipped: true });
+  if (!o) return { ok: true, skipped: true };
   if (b.sync_done) {
     for (const c of chatsOf(uid)) emit([uid], { type: EVENTS.CHAT_UPDATE, chat: chatOut(c.chat_id, uid) });
-    return res.json({ ok: true });
+    return { ok: true };
   }
   const tgChat = String(b.tg_chat ?? '');
-  if (!/^-?\d{1,20}$/.test(tgChat)) return res.json({ ok: true, skipped: true });
-  const text = String(b.text ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
-  if (!text.trim()) return res.json({ ok: true, skipped: true });
+  if (!/^-?\d{1,20}$/.test(tgChat)) return { ok: true, skipped: true };
+  const text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
+  if (!text.trim() && !file) return { ok: true, skipped: true };
   let row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   if (!row) {
     // a personal chat that is not mirrored yet: created now, unless the owner removed it or switched the default off
-    if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return res.json({ ok: true, skipped: true });
+    if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return { ok: true, skipped: true };
     const title = String(b.title || b.author || tgChat).replace(/[\u0000-\u001f]/g, '').slice(0, 60);
     createMirror(uid, o.tg_name, tgChat, title, 'user', false);
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
   const key = `tg:${row.tg_chat}:${int(b.tg_msg, 'tg_msg')}`;
-  if (q.get('SELECT 1 AS x FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key)) return res.json({ ok: true, duplicate: true });
+  if (q.get('SELECT 1 AS x FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key)) return { ok: true, duplicate: true };
   const author = b.out ? (o.tg_name || 'Я') : String(b.author || '?').replace(/[\u0000-\u001f]/g, '').slice(0, 64);
   const reply = Number.isInteger(b.reply_to)
     ? q.get('SELECT id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${b.reply_to}`)?.id ?? null : null;
   const ts = Number.isFinite(Number(b.ts)) && Number(b.ts) > 0 ? Math.min(Math.round(Number(b.ts)), now()) : now();
   const r = q.run(
-    "INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, import_author, import_key, created_at) VALUES (?,?, 'text', ?,?,?,?,?)",
-    row.chat_id, b.out ? uid : null, text, reply, author, key, ts, // others' messages have no account here: they count as unread
+    'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    row.chat_id, b.out ? uid : null, file ? file.kind : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, // others' messages have no account here: they count as unread
   );
   const id = Number(r.lastInsertRowid);
   q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?) WHERE id = ?', id, ts, row.chat_id);
@@ -299,10 +298,54 @@ bridgeIn.post('/bridge/in', (req, res) => {
   if (b.backfill) {
     // history: no live event for every message, one refresh of the chat once the batch calms down
     if (!syncTimers.has(row.chat_id)) syncTimers.set(row.chat_id, setTimeout(() => { syncTimers.delete(row.chat_id); try { emit([uid], { type: EVENTS.CHAT_UPDATE, chat: chatOut(row.chat_id, uid) }); } catch { /* chat gone */ } }, 2500).unref());
-    return res.json({ ok: true, id });
+    return { ok: true, id };
   }
   emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_NEW, message: messageOut(getMessage(id)) }); // deliberately no push: the mirrored chats are quiet
-  res.json({ ok: true, id });
+  return { ok: true, id };
+}
+
+const secret = (req) => { if (!bridgeConfigured() || !same(String(req.headers.authorization || ''), `Bearer ${TOKEN()}`)) throw new HttpError(403, 'forbidden'); };
+
+bridgeIn.post('/bridge/in', (req, res) => {
+  secret(req);
+  res.json(deliver(req.body || {}));
+});
+
+// pictures and voice messages (and videos, when switched on in the bridge) arrive as the raw file with the details in the query
+const MEDIA_KINDS = { image: ['jpeg', 'png', 'webp', 'gif'], voice: ['ogg', 'webm', 'mp4', 'mpeg', 'wav'], video: ['mp4', 'webm'] };
+bridgeIn.post('/bridge/media', async (req, res) => {
+  secret(req);
+  const qy = req.query;
+  const want = String(qy.kind || '');
+  if (!MEDIA_KINDS[want]) { req.resume(); throw new HttpError(400, 'invalid_input'); }
+  const uid = Number(qy.owner);
+  const row = Number.isInteger(uid) && q.get('SELECT 1 AS x FROM tg_bridge WHERE user_id = ?', uid);
+  if (!row) { req.resume(); return res.json({ ok: true, skipped: true }); }
+  const fid = rid(16);
+  const dest = filePath(fid);
+  const limit = want === 'video' ? config.maxUploadBytes : Math.min(config.maxUploadBytes, 25 * 1024 * 1024);
+  let size;
+  try { size = await receive(req, dest, limit); } catch (e) { removeFile(fid); throw e; }
+  if (size === 0) { removeFile(fid); throw new HttpError(400, 'empty_file'); }
+  const type = sniff(readHead(dest), want === 'voice');
+  const okKind = type && ((want === 'image' && type.kind === 'image') || (want === 'voice' && type.kind === 'voice') || (want === 'video' && type.kind === 'video'));
+  if (!okKind) { removeFile(fid); throw new HttpError(415, 'unsupported_media'); }
+  const tgChat = String(qy.tg_chat ?? '');
+  const name = want === 'image' ? `photo.${type.mime.split('/')[1]}` : want === 'voice' ? 'voice.ogg' : 'video.mp4';
+  const dur = Number(qy.duration);
+  const dim = (v) => (Number(v) > 0 && Number(v) < 20000 ? Math.round(Number(v)) : null);
+  // the file row comes first (the message points at it); it is attached to its chat once the message knows which chat it landed in
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at, width, height) VALUES (?,?,?,?,?,?,?,?,?)', fid, uid, null, name, type.mime, size, now(), dim(qy.w), dim(qy.h));
+  let out;
+  try {
+    out = deliver({
+    owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
+    caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1',
+  }, { id: fid, kind: type.kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
+  } catch (e) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); throw e; }
+  if (!out.id) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); return res.json(out); } // skipped or already there: the file is not kept
+  q.run('UPDATE files SET chat_id = (SELECT chat_id FROM messages WHERE id = ?) WHERE id = ?', out.id, fid);
+  res.json({ ok: true, id: out.id });
 });
 
 // ------------------------------------------------------------------ answering from here (two-way chats only)
