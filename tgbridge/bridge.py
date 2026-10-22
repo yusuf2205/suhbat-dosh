@@ -304,6 +304,18 @@ async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
         return False
 
 
+def may_answer(a: Acct, chat: str) -> bool:
+    """May a message be written to this chat from here? A listed chat follows its own switch; a personal chat that is not listed yet
+    (it has just appeared) may be answered by default while the personal chats are copied. The server has already checked its own switch."""
+    rule = a.chats.get(chat)
+    if rule is not None:
+        return bool(rule.get("two_way"))
+    try:
+        return a.auto_private and int(chat) > 0   # personal chats have positive ids, groups and channels negative ones
+    except ValueError:
+        return False
+
+
 def is_mirrored(a: Acct, key: str, kind: str) -> bool:
     """Is this Telegram chat one that is copied (chosen, or personal while the default is on)?"""
     return key in a.chats or (a.auto_private and kind == "user")
@@ -684,8 +696,7 @@ async def send(r):
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
     chat = str(body.get("chat"))
-    rule = a.chats.get(chat)
-    if not rule or not rule.get("two_way"):
+    if not may_answer(a, chat):
         return web.json_response({"error": "read_only"}, status=403)
     text = str(body.get("text", ""))[:4000]
     if not text.strip():
@@ -707,8 +718,7 @@ async def read_back(r):
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
     chat = str(body.get("chat"))
-    rule = a.chats.get(chat)
-    if not rule or not rule.get("two_way"):
+    if not may_answer(a, chat):
         return web.json_response({"error": "read_only"}, status=403)
     if not MOCK:
         await a.client.send_read_acknowledge(int(chat), max_id=int(body.get("max_id") or 0))

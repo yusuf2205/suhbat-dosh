@@ -387,6 +387,7 @@ function deliver(b, file = null) {
     if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return { ok: true, skipped: true };
     const title = String(b.title || b.author || tgChat).replace(/[\u0000-\u001f]/g, '').slice(0, 60);
     createMirror(uid, o.tg_name, tgChat, title, 'user', true);
+    pushRules(uid).catch(() => { /* the bridge applies the default for a new personal chat anyway */ });
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
   const key = `tg:${row.tg_chat}:${int(b.tg_msg, 'tg_msg')}`;

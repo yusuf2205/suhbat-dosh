@@ -123,6 +123,10 @@ test('personal chats are mirrored by default and quietly, history comes along, g
   // a brand-new personal chat appears by itself
   await mock(admin.user.id, { chat: 999, kind: 'user', title: 'Новый человек', msg: 1, author: 'Новый человек', text: 'Здравствуйте' });
   assert.ok(await until(async () => (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '999')));
+  // a chat that has just appeared can be answered at once, by default
+  const fresh = (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '999');
+  assert.equal(fresh.two_way, true, 'personal chats may be answered from here by default');
+  assert.equal((await call(admin.cookie, 'POST', `/api/chats/${fresh.chat_id}/messages`, { text: 'сразу могу ответить' })).status, 201);
   // a group is NOT mirrored until chosen
   assert.equal((await mock(admin.user.id, { chat: -1001, kind: 'group', msg: 1, text: 'ещё не выбрана' })).forwarded, false);
   const put = await call(admin.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: true }] });
