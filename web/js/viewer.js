@@ -53,8 +53,7 @@ export async function openViewer(chatId, messageId, single = null) {
   const zoomLabel = h('span', { class: 'viewer-zoom' }, '100%');
   const prev = h('button', { class: 'viewer-nav prev', type: 'button', 'aria-label': t('viewer.prev') }, icon('back', 28));
   const next = h('button', { class: 'viewer-nav next', type: 'button', 'aria-label': t('viewer.next') }, icon('back', 28));
-  const dl = h('a', { class: 'icon-btn', 'aria-label': t('viewer.download'), title: t('viewer.download') }, icon('plus', 22));
-  dl.firstChild.style.transform = 'rotate(45deg)';
+  const dl = h('a', { class: 'icon-btn', 'aria-label': t('viewer.download'), title: t('viewer.download') }, icon('download', 22));
   const bar = h('div', { class: 'viewer-bar' },
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.close'), onclick: () => closeViewer(true) }, icon('close', 22)),
     title,
