@@ -1658,3 +1658,6 @@ html.locked body > *:not(.lock-screen) { visibility: hidden; }
 .tr-actions { display: flex; gap: 8px; }
 .tr-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--brand); animation: trspin .8s linear infinite; }
 @keyframes trspin { to { transform: rotate(360deg); } }
+
+/* dialogs opened during a call (captions consent, ...) must stay above the call screen */
+html:has(.call-overlay) .overlay { z-index: 150; }
