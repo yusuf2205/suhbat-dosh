@@ -22,9 +22,24 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 
 public class MainActivity extends BridgeActivity {
+    private NearbyBridge nearby;
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == NearbyBridge.REQ_PICK) { if (nearby != null) nearby.onFilePicked(resultCode, data); return; }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == NearbyBridge.REQ_PERM) { if (nearby != null) nearby.onPermissionResult(grantResults); return; }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        nearby = new NearbyBridge(this, getBridge().getWebView());
         getBridge().getWebView().addJavascriptInterface(new NativeBridge(), "SuhbatNative");
         Updater.restore(this);
         // Back: close the topmost thing inside the app (menu, dialog, settings page, chat); at the very top just go to the
@@ -397,6 +412,19 @@ public class MainActivity extends BridgeActivity {
         public void installUpdate() {
             runOnUiThread(() -> Updater.installSession(MainActivity.this, true));
         }
+
+        // ---- messaging without internet between phones that are near each other (see NearbyBridge / nearby.js)
+        @JavascriptInterface public boolean nearbySupported() { return nearby != null && nearby.supported(); }
+        @JavascriptInterface public String nearbyStart(String name) { return nearby == null ? "unsupported" : nearby.start(name); }
+        @JavascriptInterface public void nearbyStopFinding() { if (nearby != null) nearby.stopFinding(); }
+        @JavascriptInterface public void nearbyStopAll() { if (nearby != null) nearby.stopAll(); }
+        @JavascriptInterface public void nearbyConnect(String id) { if (nearby != null) nearby.connect(id); }
+        @JavascriptInterface public void nearbyAccept(String id) { if (nearby != null) nearby.accept(id); }
+        @JavascriptInterface public void nearbyReject(String id) { if (nearby != null) nearby.reject(id); }
+        @JavascriptInterface public void nearbyDisconnect(String id) { if (nearby != null) nearby.disconnect(id); }
+        @JavascriptInterface public boolean nearbySend(String id, String text) { return nearby != null && nearby.sendBytes(id, text); }
+        @JavascriptInterface public void nearbyPickFile(String id) { runOnUiThread(() -> { if (nearby != null) nearby.pickFile(id); }); }
+        @JavascriptInterface public boolean nearbyOpenFile(String path) { return nearby != null && nearby.openReceived(path); }
 
         @JavascriptInterface
         public void stopBackground() {

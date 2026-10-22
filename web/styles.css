@@ -1661,3 +1661,20 @@ html.locked body > *:not(.lock-screen) { visibility: hidden; }
 
 /* dialogs opened during a call (captions consent, ...) must stay above the call screen */
 html:has(.call-overlay) .overlay { z-index: 150; }
+
+/* ===== nearby (no internet) ===== */
+.nb { display: grid; gap: 8px; }
+.nb h3 { margin: 12px 0 4px; font-size: .95rem; }
+.nb-status { display: flex; align-items: center; gap: 8px; color: var(--muted); margin: 4px 0; }
+.nb-code { font-size: 2.4rem; font-weight: 800; letter-spacing: .3em; text-align: center; padding: 12px; border-radius: 16px; background: var(--surface-2); font-variant-numeric: tabular-nums; }
+.nb-head { display: flex; align-items: center; gap: 10px; }
+.nb-list { display: grid; gap: 6px; align-content: start; max-height: min(52vh, 460px); min-height: 160px; overflow: auto; padding: 8px; border-radius: 14px; background: var(--surface-2); }
+.nb-msg { max-width: 82%; padding: 6px 10px; border-radius: 14px; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.nb-msg.in { justify-self: start; background: var(--surface); }
+.nb-msg.out { justify-self: end; background: var(--brand); color: var(--brand-ink); }
+.nb-time { justify-self: end; opacity: .65; font-size: .7rem; }
+.nb-file { display: grid; gap: 4px; }
+.nb-track { display: block; height: 4px; border-radius: 2px; background: rgba(0, 0, 0, .15); overflow: hidden; }
+.nb-bar { display: block; height: 100%; width: 0; background: currentColor; transition: width .2s; }
+.nb-compose { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+.nb-compose .input { flex: 1; resize: none; }

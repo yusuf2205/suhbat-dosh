@@ -28,6 +28,7 @@ import { checkForUpdate, initUpdates } from './updates.js';
 import { clearAll as clearMediaCache } from './mediacache.js';
 import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 import { showLock } from './applock.js';
+import './nearby.js'; // receives "nearby" messages even when its screen is closed
 
 const root = document.getElementById('root');
 let appEl = null;
