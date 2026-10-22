@@ -144,6 +144,7 @@ class Acct:
         self.sent = deque(maxlen=500)   # ids this service sent itself (their echo is not forwarded back)
         self.backfill = {"state": "idle", "done": 0, "total": 0}
         self.bf_task = None
+        self.synced = False        # the first complete copy of the personal chats has finished
 
     @property
     def session_file(self):
@@ -158,12 +159,13 @@ class Acct:
             with open(self.list_file, encoding="utf-8") as f:
                 d = json.load(f)
             self.auto_private = bool(d.get("auto_private", True))
+            self.synced = bool(d.get("synced", False))
             self.chats = {str(k): v for k, v in d.get("chats", {}).items()}
         except Exception:
             pass
 
     def save_list(self):
-        write_secret(self.list_file, json.dumps({"auto_private": self.auto_private, "chats": self.chats}).encode())
+        write_secret(self.list_file, json.dumps({"auto_private": self.auto_private, "chats": self.chats, "synced": self.synced}).encode())
 
     async def persist_session(self):
         write_secret(self.session_file, seal("mock" if MOCK else self.client.session.save()))
@@ -343,6 +345,8 @@ async def run_backfill(a: Acct):
             a.backfill["done"] += 1
             await asyncio.sleep(0.6)  # be gentle with Telegram's limits
         a.backfill["state"] = "done"
+        a.synced = True
+        a.save_list()
         await to_server({"owner": a.uid, "sync_done": True})
     except asyncio.CancelledError:
         a.backfill["state"] = "stopped"
@@ -381,6 +385,14 @@ async def start_existing():
         a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
         attach_handlers(a)
         log("connected account", a.uid)
+        if not a.synced:
+            a.bf_task = asyncio.create_task(delayed_backfill(a))
+
+
+async def delayed_backfill(a: Acct):
+    await asyncio.sleep(5)
+    if a.me and a.backfill["state"] != "running":
+        await run_backfill(a)
 
 
 # ---------------------------------------------------------------- HTTP

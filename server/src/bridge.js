@@ -233,6 +233,14 @@ async function disconnectUser(uid, deleteCopies, actor) {
   audit(actor, 'bridge.disconnect', { target_type: 'user', target_id: uid, details: { deleted: deleteCopies } });
 }
 
+/** "Copy again now": the bridge goes through all personal chats once more (what is already here is skipped). */
+bridge.post('/bridge/sync', async (req, res) => {
+  guard(req); mine(req);
+  if (!rateLimit(`brsync:${req.user.id}`, 6, 3600_000)) throw new HttpError(429, 'too_many_requests');
+  await call('POST', '/backfill', req.user.id);
+  res.json({ ok: true });
+});
+
 bridge.post('/bridge/disconnect', async (req, res) => {
   guard(req); mine(req);
   await disconnectUser(req.user.id, !!req.body?.delete_messages, req.user.id);
