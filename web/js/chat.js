@@ -8,6 +8,8 @@ import { miniNode, openMiniCreate } from './mini.js';
 import { openTaskCreate, openTasks, taskNode } from './tasks.js';
 import { openDigest } from './digest.js';
 import { noteNode, openNoteCreate } from './notes.js';
+import { firstUrl, linkCard } from './linkcard.js';
+import { editImage, scanDocument } from './photoedit.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -461,6 +463,7 @@ function renderComposer() {
     h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': t('chat.attach'), onclick: (e) => popMenu(e.currentTarget, [
       { label: t('attach.file'), onClick: () => view.fileInput.click() },
       { label: t('attach.location'), onClick: () => sendLocation(S.active, (m) => upsert(S.active, m)) },
+      { label: t('sc.title'), onClick: async () => { const chatId = S.active; const f = await scanDocument(); if (f) attachFiles(chatId, [f]); } },
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
       { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
@@ -710,7 +713,8 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
   followUpload(task, c.id, voice || secret ? null : makeThumb(blob));
 }
 
-function attachFile(file, onDone) {
+function attachFile(file0, onDone) {
+  let file = file0;
   const c = activeChat();
   if (!c?.can_post) { toast(t('drop.cannot_post')); onDone?.(); return; }
   if (file.size > cfg.max_upload_bytes) {
@@ -719,8 +723,17 @@ function attachFile(file, onDone) {
     return;
   }
   const isImg = /^image\/(png|jpe?g|gif|webp)$/.test(file.type);
-  const url = isImg ? URL.createObjectURL(file) : null;
-  const cap = h('input', { class: 'input', placeholder: t('chat.placeholder'), maxLength: 1000, 'aria-label': t('chat.placeholder') });
+  let url = isImg ? URL.createObjectURL(file) : null;
+  const pic = isImg ? h('img', { src: url, alt: '', style: { cursor: 'default' } }) : null;
+  const edit = isImg && file.type !== 'image/gif' ? h('button', { class: 'btn secondary', type: 'button', onclick: async () => {
+    const out = await editImage(file);
+    if (!out) return;
+    URL.revokeObjectURL(url);
+    file = out;
+    url = URL.createObjectURL(out);
+    pic.src = url;
+  } }, `✎ ${t('pe.edit')}`) : null;
+  const cap =h('input', { class: 'input', placeholder: t('chat.placeholder'), maxLength: 1000, 'aria-label': t('chat.placeholder') });
   const squeeze = canCompress(file)
     ? h('input', { type: 'checkbox', checked: S.prefs.compress !== false })
     : null;
@@ -730,13 +743,13 @@ function attachFile(file, onDone) {
     title: file.name,
     onClose: () => { abortCompress.abort(); if (url) URL.revokeObjectURL(url); onDone?.(); },
     body: h('div', null,
-      url ? h('div', { class: 'media' }, h('img', { src: url, alt: '', style: { cursor: 'default' } }))
+      url ? h('div', { class: 'media' }, pic)
         : h('div', { class: 'filecard' }, h('span', { class: 'ficon' }, fileIcon(file.name, file.type, 40)),
           h('span', null, h('b', null, file.name), h('br'), h('span', { class: 'muted' }, formatBytes(file.size)))),
       h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
       squeeze ? h('label', { class: 'row compress-opt' }, squeeze, h('span', null, t('upload.compress', { size: formatBytes(file.size) }))) : null,
       vsqueeze ? h('label', { class: 'row compress-opt' }, vsqueeze, h('span', null, t('upload.compress_video'))) : null,
-      h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
+      h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } }, edit,
         h('button', { class: 'btn', type: 'button', onclick: async (ev) => {
           const caption = cap.value.trim();
           if (vsqueeze?.checked) {
@@ -1080,6 +1093,7 @@ function buildMessage(m, c) {
   else if (m.kind === 'contact') bubble.append(contactNode(m));
   else if (bigEmoji && isSingleEmoji(m.text)) bubble.append(animatedEmoji(m.text.trim()) ?? h('div', { class: 'text' }, m.text));
   else if (m.text) bubble.append(h('div', { class: 'text' }, linkify(m.text)));
+  if (m.kind === 'text' && !c.secret && m.text && typeof m.id === 'number') { const card = linkCard(firstUrl(m.text)); if (card) bubble.append(card); }
   if (m.markup?.inline_keyboard) bubble.append(keyboardNode(m));
   const reacts = Object.entries(m.reactions || {});
   if (reacts.length) {

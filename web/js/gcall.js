@@ -1,4 +1,5 @@
 // Group calls (up to 6 people): a mesh of peer-to-peer WebRTC connections, signalling over the WebSocket.
+import { fxUserMedia } from './callfx.js';
 import { h, clear, formatDuration } from './dom.js';
 import { t } from './i18n.js';
 import { S, chatTitle, fire } from './state.js';
@@ -186,7 +187,7 @@ export async function joinGroupCall(chatId, video = false, { room = false } = {}
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) return toast(t('call.insecure'), 6000);
   let local;
   try {
-    local = await navigator.mediaDevices.getUserMedia({
+    local = await fxUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: video ? { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 }, facingMode: 'user' } : false,
     });
@@ -312,7 +313,7 @@ async function toggleCamera(btn) {
     btn.classList.add('off');
   } else {
     try {
-      const st = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 }, facingMode: 'user' } });
+      const st = await fxUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 }, facingMode: 'user' } });
       const tr = st.getVideoTracks()[0];
       cur.local.addTrack(tr);
       for (const p of cur.peers.values()) {

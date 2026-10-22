@@ -30,6 +30,7 @@ import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 import { showLock } from './applock.js';
 import './tasks.js';
 import { startE2e } from './e2egroup.js';
+import { openPalette, wirePullDown } from './palette.js';
 import { focusMutes } from './focus.js';
 import './nearby.js'; // receives "nearby" messages even when its screen is closed
 
@@ -468,8 +469,7 @@ document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault();
-    if (S.active && appEl.dataset.view === 'chat' && matchMedia('(max-width: 600px)').matches) closeChat();
-    fire('focus-search');
+    openPalette();
   } else if (mod && (e.key === '/' || e.key === '?')) {
     e.preventDefault();
     const rows = [['Ctrl + K', 'keys.search'], ['Ctrl + ,', 'keys.settings'], ['Ctrl + I', 'keys.info'], ['Alt + ↑ / ↓', 'keys.switch'], ['Esc', 'keys.close'], ['Enter', 'keys.send'], ['Shift + Enter', 'keys.newline'], ['Ctrl + /', 'keys.help']];
@@ -494,6 +494,8 @@ document.addEventListener('keydown', (e) => {
     closeChat();
   }
 });
+
+wirePullDown();
 
 // ---------------------------------------------------------------- viewport: follow the on-screen keyboard
 const vv = window.visualViewport;

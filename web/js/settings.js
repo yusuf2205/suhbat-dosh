@@ -26,6 +26,7 @@ import { openTasks } from './tasks.js';
 import { focusSummary, openFocus } from './focus.js';
 import { openDigestAll } from './digest.js';
 import { openImport } from './import.js';
+import { openStorage } from './storage.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -252,6 +253,7 @@ export function openSettings() {
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
+          row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
           row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
           row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
           row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } }),
@@ -472,7 +474,7 @@ export function openSettings() {
             row('devices', t('settings.sessions'), { value: sessN, onclick: () => go(pages.sessions) }),
             row('mail', t('settings.email'), { value: S.me.email || t('settings.email_none'), onclick: () => go(pages.account) })),
           note(t('st.sessions_hint')),
-          group(switchRow(t('e2e.default'), S.prefs.secretDefault, (v) => { S.prefs.secretDefault = v; savePrefs(); }, t('e2e.default_hint'))),
+          group(switchRow(t('lp.setting'), !S.prefs.noPreview, (v) => { S.prefs.noPreview = !v; savePrefs(); }, t('lp.setting_hint')), switchRow(t('e2e.default'), S.prefs.secretDefault, (v) => { S.prefs.secretDefault = v; savePrefs(); }, t('e2e.default_hint'))),
           heading(t('settings.privacy')),
           group(privacyRow('photo', 'st.photo'), privacyRow('status', 'st.status'), privacyRow('last_seen', 'st.lastseen'), privacyRow('birthday', 'st.birthday')),
           heading(t('export.title')),

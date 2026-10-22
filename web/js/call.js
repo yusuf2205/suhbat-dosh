@@ -1,3 +1,4 @@
+import { fxUserMedia } from './callfx.js';
 import { h, clear, formatDuration, uuid } from './dom.js';
 import { t } from './i18n.js';
 import { S, fire, savePrefs } from './state.js';
@@ -71,7 +72,7 @@ async function media(video) {
   ];
   for (const c of attempts) {
     try {
-      return await navigator.mediaDevices.getUserMedia(c);
+      return await fxUserMedia(c);
     } catch (e) {
       if (e.name === 'NotAllowedError' || e.name === 'SecurityError') { toast(t('call.no_media'), 5000); return null; }
     }
@@ -79,7 +80,7 @@ async function media(video) {
   if (video) {
     // no usable camera: carry on with voice only
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(), video: false });
+      const s = await fxUserMedia({ audio: audioConstraints(), video: false });
       toast(t('call.no_camera'), 5000);
       return s;
     } catch { /* fall through */ }
@@ -293,7 +294,7 @@ async function toggleCamera() {
       if (ui) ui.local.hidden = true;
       announceMedia();
     } else {
-      const st = await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
+      const st = await fxUserMedia({ video: videoConstraints() });
       await sendVideoTrack(st.getVideoTracks()[0]);
       cur.camOff = false;
       announceMedia();
@@ -354,7 +355,7 @@ async function stopScreen(restoreCamera) {
   announceMedia();
   if (restoreCamera && !cur.camOff && cur.video) {
     try {
-      const st = await navigator.mediaDevices.getUserMedia({ video: videoConstraints() });
+      const st = await fxUserMedia({ video: videoConstraints() });
       await sendVideoTrack(st.getVideoTracks()[0]);
     } catch { /* stay without camera */ }
   }
@@ -438,6 +439,17 @@ export async function devicePanelNodes({ live = false } = {}) {
   };
   out.push(h('label', { class: 'row', for: `${live ? 'l' : 's'}-proc` }, proc, t('call.processing')));
   out.push(h('div', { class: 'muted', style: { fontSize: '.82rem' } }, t('call.processing_hint')));
+  const fxRow = (key, label, hint, kind) => {
+    const box = h('input', { type: 'checkbox', id: `${live ? 'l' : 's'}-${key}`, checked: !!S.prefs[key] });
+    box.onchange = async () => {
+      S.prefs[key] = box.checked;
+      savePrefs();
+      if (live && cur?.pc && (kind === 'audio' || cur.video)) await replaceTrack(kind);
+    };
+    return [h('label', { class: 'row', for: `${live ? 'l' : 's'}-${key}` }, box, label), h('div', { class: 'muted', style: { fontSize: '.82rem' } }, hint)];
+  };
+  out.push(...fxRow('strongNoise', t('fx.noise'), t('fx.noise_hint'), 'audio'));
+  out.push(...fxRow('bgBlur', t('fx.blur'), t('fx.blur_hint'), 'video'));
   if (dev.mics.some((d) => /bluetooth|hands-?free|airpods|headset/i.test(d.label))) {
     out.push(h('div', { class: 'muted', style: { fontSize: '.82rem' } }, `🎧 ${t('call.bt_detected')}`));
   }
@@ -455,7 +467,7 @@ async function toggleDevicePanel() {
 async function replaceTrack(kind) {
   if (!cur?.pc) return;
   try {
-    const s = await navigator.mediaDevices.getUserMedia(kind === 'audio' ? { audio: audioConstraints() } : { video: videoConstraints() });
+    const s = await fxUserMedia(kind === 'audio' ? { audio: audioConstraints() } : { video: videoConstraints() });
     const track = s.getTracks()[0];
     const sender = cur.pc.getSenders().find((x) => x.track?.kind === kind);
     if (sender) {
@@ -901,9 +913,9 @@ export function openCallTest() {
     stop();
     info.textContent = t('call.test_requesting');
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints(), video: videoConstraints() });
+      stream = await fxUserMedia({ audio: audioConstraints(), video: videoConstraints() });
     } catch {
-      try { stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() }); } catch {
+      try { stream = await fxUserMedia({ audio: audioConstraints() }); } catch {
         info.textContent = window.isSecureContext ? t('call.no_media') : t('call.insecure');
         return;
       }

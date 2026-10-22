@@ -36,6 +36,24 @@ safety.get('/me/usage', (req, res) => {
   res.json({ used: usedBytes(req.user.id), quota: quotaFor(getUser(req.user.id)) });
 });
 
+/** Who takes the space: my files per chat, and the biggest ones with the message they belong to (so they can be removed). */
+safety.get('/me/storage', (req, res) => {
+  const uid = req.user.id;
+  const chats = q.all(
+    `SELECT f.chat_id, COUNT(*) AS n, SUM(f.size) AS bytes FROM files f WHERE f.owner_id = ? AND f.chat_id IS NOT NULL
+     GROUP BY f.chat_id ORDER BY bytes DESC LIMIT 100`, uid,
+  ).map((r) => ({ ...r, chat: chatOut(r.chat_id, uid) ? { id: r.chat_id, title: chatOut(r.chat_id, uid).title, peer: chatOut(r.chat_id, uid).peer?.name || null } : null }));
+  const biggest = q.all(
+    `SELECT m.id AS message_id, m.chat_id, f.name, f.size, f.mime, m.created_at FROM files f JOIN messages m ON m.file_id = f.id
+     WHERE f.owner_id = ? AND m.sender_id = ? ORDER BY f.size DESC LIMIT 40`, uid, uid,
+  );
+  const kinds = q.all(
+    `SELECT CASE WHEN mime LIKE 'image/%' THEN 'image' WHEN mime LIKE 'video/%' THEN 'video' WHEN mime LIKE 'audio/%' THEN 'audio' ELSE 'file' END AS kind,
+     COUNT(*) AS n, SUM(size) AS bytes FROM files WHERE owner_id = ? AND chat_id IS NOT NULL GROUP BY kind`, uid,
+  );
+  res.json({ used: usedBytes(uid), quota: quotaFor(getUser(uid)), chats: chats.filter((c) => c.chat), biggest, kinds });
+});
+
 // ------------------------------------------------------------------ auto-delete timer
 const TTLS = [0, 3600, 86400, 604800, 2592000];
 
