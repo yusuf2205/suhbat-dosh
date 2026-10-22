@@ -4,6 +4,7 @@ import { thumbPath } from './files.js';
 import { isOnline } from './realtime.js';
 import { HttpError, now } from './util.js';
 import { normalizeFocus } from '../../shared/focus.js';
+import { normalizeWork } from '../../shared/work.js';
 
 const parseJson = (v) => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
@@ -59,6 +60,9 @@ export function selfUser(u) {
     has_password: !!u.pw_hash,
     auto_reply: u.auto_reply || '',
     auto_reply_on: !!u.auto_reply_on,
+    work: normalizeWork(parseJson(u.work)),
+    greeting: u.greeting || '',
+    read_receipts: u.read_receipts !== 0,
     focus: normalizeFocus(parseJson(u.focus)),
     privacy: { photo: u.privacy_photo, status: u.privacy_status, last_seen: u.privacy_last_seen, birthday: u.privacy_birthday },
     is_admin: !!u.is_admin,
@@ -200,6 +204,8 @@ export function messageOut(row) {
     task: row.kind === 'task' ? taskOut(row) : null,
     note: row.kind === 'note' ? noteOut(row) : null,
     ...(row.urgent ? { urgent: true } : {}),
+    ...(row.once ? { once: { views: q.all('SELECT user_id FROM once_views WHERE message_id = ?', row.id).map((r) => r.user_id) } } : {}),
+    ...(row.live_until ? { live_until: row.live_until } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
@@ -248,7 +254,10 @@ export function chatOut(chatId, viewerId) {
   }
   const sc = c.type === 'direct' ? q.get('SELECT * FROM secret_chats WHERE chat_id = ?', chatId) : null;
   const last = c.last_message_id && c.last_message_id > (m.cleared_before || 0) ? messageOut(getMessage(c.last_message_id)) : null;
-  const pinned = c.pinned_message_id ? messageOut(getMessage(c.pinned_message_id)) : null;
+  const pinRows = q.all('SELECT message_id FROM pins WHERE chat_id = ? ORDER BY pinned_at, message_id LIMIT 20', chatId);
+  const pins = pinRows.map((r) => getMessage(r.message_id)).filter(Boolean).map(messageOut);
+  const pinned = pins.length ? pins[pins.length - 1] : null;
+  const themeOf = (v) => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
   const canPost =
     !(c.type === 'channel' && m.role === 'member') && !(m.role === 'member' && !m.can_send) && !blocked_by_me && !blocked_me;
   return {
@@ -282,6 +291,10 @@ export function chatOut(chatId, viewerId) {
     last_message: last,
     last_message_at: c.last_message_at,
     pinned,
+    pins,
+    theme: themeOf(m.theme) || themeOf(c.theme),
+    theme_shared: !!c.theme,
+    ...(isAdmin(m) ? { join_approval: !!c.join_approval, slug: c.slug || null } : {}),
     created_at: c.created_at,
   };
 }

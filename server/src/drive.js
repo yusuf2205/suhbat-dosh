@@ -45,6 +45,7 @@ drive.post('/drive', (req, res) => {
   if (!rateLimit(`drive:${req.user.id}`, 120, 60_000)) throw new HttpError(429, 'slow_down');
   const fid = str(req.body?.file_id, 'file_id', { min: 8, max: 40 });
   const f = q.get('SELECT * FROM files WHERE id = ?', fid);
+  if (q.get('SELECT 1 AS x FROM messages WHERE file_id = ? AND once = 1', fid)) throw new HttpError(403, 'once_no_save'); // a one-time file is never kept
   if (!f || !host.canAccessFile(req.user.id, fid)) throw new HttpError(404, 'not_found');
   if (f.mime.startsWith('image/') && !f.chat_id) throw new HttpError(400, 'invalid_input'); // avatars are not documents
   const folder = cleanFolder(req.body?.folder);

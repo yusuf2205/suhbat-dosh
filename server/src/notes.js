@@ -3,7 +3,7 @@
 import express from 'express';
 import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
-import { applyOp, transform } from '../../shared/ot.js';
+import { applyOp, diffOp, transform } from '../../shared/ot.js';
 import { HttpError, int, now, rateLimit, str } from './util.js';
 import { emit } from './realtime.js';
 import { getMessage, isEncrypted, memberIds, messageOut, requireMember } from './service.js';
@@ -13,6 +13,16 @@ export function wireNotes(h) { host = h; }
 export const notes = express.Router();
 
 const BODY_MAX = 200_000;
+const SESSION_GAP = Number(process.env.NOTE_SESSION_GAP_MS) || 10 * 60_000; // a pause this long ends an editing session
+const KEEP_VERSIONS = 60;
+
+/** The text as it was at the end of the previous editing session, kept before a new session changes it. */
+function snapshot(n, force = false) {
+  if (n.rev === 0 || !n.body) return;
+  if (!force && now() - n.updated_at < SESSION_GAP) return;
+  q.run('INSERT OR IGNORE INTO note_versions (note_id, rev, body, user_id, at) VALUES (?,?,?,?,?)', n.id, n.rev, n.body, n.updated_by, n.updated_at);
+  q.run('DELETE FROM note_versions WHERE note_id = ? AND rev NOT IN (SELECT rev FROM note_versions WHERE note_id = ? ORDER BY rev DESC LIMIT ?)', n.id, n.id, KEEP_VERSIONS);
+}
 const KEEP_OPS = 400;
 const answered = new Map(); // `${note}:${cid}` -> the answer already given, so a repeated request is not applied twice
 const lastCard = new Map();
@@ -73,6 +83,7 @@ notes.post('/notes/:id/op', (req, res) => {
 
   const done = tx(() => {
     const n = load(n0.id);
+    snapshot(n);
     if (base > n.rev) throw new HttpError(409, 'resync');
     const missed = q.all('SELECT * FROM note_ops WHERE note_id = ? AND rev > ? ORDER BY rev', n.id, base);
     if (missed.length !== n.rev - base) throw new HttpError(409, 'resync'); // the history that old was already trimmed
@@ -104,4 +115,48 @@ notes.get('/notes/:id/export', (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${n.title}.txt`)}`);
   res.send(n.body);
+});
+
+/** Earlier versions: where an editing session ended (newest first). */
+notes.get('/notes/:id/versions', (req, res) => {
+  const n = load(int(req.params.id, 'id'));
+  requireMember(n.chat_id, req.user.id);
+  const rows = q.all('SELECT rev, body, user_id, at FROM note_versions WHERE note_id = ? ORDER BY rev DESC', n.id);
+  res.json({
+    current: { rev: n.rev, at: n.updated_at, user_id: n.updated_by, length: n.body.length },
+    versions: rows.map((r) => ({ rev: r.rev, at: r.at, user_id: r.user_id, length: r.body.length, preview: r.body.replace(/\s+/g, ' ').trim().slice(0, 160) })),
+  });
+});
+
+notes.get('/notes/:id/versions/:rev', (req, res) => {
+  const n = load(int(req.params.id, 'id'));
+  requireMember(n.chat_id, req.user.id);
+  const v = q.get('SELECT * FROM note_versions WHERE note_id = ? AND rev = ?', n.id, int(req.params.rev, 'rev', { min: 0 }));
+  if (!v) throw new HttpError(404, 'not_found');
+  res.json({ version: { rev: v.rev, at: v.at, user_id: v.user_id, body: v.body } });
+});
+
+/** Put an earlier version back: it becomes a normal new edit (the text now is kept as a version first), everybody sees it at once. */
+notes.post('/notes/:id/restore', (req, res) => {
+  if (!rateLimit(`noterestore:${req.user.id}`, 30, 3600_000)) throw new HttpError(429, 'slow_down');
+  const n0 = load(int(req.params.id, 'id'));
+  requireMember(n0.chat_id, req.user.id);
+  const rev = int(req.body?.rev, 'rev', { min: 0 });
+  const done = tx(() => {
+    const n = load(n0.id);
+    const v = q.get('SELECT * FROM note_versions WHERE note_id = ? AND rev = ?', n.id, rev);
+    if (!v) throw new HttpError(404, 'not_found');
+    const op = diffOp(n.body, v.body);
+    if (!op) return { rev: n.rev, op: null };
+    snapshot(n, true);
+    const next = n.rev + 1;
+    q.run('UPDATE notes SET body = ?, rev = ?, updated_by = ?, updated_at = ? WHERE id = ?', v.body, next, req.user.id, now(), n.id);
+    q.run('INSERT INTO note_ops (note_id, rev, user_id, pos, del, ins, at) VALUES (?,?,?,?,?,?,?)', n.id, next, req.user.id, op.pos, op.del, op.ins, now());
+    return { rev: next, op };
+  });
+  if (done.op) {
+    emit(memberIds(n0.chat_id), { type: 'note.op', note_id: n0.id, rev: done.rev, op: done.op, user_id: req.user.id, cid: 'restore' });
+    refreshCard(load(n0.id), true);
+  }
+  res.json({ rev: done.rev });
 });

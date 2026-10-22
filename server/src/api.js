@@ -36,8 +36,10 @@ import { linkpreview } from './linkpreview.js';
 import { quick } from './quick.js';
 import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
+import { extras, wireExtras } from './chatextras.js';
 import { directory, wireDirectory } from './directory.js';
 import { normalizeFocus } from '../../shared/focus.js';
+import { normalizeWork, workOpen } from '../../shared/work.js';
 import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
@@ -435,6 +437,7 @@ api.use(notes);
 api.use(e2e);
 api.use(linkpreview);
 api.use(quick);
+api.use(extras);
 api.use(translate);
 api.use(directory);
 api.use(transcribe);
@@ -487,6 +490,9 @@ api.patch('/me', (req, res) => {
     put('presence', b.presence);
   }
   if (b.focus !== undefined) put('focus', JSON.stringify(normalizeFocus(b.focus)));
+  if (b.work !== undefined) put('work', JSON.stringify(normalizeWork(b.work)));
+  if (b.greeting !== undefined) put('greeting', str(b.greeting || '', 'greeting', { max: 300 }));
+  if (b.read_receipts !== undefined) put('read_receipts', b.read_receipts ? 1 : 0);
   if (b.auto_reply !== undefined) put('auto_reply', str(b.auto_reply || '', 'auto_reply', { max: 300 }));
   if (b.auto_reply_on !== undefined) put('auto_reply_on', b.auto_reply_on ? 1 : 0);
   if (b.birthday !== undefined) {
@@ -733,6 +739,7 @@ const pushChat = (chatId, ids = memberIds(chatId)) => {
 wireBots({ postMessage, pushChat });
 wireNotify({ postMessage, pushChat });
 wireDirectory({ pushChat });
+wireExtras({ pushChat, e2eNeed });
 wireFeatures({ postMessage });
 wireMini({ postMessage });
 wireTasks({ postMessage });
@@ -979,32 +986,6 @@ api.post('/chats/:id/invite/reset', (req, res) => {
   res.json({ chat: chatOut(id, req.user.id) });
 });
 
-api.get('/invite/:code', (req, res) => {
-  const c = q.get("SELECT * FROM chats WHERE invite_code = ? AND type != 'direct'", str(req.params.code, 'code', { min: 4, max: 40 }));
-  if (!c) throw new HttpError(404, 'not_found');
-  const mine = q.get('SELECT banned FROM members WHERE chat_id = ? AND user_id = ?', c.id, req.user.id);
-  res.json({
-    chat: { id: c.id, type: c.type, title: c.title, description: c.description, members_count: memberIds(c.id).length },
-    already_member: !!mine && !mine.banned,
-    banned: !!mine?.banned,
-  });
-});
-
-api.post('/invite/:code/join', (req, res) => {
-  const c = q.get("SELECT * FROM chats WHERE invite_code = ? AND type != 'direct'", str(req.params.code, 'code', { min: 4, max: 40 }));
-  if (!c) throw new HttpError(404, 'not_found');
-  const mine = q.get('SELECT banned FROM members WHERE chat_id = ? AND user_id = ?', c.id, req.user.id);
-  if (mine?.banned) throw new HttpError(403, 'user_banned');
-  if (!mine) {
-    if (memberIds(c.id).length >= LIMITS.GROUP_MAX_MEMBERS) throw new HttpError(400, 'too_many_members');
-    q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", c.id, req.user.id, now());
-    aud(req, 'chat.join_by_link', { chat_id: c.id, target_type: 'chat', target_id: c.id });
-    pushChat(c.id);
-    e2eNeed(c.id);
-  }
-  res.json({ chat: chatOut(c.id, req.user.id) });
-});
-
 // ------------------------------------------------------------------ messages
 
 api.get('/chats/:id/messages', (req, res) => {
@@ -1046,15 +1027,30 @@ function maybeAutoReply(chat, sender, kind) {
   const peerId = directPeerId(chat.id, sender.id);
   if (!peerId || peerId === sender.id) return;
   const peer = getUser(peerId);
-  if (!peer || peer.is_bot || !peer.auto_reply_on || !peer.auto_reply) return;
-  if (isOnline(peerId) && peer.presence !== 'away' && peer.presence !== 'busy') return; // present and available: no need
+  if (!peer || peer.is_bot) return;
+  let greeted = false;
+  // the greeting: the first time somebody writes to this person (and they have never written back in this chat)
+  if (peer.greeting && !q.get('SELECT 1 AS x FROM greeted WHERE user_id = ? AND peer_id = ?', peerId, sender.id)
+    && !q.get('SELECT 1 AS x FROM messages WHERE chat_id = ? AND sender_id = ?', chat.id, peerId)) {
+    q.run('INSERT OR IGNORE INTO greeted (user_id, peer_id, at) VALUES (?,?,?)', peerId, sender.id, now());
+    postMessage({ chat, user: peer, text: peer.greeting, auto: true, silent: false });
+    greeted = true;
+  }
+  let work = null;
+  try { work = peer.work ? JSON.parse(peer.work) : null; } catch { work = null; }
+  const afterHours = !!work?.on && !workOpen(work);
+  const away = peer.auto_reply_on && peer.auto_reply && !(isOnline(peerId) && peer.presence !== 'away' && peer.presence !== 'busy');
+  if (!afterHours && !away) return;
+  if (greeted && !away) return;
   const last = q.get('SELECT at FROM auto_replied WHERE user_id = ? AND peer_id = ?', peerId, sender.id);
   if (last && now() - last.at < 12 * 3600_000) return;
+  const w = normalizeWork(work);
+  const text = away ? peer.auto_reply : (w.text || `Сейчас нерабочее время. Я отвечу в рабочие часы: ${w.from}\u2013${w.to}.`);
   q.run('INSERT INTO auto_replied (user_id, peer_id, at) VALUES (?,?,?) ON CONFLICT(user_id, peer_id) DO UPDATE SET at = excluded.at', peerId, sender.id, now());
-  postMessage({ chat, user: peer, text: `🤖 ${peer.auto_reply}`, auto: true, silent: false });
+  postMessage({ chat, user: peer, text: `🤖 ${text}`, auto: true, silent: false });
 }
 
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false }) {
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1062,9 +1058,9 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
   const t = now();
   const r = q.run(
-    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, t,
+    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, once, live_until, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, t,
   );
   const id = Number(r.lastInsertRowid);
   q.run('UPDATE chats SET last_message_id = ?, last_message_at = ? WHERE id = ?', id, t, chat.id);
@@ -1109,10 +1105,11 @@ api.post('/chats/:id/messages', (req, res) => {
   let fileId = null;
   let duration = null;
   let forwardFrom = null;
+  let liveUntil = null;
   if (b.forward_of !== undefined) {
     const src = getMessage(int(b.forward_of, 'forward_of'));
     if (!src || !membership(src.chat_id, req.user.id)) throw new HttpError(404, 'not_found');
-    if (isSecretChat(src.chat_id) || isSecretChat(chat.id)) throw new HttpError(403, 'secret_no_forward');
+    if (isSecretChat(src.chat_id) || isSecretChat(chat.id) || src.once) throw new HttpError(403, 'secret_no_forward');
     const sender = src.sender_id ? getUser(src.sender_id)?.name : null;
     text = src.text;
     kind = ['poll', 'event', 'miniapp', 'task', 'note'].includes(src.kind) ? 'text' : src.kind;
@@ -1133,6 +1130,10 @@ api.post('/chats/:id/messages', (req, res) => {
       const g = /^geo:(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)$/.exec(text);
       if (!g || Math.abs(Number(g[1])) > 90 || Math.abs(Number(g[2])) > 180) throw new HttpError(400, 'invalid_input');
       kind = 'location';
+      if (b.live_minutes !== undefined) {
+        const min = int(b.live_minutes, 'live_minutes', { min: 1, max: 12 * 60 });
+        liveUntil = now() + min * 60_000;
+      }
     } else if (b.kind === 'contact') {
       let c;
       try { c = JSON.parse(text); } catch { throw new HttpError(400, 'invalid_input'); }
@@ -1146,7 +1147,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel' });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 
@@ -1364,9 +1365,9 @@ api.post('/chats/:id/uploads', (req, res) => {
   const wf = typeof b.waveform === 'string' && /^[A-Za-z0-9_-]{8,140}$/.test(b.waveform) ? b.waveform : null;
   const uid = rid(16);
   q.run(
-    'INSERT INTO uploads (id, user_id, chat_id, client_id, name, size, caption, voice, duration, reply_to, waveform, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    'INSERT INTO uploads (id, user_id, chat_id, client_id, name, size, caption, voice, duration, reply_to, waveform, once, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     uid, req.user.id, id, clientId, name, size, str(String(b.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX }), b.voice ? 1 : 0,
-    int(b.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, now(), now(),
+    int(b.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, b.once === true ? 1 : 0, now(), now(),
   );
   fs.writeFileSync(partPath(uid), '');
   res.status(201).json({ ...uploadOut(q.get('SELECT * FROM uploads WHERE id = ?', uid)), chunk: 1024 * 1024 });
@@ -1435,6 +1436,7 @@ api.post('/uploads/:id/complete', (req, res) => {
     chat, user: req.user, text: capt, kind, fileId: fid,
     duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? u.duration : null,
     replyTo: u.reply_to, clientId: u.client_id, waveform: kind === 'voice' ? u.waveform : null,
+    once: !!u.once && !secretChat && (kind === 'image' || kind === 'video'),
   });
   q.run('DELETE FROM uploads WHERE id = ?', u.id);
   res.status(201).json(out);
@@ -1487,12 +1489,13 @@ api.post('/chats/:id/files', async (req, res) => {
   const out = postMessage({
     chat, user: req.user, text: capt, kind, fileId: fid, duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? duration : null,
     replyTo, clientId, waveform: kind === 'voice' ? wf : null,
+    once: req.query.once === '1' && !secretChat && (kind === 'image' || kind === 'video'),
   });
   res.status(201).json(out);
 });
 
 /** Serve a stored file. Ranges (video/audio seeking, PDF page streaming) are handled by sendFile. */
-function sendFile(res, f, { download = false, pdfInline = false, thumb = false } = {}) {
+function sendFile(res, f, { download = false, pdfInline = false, thumb = false, noStore = false } = {}) {
   const mediaOk = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
   const pdf = f.mime === 'application/pdf' && pdfInline && !download;
   const inline = !download && (mediaOk || pdf);
@@ -1506,8 +1509,8 @@ function sendFile(res, f, { download = false, pdfInline = false, thumb = false }
   } else {
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
   }
-  // file ids never change content: let the device keep what it has opened (private cache only)
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  // file ids never change content: let the device keep what it has opened (private cache only); a one-time file is never kept
+  res.setHeader('Cache-Control', noStore ? 'no-store' : 'private, max-age=31536000, immutable');
   res.setHeader('Accept-Ranges', 'bytes');
   const full = thumb ? thumbPath(f.id) : filePath(f.id);
   res.sendFile(full, { dotfiles: 'allow', cacheControl: false, lastModified: false }, (err) => {
@@ -1515,7 +1518,24 @@ function sendFile(res, f, { download = false, pdfInline = false, thumb = false }
   });
 }
 
+/** One-time photo or video: the sender is never shown it again, every other member can open it once (a short window after the first request lets the picture or the video load). */
+function onceAllows(userId, fid) {
+  const m = q.get('SELECT id, chat_id, sender_id, duration FROM messages WHERE file_id = ? AND once = 1', fid);
+  if (!m) return null; // not a one-time file
+  if (m.sender_id === userId) return false;
+  if (!membership(m.chat_id, userId)) return false;
+  const seen = q.get('SELECT viewed_at FROM once_views WHERE message_id = ? AND user_id = ?', m.id, userId);
+  if (!seen) {
+    q.run('INSERT OR IGNORE INTO once_views (message_id, user_id, viewed_at) VALUES (?,?,?)', m.id, userId, now());
+    emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(m.id)) });
+    return true;
+  }
+  return now() - seen.viewed_at < Math.max(120, (m.duration || 0) * 2 + 60) * 1000;
+}
+
 export function canAccessFile(userId, fid) {
+  const once = onceAllows(userId, fid);
+  if (once !== null) return once;
   if (q.get('SELECT 1 AS x FROM stickers WHERE file_id = ? AND user_id = ?', fid, userId)) return true;
   if (q.get('SELECT 1 AS x FROM drive_items WHERE file_id = ? AND user_id = ?', fid, userId)) return true; // kept in the person's own drive
   // a message may limit how long its recipients can open the file (its sender keeps access)
@@ -1531,7 +1551,8 @@ api.get('/files/:id', (req, res) => {
   const fid = str(req.params.id, 'id', { min: 8, max: 40 });
   const f = q.get('SELECT * FROM files WHERE id = ?', fid);
   if (!f || !canAccessFile(req.user.id, fid) || !fs.existsSync(filePath(fid))) throw new HttpError(404, 'not_found');
-  sendFile(res, f, { download: req.query.dl === '1', pdfInline: req.query.inline === '1' });
+  const once = !!q.get('SELECT 1 AS x FROM messages WHERE file_id = ? AND once = 1', fid);
+  sendFile(res, f, { download: !once && req.query.dl === '1', pdfInline: req.query.inline === '1', noStore: once });
 });
 
 // thumbnail / poster, produced by the sender's device while uploading
@@ -1572,7 +1593,7 @@ api.get('/chats/:id/media', (req, res) => {
   const kind = oneOf(String(req.query.kind || 'media'), 'kind', ['media', 'files', 'links']);
   const before = int(req.query.before, 'before', { optional: true }) ?? Number.MAX_SAFE_INTEGER;
   const limit = int(req.query.limit, 'limit', { min: 1, max: 100, optional: true }) ?? 60;
-  const where = kind === 'media' ? "kind IN ('image','video')"
+  const where = kind === 'media' ? "kind IN ('image','video') AND once = 0"
     : kind === 'files' ? "kind IN ('file','audio')"
       : "kind = 'text' AND text LIKE '%http%'";
   const rows = q.all(
@@ -1652,33 +1673,6 @@ api.post('/messages/:id/reactions', (req, res) => {
   const message = messageOut(getMessage(m.id));
   emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message });
   res.json({ message });
-});
-
-api.post('/chats/:id/pin', (req, res) => {
-  const id = int(req.params.id, 'id');
-  const me = requireMember(id, req.user.id);
-  const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
-  if (chat.type !== 'direct' && !isAdmin(me)) throw new HttpError(403, 'forbidden');
-  const mid = req.body?.message_id === null ? null : int(req.body?.message_id, 'message_id');
-  if (mid !== null && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', mid, id)) throw new HttpError(404, 'not_found');
-  q.run('UPDATE chats SET pinned_message_id = ? WHERE id = ?', mid, id);
-  aud(req, mid === null ? 'chat.unpin' : 'chat.pin', { chat_id: id, target_type: 'message', target_id: mid });
-  pushChat(id);
-  res.json({ chat: chatOut(id, req.user.id) });
-});
-
-api.post('/chats/:id/read', (req, res) => {
-  const id = int(req.params.id, 'id');
-  requireMember(id, req.user.id);
-  const chat = q.get('SELECT last_message_id FROM chats WHERE id = ?', id);
-  const upTo = Math.min(int(req.body?.message_id, 'message_id', { min: 0 }), chat.last_message_id ?? 0);
-  q.run(
-    `UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?)
-     WHERE chat_id = ? AND user_id = ?`, upTo, upTo, id, req.user.id,
-  );
-  const m = membership(id, req.user.id);
-  emit(memberIds(id), { type: EVENTS.READ, chat_id: id, user_id: req.user.id, message_id: m.last_read_id });
-  res.json({ ok: true, last_read_id: m.last_read_id });
 });
 
 api.get('/search/messages', (req, res) => {

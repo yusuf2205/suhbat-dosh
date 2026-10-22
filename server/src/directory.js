@@ -4,6 +4,7 @@ import { q } from './db.js';
 import { HttpError, int, now, rateLimit } from './util.js';
 import { LIMITS } from '../../shared/contracts.js';
 import { audit, chatOut, memberIds, requireMember } from './service.js';
+import { requestJoin } from './chatextras.js';
 
 export const directory = express.Router();
 let host = { pushChat: null };
@@ -51,6 +52,10 @@ directory.post('/directory/:id/join', (req, res) => {
   if (!c) throw new HttpError(404, 'not_found');
   const mine = q.get('SELECT banned FROM members WHERE chat_id = ? AND user_id = ?', c.id, req.user.id);
   if (mine?.banned) throw new HttpError(403, 'user_banned');
+  if (!mine && c.join_approval) {
+    requestJoin(c, req.user.id);
+    return res.status(202).json({ pending: true, chat: { id: c.id, title: c.title } });
+  }
   if (!mine) {
     if (memberIds(c.id).length >= LIMITS.GROUP_MAX_MEMBERS) throw new HttpError(400, 'too_many_members');
     q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", c.id, req.user.id, now());

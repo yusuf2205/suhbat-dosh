@@ -8,6 +8,7 @@ import { db, migrate, q } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { api, authenticate, listDownloads } from './api.js';
 import { publicShare } from './drive.js';
+import { publicPage } from './publicpage.js';
 import { resumeTranscriptions } from './transcribe.js';
 import { botApi } from './bots.js';
 import { counters, setWsCounter, startMonitors } from './ops.js';
@@ -129,6 +130,7 @@ app.get(['/', '/index.html'], page('index.html'));
 app.get('/admin', page('admin.html'));
 app.get('/download', page('download.html'));
 app.get('/s/:token', page('share.html'));
+app.use(publicPage); // public channel pages and the sitemap
 app.get('/sw.js', (_req, res) => sendVersioned(res, path.join(webDir, 'sw.js'), 'application/javascript; charset=utf-8', 'html'));
 const moduleRoute = (dir) => (req, res, next) => {
   const f = path.basename(req.params.f || '');
