@@ -47,7 +47,7 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
 4. In the app: Settings → Data and memory → Bridge with Telegram. Read the notes, tick the box, scan the QR in Telegram
    (Settings → Devices → Link Desktop Device).
 
-Keep `tgbridge-data/` out of any cloud copy of the NAS, and keep the disk itself encrypted if the device can be stolen.
+Keep the `tgbridge-data` Docker volume out of any cloud copy of the NAS, and keep the disk itself encrypted if the device can be stolen.
 
 ## Limits
 

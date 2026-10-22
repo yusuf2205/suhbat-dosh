@@ -61,7 +61,7 @@ services:
       BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
       SERVER_URL: http://suhbat:3000
     volumes:
-      - ./tgbridge-data:/data       # the encrypted Telegram session and the list of chosen chats
+      - tgbridge-data:/data         # the encrypted Telegram sessions and the lists of chats (a Docker volume, owned by the container user)
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -127,5 +127,6 @@ services:
       - caddy_config:/config
 
 volumes:
+  tgbridge-data:
   caddy_data:
   caddy_config:
