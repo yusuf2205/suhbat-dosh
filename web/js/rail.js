@@ -1,9 +1,9 @@
 import { h, clear } from './dom.js';
 import { t } from './i18n.js';
-import { S, fire, isMuted, on } from './state.js';
+import { S, fire, isMuted, on, savePrefs } from './state.js';
 import { api } from './net.js';
 import { icon } from './icons.js';
-import { avatar, toast } from './ui.js';
+import { avatar, toast, modal } from './ui.js';
 import { openSettings } from './dialogs.js';
 import { openDrive } from './drive.js';
 import { openCalendar } from './events.js';
@@ -58,9 +58,50 @@ function item(id, ico, label, { onclick, active, soon } = {}) {
   return b;
 }
 
+const DEFAULT_PINS = ['drive', 'calendar', 'tasks'];
+const pins = () => (Array.isArray(S.prefs.railPins) ? S.prefs.railPins : DEFAULT_PINS);
+
+/** Everything beyond the four main places; each can be pinned to the rail from the "More" window. */
+function tools() {
+  return [
+    { id: 'drive', ico: 'folder', label: t('drive.title'), onclick: openDrive },
+    { id: 'calendar', ico: 'clock', label: t('ev.calendar'), onclick: openCalendar },
+    { id: 'tasks', ico: 'tasks', label: t('task.title'), onclick: openTasks },
+    { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, active: roomsLive() > 0 },
+    { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, active: focusOn() },
+    ...(nearbyAvailable() ? [{ id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: openNearby }] : []),
+    { id: 'archive', ico: 'archive', label: t('nav.archive'), onclick: () => setView('archive'), active: S.view === 'archive' },
+    { id: 'settings', ico: 'settings', label: t('nav.settings'), onclick: openSettings },
+  ];
+}
+
+function togglePin(id) {
+  const cur = pins().slice();
+  const i = cur.indexOf(id);
+  if (i >= 0) cur.splice(i, 1); else cur.push(id);
+  S.prefs.railPins = cur;
+  savePrefs();
+  render();
+}
+
+function openMore() {
+  const m = modal({ title: t('nav.more'), className: 'rail-more' });
+  const draw = () => m.setBody(
+    h('p', { class: 'muted small' }, t('nav.more_hint')),
+    ...tools().map((x) => h('div', { class: 'more-row' },
+      h('button', { class: 'more-open', type: 'button', onclick: () => { m.close(); x.onclick(); } }, icon(x.ico, 22), h('span', null, x.label)),
+      x.id === 'settings' ? null : h('button', {
+        class: `more-pin${pins().includes(x.id) ? ' on' : ''}`, type: 'button', 'aria-pressed': String(pins().includes(x.id)),
+        title: pins().includes(x.id) ? t('nav.unpin') : t('nav.pin'), 'aria-label': pins().includes(x.id) ? t('nav.unpin') : t('nav.pin'),
+        onclick: () => { togglePin(x.id); draw(); },
+      }, icon('pin', 20)))));
+  draw();
+}
+
 function render() {
   if (!el) return;
   const savedActive = S.active && S.chats.get(S.active)?.saved;
+  const pinned = tools().filter((x) => pins().includes(x.id) && x.id !== 'settings');
   clear(el).append(
     h('div', { class: 'rail-brand', title: 'Suhbat-dosh' }, h('img', { class: 'brand-logo', src: '/icon.svg?v=2', alt: '', width: 48, height: 48 }), h('span', { class: 'brand-name' }, 'Suhbat-dosh')),
     h('nav', { class: 'rail-nav', 'aria-label': t('app.name') },
@@ -68,14 +109,10 @@ function render() {
       item('contacts', 'users', t('nav.contacts'), { active: S.view === 'contacts', onclick: () => setView('contacts') }),
       item('calls', 'phone', t('nav.calls'), { active: S.view === 'calls', onclick: () => setView('calls') }),
       item('saved', 'bookmark', t('nav.saved'), { active: !!savedActive, onclick: openSaved }),
-      item('drive', 'folder', t('drive.title'), { onclick: openDrive }),
-      item('calendar', 'clock', t('ev.calendar'), { onclick: openCalendar }),
-      item('tasks', 'tasks', t('task.title'), { onclick: openTasks }),
-      item('rooms', 'speaker', t('room.title_all'), { onclick: openRooms, active: roomsLive() > 0 }),
-      item('focus', 'moon', t('focus.title'), { onclick: openFocus, active: focusOn() }),
-      nearbyAvailable() ? item('nearby', 'wifi', t('nb.title'), { onclick: openNearby }) : null,
-      item('archive', 'archive', t('nav.archive'), { active: S.view === 'archive', onclick: () => setView('archive') }),
-      item('settings', 'settings', t('nav.settings'), { onclick: openSettings })),
+      pinned.length ? h('div', { class: 'rail-sep', role: 'separator' }) : null,
+      ...pinned.map((x) => item(x.id, x.ico, x.label, { onclick: x.onclick, active: x.active })),
+      h('div', { class: 'rail-sep', role: 'separator' }),
+      item('more', 'apps', t('nav.more'), { onclick: openMore, active: tools().some((x) => x.active && x.id !== 'archive' && !pins().includes(x.id)) })),
     h('button', { class: 'rail-me', type: 'button', 'aria-label': S.me?.name || t('nav.settings'), onclick: openSettings },
       avatar({ ...S.me, online: true }, '')),
   );
