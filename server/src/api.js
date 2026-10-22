@@ -435,7 +435,55 @@ api.get('/config', (_req, res) => {
 api.use(accountsRouter());
 
 // everything below needs a session
+// ---- sign in by QR code: the sign-in screen shows a code, a phone that is already signed in scans it and approves
+const QR_TTL = 120_000;
+const qrLogins = new Map(); // token -> { secret, exp, status, userId, ip, device }
+const qrSweep = () => { const t = now(); for (const [k, v] of qrLogins) if (v.exp < t) qrLogins.delete(k); };
+setInterval(qrSweep, 60_000).unref();
+
+api.post('/auth/qr/start', (req, res) => {
+  if (!rateLimit(`qrstart:${ip(req)}`, 30, 600_000)) throw new HttpError(429, 'too_many_requests');
+  qrSweep();
+  if (qrLogins.size > 5000) throw new HttpError(503, 'busy');
+  const token = rid(18);
+  const secret = rid(24);
+  qrLogins.set(token, { secret, exp: now() + QR_TTL, status: 'pending', userId: 0, ip: ip(req), device: String(req.headers['user-agent'] || '').slice(0, 160) });
+  res.json({ token, secret, expires_in: QR_TTL });
+});
+
+api.get('/auth/qr/poll', (req, res) => {
+  if (!rateLimit(`qrpoll:${ip(req)}`, 120, 60_000)) throw new HttpError(429, 'too_many_requests');
+  const token = String(req.query.token ?? '');
+  const e = qrLogins.get(token);
+  if (!e || e.exp < now() || e.secret !== String(req.query.secret ?? '')) return res.json({ status: 'expired' });
+  if (e.status !== 'approved') return res.json({ status: 'pending' });
+  qrLogins.delete(token);
+  const user = getUser(e.userId);
+  if (!user) return res.json({ status: 'expired' });
+  try { startSession(req, res, user, 'qr'); } catch (ex) { return res.json({ status: 'denied', reason: ex.code || 'generic' }); }
+  res.json({ status: 'approved', user: selfUser(user) });
+});
+
 api.use(requireAuth);
+
+api.get('/auth/qr/info', (req, res) => {
+  const e = qrLogins.get(String(req.query.token ?? ''));
+  if (!e || e.exp < now() || e.status !== 'pending') throw new HttpError(404, 'qr_expired');
+  res.json({ device: e.device, ip: e.ip });
+});
+
+api.post('/auth/qr/approve', (req, res) => {
+  if (!rateLimit(`qrapprove:${req.user.id}`, 30, 600_000)) throw new HttpError(429, 'too_many_requests');
+  const token = String(req.body?.token ?? '');
+  const e = qrLogins.get(token);
+  if (!e || e.exp < now() || e.status !== 'pending') throw new HttpError(404, 'qr_expired');
+  if (req.user.is_admin && req.user.admin_pass) throw new HttpError(403, 'admin_password_required');
+  e.status = 'approved';
+  e.userId = req.user.id;
+  e.exp = now() + 30_000;
+  aud(req, 'auth.qr_approve', { target_type: 'user', target_id: req.user.id, details: { device: e.device.slice(0, 120), ip: e.ip } });
+  res.json({ ok: true });
+});
 api.use('/admin', admin);
 api.use('/bots', botsRouter);
 api.use(features);

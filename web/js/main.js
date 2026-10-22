@@ -306,9 +306,12 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- session lifecycle
 function handleHash() {
-  const m = /^#\/(chat|join|stickers)\/([\w-]+)/.exec(location.hash);
+  const m = /^#\/(chat|join|stickers|qr)\/([\w-]+)/.exec(location.hash);
   if (!m || !S.me) return;
-  if (m[1] === 'stickers') {
+  if (m[1] === 'qr') {
+    history.replaceState(null, '', '#/');
+    import('./qrlogin.js').then((x) => x.approveQrLogin(m[2]));
+  } else if (m[1] === 'stickers') {
     history.replaceState(null, '', '#/');
     import('./stickers.js').then((x) => x.openSetByLink(m[2]));
   } else if (m[1] === 'chat') {
