@@ -674,15 +674,15 @@ button.filecard { border: 0; background: none; text-align: left; width: 100%; co
 
 /* ---- in-place viewer */
 body.viewer-open { overflow: hidden; }
-.viewer { position: fixed; inset: 0; z-index: 105; background: rgba(8, 6, 24, .94); color: #fff; display: grid; grid-template-rows: auto 1fr; animation: rise .15s both; }
+.viewer { position: fixed; inset: 0; z-index: 105; background: rgba(8, 6, 24, .94); color: #fff; display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); animation: rise .15s both; }
 .viewer-bar { display: flex; align-items: center; gap: 6px; padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent); z-index: 2; }
 .viewer-bar .icon-btn { color: #fff; }
 .viewer-title { display: grid; min-width: 0; margin-left: 6px; }
 .viewer-title b, .viewer-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-title small { opacity: .7; }
 .viewer-count, .viewer-zoom { font-size: .85rem; opacity: .8; min-width: 3.2em; text-align: center; }
-.viewer-stage { position: relative; display: grid; place-items: center; overflow: hidden; touch-action: none; min-height: 0; }
-.viewer-img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform .12s ease-out, filter .25s; user-select: none; cursor: zoom-in; }
+.viewer-stage { position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; width: 100%; height: 100%; overflow: hidden; touch-action: none; min-height: 0; }
+.viewer-img { max-width: 100%; max-height: 100%; width: auto; height: auto; min-width: 0; min-height: 0; object-fit: contain; transform-origin: center; transition: transform .12s ease-out, filter .25s; user-select: none; cursor: zoom-in; }
 .viewer.zoomed .viewer-img { cursor: grab; transition: none; }
 .viewer-img.loading { filter: blur(6px); }
 .viewer-video { max-width: 100%; max-height: 100%; background: #000; }
