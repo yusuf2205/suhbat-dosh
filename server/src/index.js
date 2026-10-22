@@ -8,6 +8,7 @@ import { db, migrate, q } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { api, authenticate, listDownloads } from './api.js';
 import { publicShare } from './drive.js';
+import { resumeTranscriptions } from './transcribe.js';
 import { botApi } from './bots.js';
 import { counters, setWsCounter, startMonitors } from './ops.js';
 import { startScheduler } from './features.js';
@@ -260,6 +261,7 @@ server.listen(config.port, config.host, () => {
   setWsCounter(connectionCount);
   startMonitors();
   startScheduler();
+  setTimeout(resumeTranscriptions, 5000).unref();
   startSafetyJobs();
   startTurn();
 });

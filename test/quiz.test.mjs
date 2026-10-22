@@ -90,3 +90,30 @@ test('events: create, RSVP, reminders, cancel, ics, calendar', async () => {
   assert.equal(up2.data.events.length, 0);
   assert.equal((await call(b.cookie, 'POST', `/api/events/${ev.id}/rsvp`, { status: 'yes' })).status, 400);
 });
+
+test('mini-apps: checklist and expense splitter', async () => {
+  const a = await signup('alice_mi');
+  const b = await signup('boris_mi');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  assert.equal((await call(a.cookie, 'POST', `/api/chats/${chat.id}/mini`, { type: 'nope', title: 'x' })).status, 400);
+  const cl = (await call(a.cookie, 'POST', `/api/chats/${chat.id}/mini`, { type: 'checklist', title: 'Покупки' })).data.message.mini;
+  assert.equal(cl.type, 'checklist');
+  const add = await call(b.cookie, 'POST', `/api/mini/${cl.id}/op`, { op: 'add', text: 'Хлеб' });
+  const item = add.data.message.mini.data.items[0];
+  assert.equal(item.text, 'Хлеб');
+  const tg = await call(a.cookie, 'POST', `/api/mini/${cl.id}/op`, { op: 'toggle', item: item.id });
+  assert.equal(tg.data.message.mini.data.items[0].done, true);
+  // only the author of an item (or of the list) can remove it; here A made the list, so A can
+  assert.equal((await call(a.cookie, 'POST', `/api/mini/${cl.id}/op`, { op: 'remove', item: item.id })).status, 200);
+  const ex = (await call(a.cookie, 'POST', `/api/chats/${chat.id}/mini`, { type: 'expenses', title: 'Поездка' })).data.message.mini;
+  const bad = await call(a.cookie, 'POST', `/api/mini/${ex.id}/op`, { op: 'add', title: 'Такси', amount: -5 });
+  assert.equal(bad.status, 400);
+  const e1 = await call(a.cookie, 'POST', `/api/mini/${ex.id}/op`, { op: 'add', title: 'Такси', amount: 90000, split: 'all' });
+  assert.equal(e1.status, 200);
+  const foreign = await call(a.cookie, 'POST', `/api/mini/${ex.id}/op`, { op: 'add', title: 'X', amount: 100, split: [99999] });
+  assert.equal(foreign.status, 400);
+  assert.equal(e1.data.message.mini.data.expenses[0].split.length, 2);
+  // a stranger is not a member of the chat
+  const c = await signup('carol_mi');
+  assert.equal((await call(c.cookie, 'POST', `/api/mini/${ex.id}/op`, { op: 'add', title: 'Y', amount: 10 })).status, 404);
+});

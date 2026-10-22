@@ -622,6 +622,26 @@ test('updates: version endpoint and installer metadata', async () => {
   assert.equal((await anon.call('GET', '/downloads/secret.txt')).status, 404);
 });
 
+test('calls: a sleeping app (push device) keeps ringing and gets the call when it opens', async () => {
+  const a = await new Client('Rng-A', '+998901110091').login();
+  const b = await new Client('Rng-B', '+998901110092').login();
+  const chat = (await a.call('POST', '/api/chats/direct', { user_id: b.user.id })).data.chat;
+  await a.connect();
+  const sub = await b.call('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://127.0.0.1:9/push-test', keys: { p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM', auth: 'tBHItJI5svbpez7KI4CCXg' } } });
+  assert.equal(sub.status, 200);
+  const id = 'callid-' + Math.random().toString(36).slice(2, 12);
+  a.ws.send(JSON.stringify({ type: 'call.invite', chat_id: chat.id, call_id: id, video: false, sdp: 'v=0 offer' }));
+  const ringing = await a.waitFor('call.ringing', (e) => e.call_id === id);
+  assert.notEqual(ringing.offline, true); // not an instant miss: the callee has a device to wake
+  await new Promise((r) => setTimeout(r, 500));
+  await b.connect(); // the app is opened from the notification
+  const inc = await b.waitFor('call.incoming', (e) => e.call_id === id);
+  assert.equal(inc.from.id, a.user.id);
+  b.ws.send(JSON.stringify({ type: 'call.answer', call_id: id, sdp: 'v=0 answer' }));
+  assert.ok(await a.waitFor('call.answered', (e) => e.call_id === id));
+  a.ws.send(JSON.stringify({ type: 'call.end', call_id: id }));
+});
+
 test('calls: signalling, renegotiation, grace on reconnect, quality metrics', async (t) => {
   const admin = await new Client('Root', '+998901110099').login();
   const a = await new Client('Cal-A', '+998901110081').login();
@@ -650,6 +670,18 @@ test('calls: signalling, renegotiation, grace on reconnect, quality metrics', as
     assert.equal((await a.waitFor('call.reneg', (e) => e.kind === 'answer')).sdp, 'v=0 re-answer');
     send(b, { type: 'call.reneg', call_id: id, kind: 'restart' });
     assert.ok(await a.waitFor('call.reneg', (e) => e.kind === 'restart'));
+  });
+
+  await t.test('live captions: text is relayed to the other side only', async () => {
+    send(a, { type: 'call.caption', call_id: id, text: 'Привет, как дела?', lang: 'ru-RU', final: true });
+    const cap = await b.waitFor('call.caption', (e) => e.call_id === id);
+    assert.equal(cap.text, 'Привет, как дела?');
+    assert.equal(cap.lang, 'ru-RU');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(a.events.some((e) => e.type === 'call.caption'), false);
+    send(a, { type: 'call.caption', call_id: id, text: 'x'.repeat(1000), lang: 'ru-RU' });
+    const long = await b.waitFor('call.caption', (e) => e.text.length > 100);
+    assert.equal(long.text.length, 300);
   });
 
   await t.test('a stranger cannot inject signalling into the call', async () => {

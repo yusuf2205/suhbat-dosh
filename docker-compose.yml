@@ -24,6 +24,16 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Speech-to-text for voice messages (faster-whisper on the CPU). Start with:  docker compose --profile whisper up -d --build whisper
+  whisper:
+    build: ./whisper
+    image: suhbat-whisper:latest
+    profiles: ["whisper"]
+    restart: unless-stopped
+    mem_limit: 8g
+    volumes:
+      - ./whisper-models:/models    # downloaded models stay here
+
   # Public access through your own Cloudflare Tunnel (profile 'tunnel'; no open ports needed).
   # Set up with: sh scripts/set-tunnel-token.sh
   cloudflared:

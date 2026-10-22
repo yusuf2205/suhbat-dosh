@@ -26,6 +26,8 @@ import { serviceMessage, wireNotify } from './notify.js';
 import { features, wireFeatures } from './features.js';
 import { drive, wireDrive } from './drive.js';
 import { mydata } from './mydata.js';
+import { mini, wireMini } from './miniapps.js';
+import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { assertQuota, checkSpam, safety } from './safety.js';
@@ -395,6 +397,7 @@ api.get('/downloads', (_req, res) => {
 api.get('/config', (_req, res) => {
   res.json({
     max_upload_bytes: config.maxUploadBytes,
+    transcribe: transcriberReady(),
     registration_open: registrationMode() !== 'closed',
     registration: registrationMode(),
     dev_otp: config.otpMode === 'dev',
@@ -409,6 +412,8 @@ api.use('/bots', botsRouter);
 api.use(features);
 api.use(drive);
 api.use(mydata);
+api.use(mini);
+api.use(transcribe);
 api.use(pushRouter);
 api.use(safety);
 
@@ -703,6 +708,7 @@ const pushChat = (chatId, ids = memberIds(chatId)) => {
 wireBots({ postMessage, pushChat });
 wireNotify({ postMessage, pushChat });
 wireFeatures({ postMessage });
+wireMini({ postMessage });
 
 api.get('/chats', (req, res) => res.json({ chats: listChats(req.user.id) }));
 
@@ -1077,7 +1083,7 @@ api.post('/chats/:id/messages', (req, res) => {
     if (isSecretChat(src.chat_id) || isSecretChat(chat.id)) throw new HttpError(403, 'secret_no_forward');
     const sender = src.sender_id ? getUser(src.sender_id)?.name : null;
     text = src.text;
-    kind = src.kind === 'poll' || src.kind === 'event' ? 'text' : src.kind;
+    kind = ['poll', 'event', 'miniapp'].includes(src.kind) ? 'text' : src.kind;
     fileId = src.file_id;
     duration = src.duration;
     forwardFrom = src.forward_from || sender || '';

@@ -47,6 +47,7 @@ const preview = (m) => {
   if (m.kind === 'secret') return '🔒 Секретное сообщение';
   if (m.kind === 'poll') return `📊 ${m.text}`;
   if (m.kind === 'event') return `📅 ${m.text}`;
+  if (m.kind === 'miniapp') return `🧩 ${m.text}`;
   if (m.kind === 'location') return '📍 Геолокация';
   if (m.kind === 'sticker') return `${m.text || ''} Стикер`.trim();
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return '👤 Контакт'; } }
@@ -61,11 +62,13 @@ export function pushToUser(userId, data, { ttl = 60, urgency = 'high' } = {}) {
   vapid();
   const payload = JSON.stringify(data);
   for (const s of subs) {
-    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: ttl, urgency })
-      .catch((e) => {
-        if (e.statusCode === 404 || e.statusCode === 410) q.run('DELETE FROM push_subs WHERE id = ?', s.id);
-        else log('warn', 'push failed', { status: e.statusCode, err: String(e.message).slice(0, 80) });
-      });
+    try {
+      webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: ttl, urgency })
+        .catch((e) => {
+          if (e.statusCode === 404 || e.statusCode === 410) q.run('DELETE FROM push_subs WHERE id = ?', s.id);
+          else log('warn', 'push failed', { status: e.statusCode, err: String(e.message).slice(0, 80) });
+        });
+    } catch (e) { log('warn', 'push failed', { err: String(e.message).slice(0, 80) }); }
   }
   return subs.length;
 }

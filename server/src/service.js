@@ -85,6 +85,22 @@ export function directPeerId(chatId, userId) {
 
 // ---------------- messages ----------------
 
+export function transcriptOut(row) {
+  const t = q.get('SELECT * FROM transcripts WHERE message_id = ?', row.id);
+  if (!t) return null;
+  let words = [];
+  try { words = JSON.parse(t.words || '[]'); } catch { /* none */ }
+  return { status: t.status, lang: t.lang, text: t.text || '', words, model: t.model, error: t.error };
+}
+
+export function miniOut(row) {
+  const a = q.get('SELECT * FROM mini_apps WHERE message_id = ?', row.id);
+  if (!a) return null;
+  let data = {};
+  try { data = JSON.parse(a.data); } catch { /* empty */ }
+  return { id: a.id, type: a.type, title: a.title, creator_id: a.creator_id, data };
+}
+
 export function eventOut(row) {
   const e = q.get('SELECT * FROM events WHERE message_id = ?', row.id);
   if (!e) return null;
@@ -153,6 +169,8 @@ export function messageOut(row) {
     markup: row.markup ? JSON.parse(row.markup) : null,
     poll: row.kind === 'poll' ? pollOut(row) : null,
     event: row.kind === 'event' ? eventOut(row) : null,
+    mini: row.kind === 'miniapp' ? miniOut(row) : null,
+    transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
     edited_at: row.edited_at,
     created_at: row.created_at,

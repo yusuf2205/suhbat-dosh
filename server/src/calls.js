@@ -116,6 +116,14 @@ export function handleSignal(userId, m) {
       emit([other(call, userId)], { type: 'call.reneg', call_id: call.id, kind: m.kind, sdp: m.kind === 'restart' ? '' : m.sdp });
       return undefined;
     }
+    case 'call.caption': {
+      // live subtitles: only text, relayed to the other side of an answered call
+      if (!call || (userId !== call.caller && userId !== call.callee) || !call.answeredAt) return undefined;
+      const text = typeof m.text === 'string' ? m.text.trim().slice(0, 300) : '';
+      if (!text) return undefined;
+      emit([other(call, userId)], { type: 'call.caption', call_id: call.id, text, lang: String(m.lang || '').slice(0, 8), final: !!m.final });
+      return undefined;
+    }
     case 'call.media': {
       // "my camera / screen is on or off": lets the other side show the avatar instead of a frozen frame
       if (!call || (userId !== call.caller && userId !== call.callee) || !call.answeredAt) return undefined;

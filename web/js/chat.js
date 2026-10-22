@@ -4,6 +4,8 @@ import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
 import { canCompressVideo, compressVideo } from './videocompress.js';
 import { accessBadge, accessMenu, saveToDrive } from './drive.js';
 import { eventNode, openEventCreate } from './events.js';
+import { miniNode, openMiniCreate } from './mini.js';
+import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
@@ -452,6 +454,7 @@ function renderComposer() {
       { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
+      { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
         const r = await recordVideoNote();
@@ -982,7 +985,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1054,6 +1057,7 @@ function buildMessage(m, c) {
   else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
+  if (m.kind === 'miniapp' && m.mini) bubble.append(miniNode(m));
   else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));
@@ -1252,7 +1256,10 @@ function buildFileInner(m) {
     return h('button', { class: 'media media-btn video', type: 'button', 'aria-label': f.name, onclick: open },
       poster, h('span', { class: 'play-badge' }, icon('send', 28)), h('span', { class: 'media-size' }, formatBytes(f.size)));
   }
-  if (m.kind === 'audio' || m.kind === 'voice') return voiceNode(m);
+  if (m.kind === 'audio' || m.kind === 'voice') {
+    const tn = transcriptNode(m, !!cfg.transcribe && !isSecret(activeChat() || {}));
+    return tn ? h('div', { class: 'voice-with-tr' }, voiceNode(m), tn) : voiceNode(m);
+  }
   prefetchNative(f);
   return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) { if (canOpenNative()) openNative(f); else saveFile(f); } else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),

@@ -5,6 +5,8 @@ import { api, wsSend } from './net.js';
 import { icon } from './icons.js';
 import { popMenu, avatar, modal, toast, beep } from './ui.js';
 import { Summary, VideoAdapter, sampleFromStats, score } from './callquality.js';
+import { LANGS, captionsSupported, defaultCapLang, startCaptions, translateCaption } from './captions.js';
+import { getLang } from './i18n.js';
 
 // 1:1 WebRTC calls. Signalling goes over the existing WebSocket; media is peer-to-peer (or via TURN).
 // Quality: Opus audio with echo cancellation / noise suppression / AGC, up to 1080p30 video that is
@@ -95,8 +97,9 @@ function buildUi() {
   const controls = h('div', { class: 'call-controls' });
   const fsBtn = h('button', { class: 'call-fs', type: 'button', 'aria-label': t('call.fullscreen'), title: t('call.fullscreen'),
     onclick: () => { ui?.root.classList.toggle('full'); } }, icon('grid', 18));
+  const caps = h('div', { class: 'call-caps', 'aria-live': 'polite' });
   const card = h('div', { class: 'call-card' },
-    h('div', { class: 'call-bg' }), remote, h('div', { class: 'call-shade' }),
+    h('div', { class: 'call-bg' }), remote, h('div', { class: 'call-shade' }), caps,
     h('div', { class: 'call-top' }, who, status, h('div', null, timer, quality), stats),
     local, controls, fsBtn);
   const root = h('div', { class: 'call-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('nav.calls') }, card);
@@ -106,7 +109,7 @@ function buildUi() {
     if (root.classList.contains('idle')) wakeControls();
   });
   card.addEventListener('pointermove', () => { if (root.classList.contains('idle')) wakeControls(); });
-  return { root, card, remote, local, status, timer, who, controls, quality, stats, bg: root.querySelector('.call-bg'), panel: null };
+  return { root, card, remote, local, status, timer, who, controls, quality, stats, caps, bg: root.querySelector('.call-bg'), panel: null };
 }
 
 function btn(cls, ico, label, onclick, caption) {
@@ -153,9 +156,52 @@ function renderControls() {
     extra.append(pill(cur.sharing ? 'on' : '', 'grid', cur.sharing ? t('call.screen_stop') : t('call.screen'), toggleScreen));
   }
   if ((cur.cams?.length || 0) > 1 && camOn) extra.append(pill('', 'chat', t('call.flip'), switchCamera));
+  if (captionsSupported()) extra.append(pill(cur.capStop ? 'on' : '', 'chat', t('cap.button'), (e) => toggleCaptions(e.currentTarget)));
   extra.append(pill(ui.panel ? 'on' : '', 'settings', t('call.settings_short'), toggleDevicePanel));
   ui.controls.append(main, extra);
   wakeControls();
+}
+
+// ---- live captions (opt-in): my speech is recognised here, only text goes to the other side
+function showCaption(who, text, translated, interim) {
+  if (!ui?.caps) return;
+  let line = ui.caps.querySelector(`[data-who="${who}"]`);
+  if (!line) { line = h('div', { class: `cap-line ${who}`, dataset: { who } }); ui.caps.append(line); }
+  line.classList.toggle('interim', !!interim);
+  clear(line).append(h('span', null, text), translated ? h('small', null, translated) : null);
+  clearTimeout(line._t);
+  line._t = setTimeout(() => line.remove(), interim ? 4000 : 7000);
+}
+
+async function toggleCaptions(anchor) {
+  if (!cur) return;
+  if (cur.capStop) { cur.capStop(); cur.capStop = null; ui?.caps && clear(ui.caps); renderControls(); return; }
+  if (!S.prefs.capOk) {
+    const ok = await new Promise((resolve) => {
+      const m = modal({ title: t('cap.title'), onClose: () => resolve(false), body: [h('p', null, t('cap.privacy')),
+        h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '12px' } }, h('button', { class: 'btn', type: 'button', onclick: () => { resolve(true); m.close(); } }, t('cap.enable')))] });
+    });
+    if (!ok) return;
+    S.prefs.capOk = true;
+    savePrefs();
+  }
+  popMenu(anchor, LANGS.map(([code, name]) => ({
+    label: `${code === defaultCapLang() ? '\u25CF ' : ''}${name}`,
+    onClick: () => {
+      S.prefs.capLang = code;
+      savePrefs();
+      if (!cur) return;
+      cur.capStop = startCaptions({
+        lang: code, isMuted: () => !!cur?.muted,
+        onText: (text, final, error) => {
+          if (error) { toast(t('cap.error')); cur.capStop = null; renderControls(); return; }
+          showCaption('me', text, null, !final);
+          if (final) wsSend({ type: 'call.caption', call_id: cur.id, text, lang: code, final: true });
+        },
+      });
+      renderControls();
+    },
+  })));
 }
 
 // Video calls: the controls fade away after a few seconds, a tap on the picture brings them back.
@@ -604,6 +650,7 @@ function cleanup() {
     clearInterval(cur.timer);
     clearInterval(cur.statsTimer);
     clearTimeout(cur.restartTimer);
+    try { cur.capStop?.(); } catch { /* ignore */ }
     if (cur.summary && cur.connectedAt) {
       const dur = Math.round((Date.now() - cur.connectedAt) / 1000);
       wsSend({ type: 'call.stats', call_id: cur.id, stats: cur.summary.toJSON(dur) });
@@ -750,6 +797,12 @@ export async function handleCallEvent(ev) {
           await cur.pc.setRemoteDescription({ type: 'answer', sdp: ev.sdp });
         }
       } catch { /* the next restart attempt retries */ }
+      break;
+    case 'call.caption':
+      if (cur?.id === ev.call_id && ui) {
+        showCaption('peer', ev.text, null, false);
+        translateCaption(ev.text, ev.lang, getLang()).then((tr) => { if (tr && tr !== ev.text) showCaption('peer', ev.text, tr, false); });
+      }
       break;
     case 'call.media':
       if (cur?.id === ev.call_id && ui) {
