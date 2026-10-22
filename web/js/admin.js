@@ -552,6 +552,11 @@ async function viewAccess() {
   const quotaSave = h('button', { class: 'btn', type: 'button', onclick: async () => {
     try { await send('PUT', '/api/admin/settings', { quota_default_mb: Number(quotaIn.value) || 0 }); quotaMsg.textContent = 'Сохранено'; } catch (e) { quotaMsg.textContent = errMsg(e); }
   } }, 'Сохранить');
+  const gcIn = h('input', { class: 'input', type: 'number', min: 2, max: st.gcall_max_top ?? 25, value: st.gcall_max ?? 6, 'aria-label': 'Участников в групповом звонке' });
+  const gcMsg = h('span', { class: 'muted' });
+  const gcSave = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    try { const r = await send('PUT', '/api/admin/settings', { gcall_max: Number(gcIn.value) }); gcIn.value = r.gcall_max; gcMsg.textContent = 'Сохранено'; } catch (e) { gcMsg.textContent = errMsg(e); }
+  } }, 'Сохранить');
   const cred = await get('/api/admin/credentials').catch(() => ({ login: null, has_password: false }));
   const cLogin = h('input', { class: 'input', value: cred.login || '', autocomplete: 'username', autocapitalize: 'none', placeholder: 'Логин (латиница, от 4 символов)', 'aria-label': 'Логин' });
   const cNew = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: 'Новый пароль (от 10 символов)', 'aria-label': 'Новый пароль' });
@@ -573,6 +578,9 @@ async function viewAccess() {
     h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Лимит хранилища по умолчанию'),
       h('p', { class: 'muted' }, 'Сколько файлов в чатах может хранить один пользователь. 0 — без ограничений. Для отдельного человека лимит меняется на его странице.'),
       h('div', { class: 'toolbar' }, quotaIn, quotaSave, quotaMsg)),
+    h('div', { class: 'panel' }, h('h2', null, icon('phone', 18), 'Групповые звонки и голосовые комнаты'),
+      h('p', { class: 'muted' }, `Сколько человек может быть в одном звонке или комнате (от 2 до ${st.gcall_max_top ?? 25}). Каждый участник отправляет своё видео всем остальным, поэтому при больших значениях нужен быстрый интернет у людей и на сервере TURN. Действует для новых входов, идущие звонки не прерываются.`),
+      h('div', { class: 'toolbar' }, gcIn, gcSave, gcMsg)),
     h('div', { class: 'panel' }, h('h2', null, icon('lock', 18), 'Вход администратора'),
       h('p', { class: 'muted' }, cred.has_password
         ? `Включён вход по логину «${cred.login}» и паролю. Код из SMS для этого аккаунта больше не принимается.`

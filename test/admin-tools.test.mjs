@@ -47,6 +47,14 @@ test('ban, delete, invitations, broadcast, backups, system, call quality', async
   const chat = (await call(bob.cookie, 'POST', '/api/chats/direct', { user_id: eve.user.id })).data.chat;
   await call(bob.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'hello eve' });
 
+  // the limit of group calls is set by the main administrator only
+  assert.equal((await call(root1.cookie, 'GET', '/api/admin/settings')).data.gcall_max, 6);
+  assert.equal((await call(bob.cookie, 'PUT', '/api/admin/settings', { gcall_max: 10 })).status, 403);
+  assert.equal((await call(root1.cookie, 'PUT', '/api/admin/settings', { gcall_max: 1 })).status, 400);
+  assert.equal((await call(root1.cookie, 'PUT', '/api/admin/settings', { gcall_max: 99 })).status, 400);
+  assert.equal((await call(root1.cookie, 'PUT', '/api/admin/settings', { gcall_max: 12 })).data.gcall_max, 12);
+  assert.equal((await call(root1.cookie, 'GET', '/api/admin/settings')).data.gcall_max, 12);
+
   // non-admins are refused
   assert.equal((await call(bob.cookie, 'POST', `/api/admin/users/${eve.user.id}/ban`, {})).status, 403);
 

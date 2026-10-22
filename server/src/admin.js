@@ -6,6 +6,7 @@ import { audit, getUser, memberIds, messageOut } from './service.js';
 import { filePath, removeFile } from './files.js';
 import fs from 'node:fs';
 import { EVENTS } from '../../shared/contracts.js';
+import { ROOM_MAX_TOP, roomMax } from './groupcalls.js';
 import { REGISTRATION_MODES, createInvite, getSetting, registrationMode, setSetting } from './access.js';
 import { broadcast } from './notify.js';
 import { hashPassword, verifyPassword } from './passwords.js';
@@ -298,7 +299,7 @@ admin.delete('/users/:id', (req, res) => {
 
 // ------------------------------------------------------------------ registration, invitations
 admin.get('/settings', (_req, res) => {
-  res.json({ registration: registrationMode(), modes: REGISTRATION_MODES, set: getSetting('registration') !== null, quota_default_mb: Number(getSetting('quota_default_mb', '0')) });
+  res.json({ registration: registrationMode(), modes: REGISTRATION_MODES, set: getSetting('registration') !== null, quota_default_mb: Number(getSetting('quota_default_mb', '0')), gcall_max: roomMax(), gcall_max_top: ROOM_MAX_TOP });
 });
 
 admin.put('/settings', (req, res) => {
@@ -306,7 +307,13 @@ admin.put('/settings', (req, res) => {
     const mb = int(req.body.quota_default_mb, 'quota_default_mb', { min: 0, max: 1_000_000 });
     setSetting('quota_default_mb', mb);
     audit(req.user.id, 'admin.settings', { ip: req.ip, details: { quota_default_mb: mb } });
-    if (req.body.registration === undefined) return res.json({ quota_default_mb: mb });
+    if (req.body.registration === undefined && req.body.gcall_max === undefined) return res.json({ quota_default_mb: mb });
+  }
+  if (req.body?.gcall_max !== undefined) {
+    const n = int(req.body.gcall_max, 'gcall_max', { min: 2, max: ROOM_MAX_TOP });
+    setSetting('gcall_max', n);
+    audit(req.user.id, 'admin.settings', { ip: req.ip, details: { gcall_max: n } });
+    if (req.body.registration === undefined) return res.json({ gcall_max: n });
   }
   const mode = req.body?.registration;
   if (!REGISTRATION_MODES.includes(mode)) throw new HttpError(400, 'invalid_input');

@@ -7,7 +7,15 @@ import { emit } from './realtime.js';
 import { audit, getUser, memberIds, membership, publicUser } from './service.js';
 import { now, rateLimit, syncData } from './util.js';
 
-export const ROOM_MAX = 6;
+import { getSetting } from './access.js';
+
+// the limit is set by the main administrator (a full mesh gets heavy: every person uploads to every other)
+export const ROOM_MAX_DEFAULT = 6;
+export const ROOM_MAX_TOP = 25;
+export const roomMax = () => {
+  const n = Number(getSetting('gcall_max', String(ROOM_MAX_DEFAULT)));
+  return Number.isInteger(n) && n >= 2 && n <= ROOM_MAX_TOP ? n : ROOM_MAX_DEFAULT;
+};
 const rooms = new Map(); // chatId -> { chatId, video, startedAt, startedBy, parts: Map<userId, { audio, video }> }
 
 const view = (r) => ({
@@ -60,11 +68,11 @@ export function handleGroupSignal(userId, m) {
         rooms.set(chatId, r);
         audit(userId, 'gcall.start', { chat_id: chatId, details: { video: r.video, room: r.room } });
       }
-      if (!r.parts.has(userId) && r.parts.size >= ROOM_MAX) return reject('full');
+      if (!r.parts.has(userId) && r.parts.size >= roomMax()) return reject('full');
       const peers = [...r.parts.keys()].filter((id) => id !== userId);
       r.parts.set(userId, { audio: true, video: !!m.video });
       emit([userId], {
-        type: 'gcall.joined', chat_id: chatId, peers: peers.map((id) => publicUser(getUser(id), userId)), ice_servers: currentIceServers(), max: ROOM_MAX,
+        type: 'gcall.joined', chat_id: chatId, peers: peers.map((id) => publicUser(getUser(id), userId)), ice_servers: currentIceServers(), max: roomMax(),
       });
       for (const id of peers) emit([id], { type: 'gcall.peer_joined', chat_id: chatId, user: publicUser(getUser(userId), id), video: !!m.video });
       announce(r);
