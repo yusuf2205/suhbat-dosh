@@ -13,6 +13,7 @@ import { dndRows, openFolders, openGlobalSearch, quietSettings } from './extras.
 import { compose as composeStory, openStoryArchive } from './stories.js';
 import { openScanner } from './scanner.js';
 import { screenGuardNative } from './screenguard.js';
+import { openSelfNotes } from './selfnotes.js';
 import { openBotFather } from './bots.js';
 import { openSaved, setView } from './rail.js';
 import { updatesSection } from './updates.js';
@@ -254,37 +255,47 @@ export function openSettings() {
             h('b', { class: 'ellipsis' }, me.name),
             h('span', { class: 'ellipsis' }, phoneOf()),
             me.username ? h('span', { class: 'accent ellipsis' }, `@${me.username}`) : null)),
+        heading(t('st.sec_quick')),
         group(
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
+          row('edit', t('sn.title'), { onclick: () => { m.close(); openSelfNotes(); } }),
           row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
-          row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
-          row('user', t('acc.title'), { onclick: () => { m.close(); openAccounts(); } }),
-          row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
-          row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
-          row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
           row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
-          row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
-          row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } }),
-          row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } }),
-          row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } }),
-          row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
-          row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
-          row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
-          row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
-          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
-          null),
+          row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } })),
+        heading(t('st.sec_account')),
         group(
           row('user', t('st.account'), { onclick: () => go(pages.account) }),
-          row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
-          row('clock', t('pres.title'), { value: S.me.presence === 'busy' ? t('pres.busy') : S.me.presence === 'away' ? t('pres.away') : t('pres.online'), onclick: () => go(pages.presence) }),
           row('lock', t('st.privacy'), { onclick: () => go(pages.privacy) }),
+          row('user', t('acc.title'), { onclick: () => { m.close(); openAccounts(); } }),
+          row('clock', t('pres.title'), { value: S.me.presence === 'busy' ? t('pres.busy') : S.me.presence === 'away' ? t('pres.away') : t('pres.online'), onclick: () => go(pages.presence) })),
+        heading(t('st.sec_chats')),
+        group(
           row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
+          row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
           row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
+          row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
+          row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
+          row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
+        heading(t('st.sec_people')),
+        group(
+          row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
+          row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
+          row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
+          row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
+          row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
+          row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } })),
+        heading(t('st.sec_data')),
+        group(
+          row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
           row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
           row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
-          row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
+          row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
+          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } })),
+        heading(t('st.sec_app')),
+        group(
           row('speaker', t('st.av'), { onclick: () => go(pages.av) }),
+          row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
           row('globe', t('settings.language'), { value: LANGS[getLang()], onclick: () => go(pages.language) })),
         S.me.is_admin ? group(row('shield', t('st.admin'), { onclick: () => window.open('/admin', 'suhbat-admin') })) : null,
         group(row('logout', t('settings.logout'), { danger: true, onclick: logout })),
