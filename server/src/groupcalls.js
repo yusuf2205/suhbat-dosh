@@ -5,7 +5,7 @@ import { q } from './db.js';
 import { currentIceServers } from './turn.js';
 import { emit } from './realtime.js';
 import { audit, getUser, memberIds, membership, publicUser } from './service.js';
-import { now } from './util.js';
+import { now, rateLimit, syncData } from './util.js';
 
 export const ROOM_MAX = 6;
 const rooms = new Map(); // chatId -> { chatId, video, startedAt, startedBy, parts: Map<userId, { audio, video }> }
@@ -90,6 +90,13 @@ export function handleGroupSignal(userId, m) {
       s.video = !!m.video;
       for (const id of r.parts.keys()) if (id !== userId) emit([id], { type: 'gcall.peer_media', chat_id: chatId, user_id: userId, audio: s.audio, video: s.video });
       announce(r);
+      return;
+    }
+    case 'gcall.sync': {
+      const r = rooms.get(chatId);
+      if (!r || !r.parts.has(userId) || !rateLimit(`gsync:${userId}`, 400, 10_000)) return;
+      const data = syncData(m.data);
+      if (data) for (const id of r.parts.keys()) if (id !== userId) emit([id], { type: 'gcall.sync', chat_id: chatId, from: userId, data });
       return;
     }
     case 'gcall.leave':

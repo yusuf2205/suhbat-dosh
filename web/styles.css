@@ -1766,3 +1766,20 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .room-row .room-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .room-who { display: flex; gap: 4px; flex-wrap: wrap; }
 .gcall.min.room .gc-time { display: none; }
+
+/* ===== watching together, pen on a shared screen ===== */
+.tg-stage { position: absolute; inset: 56px 12px 190px; z-index: 6; display: grid; grid-template-rows: auto 1fr auto; gap: 6px; padding: 8px; border-radius: 18px; background: rgba(12, 12, 14, .92); color: #fff; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.tg-top { display: flex; align-items: center; gap: 10px; }
+.tg-top b { flex: 1; min-width: 0; }
+.tg-who { opacity: .7; font-size: .8rem; max-width: 40%; }
+.tg-video { width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; border-radius: 12px; }
+.tg-bar { display: flex; align-items: center; gap: 10px; }
+.tg-bar .icon-btn { color: #fff; }
+.tg-range { flex: 1; accent-color: #ffd23f; }
+.tg-time { font-variant-numeric: tabular-nums; font-size: .8rem; opacity: .85; white-space: nowrap; }
+.tg-list { display: grid; gap: 6px; max-height: 40vh; overflow: auto; margin-top: 8px; }
+.tg-item { display: flex; align-items: center; gap: 10px; padding: 6px; border: 0; border-radius: 12px; background: var(--surface-2); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tg-item img, .tg-ico { width: 56px; height: 40px; border-radius: 8px; object-fit: cover; display: grid; place-items: center; background: var(--surface); flex: none; }
+.ann-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; touch-action: none; }
+.ann-canvas.on { pointer-events: auto; cursor: crosshair; }
+@media (max-width: 700px) { .tg-stage { inset: 48px 6px 230px; } }

@@ -98,3 +98,11 @@ setInterval(() => {
     if (!arr.length || t - arr[arr.length - 1] > 3600_000) buckets.delete(k);
   }
 }, 60_000).unref();
+
+/** Messages relayed between call participants (watching together, drawing): only small plain objects. */
+export function syncData(d) {
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  let s;
+  try { s = JSON.stringify(d); } catch { return null; }
+  return s.length <= 2000 ? d : null;
+}

@@ -2,7 +2,7 @@ import { q } from './db.js';
 import { emit, isOnline } from './realtime.js';
 import { audit, directPeerId, getUser, isBlockedEitherWay, membership, publicUser } from './service.js';
 import { postMessage } from './api.js';
-import { now } from './util.js';
+import { now, rateLimit, syncData } from './util.js';
 import { focusMutes, pushToUser } from './push.js';
 
 // 1:1 audio/video calls. The server only relays WebRTC signalling (SDP + ICE) between the two
@@ -123,6 +123,14 @@ export function handleSignal(userId, m) {
       const text = typeof m.text === 'string' ? m.text.trim().slice(0, 300) : '';
       if (!text) return undefined;
       emit([other(call, userId)], { type: 'call.caption', call_id: call.id, text, lang: String(m.lang || '').slice(0, 8), final: !!m.final });
+      return undefined;
+    }
+    case 'call.sync': {
+      // watching together, pointer and drawing on a shared screen: small JSON messages passed to the other side as they are
+      if (!call || (userId !== call.caller && userId !== call.callee) || !call.answeredAt) return undefined;
+      if (!rateLimit(`sync:${userId}`, 400, 10_000)) return undefined;
+      const data = syncData(m.data);
+      if (data) emit([other(call, userId)], { type: 'call.sync', call_id: call.id, data });
       return undefined;
     }
     case 'call.media': {

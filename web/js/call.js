@@ -7,6 +7,8 @@ import { popMenu, avatar, modal, toast, beep } from './ui.js';
 import { Summary, VideoAdapter, sampleFromStats, score } from './callquality.js';
 import { LANGS, captionsSupported, defaultCapLang, startCaptions, translateCaption } from './captions.js';
 import { getLang } from './i18n.js';
+import { createTogether } from './together.js';
+import { createAnnotations } from './annotate.js';
 
 // 1:1 WebRTC calls. Signalling goes over the existing WebSocket; media is peer-to-peer (or via TURN).
 // Quality: Opus audio with echo cancellation / noise suppression / AGC, up to 1080p30 video that is
@@ -156,10 +158,28 @@ function renderControls() {
     extra.append(pill(cur.sharing ? 'on' : '', 'grid', cur.sharing ? t('call.screen_stop') : t('call.screen'), toggleScreen));
   }
   if ((cur.cams?.length || 0) > 1 && camOn) extra.append(pill('', 'chat', t('call.flip'), switchCamera));
+  extra.append(pill(cur.tg?.active() ? 'on' : '', 'play', t('tg.title'), () => { const tg = ensureTogether(); if (tg.active()) tg.close(); else tg.pick(); }));
+  if (cur.remoteScreen || cur.sharing) {
+    extra.append(pill(cur.ann?.mode() ? 'on' : '', 'edit', t('ann.pen'), () => { const a = ensureAnn(); a.setMode(!a.mode()); renderControls(); }));
+    if (cur.ann?.mode()) extra.append(pill('', 'check', t('ann.color'), () => { cur.ann.nextColor(); renderControls(); }));
+  }
   if (captionsSupported()) extra.append(pill(cur.capStop ? 'on' : '', 'chat', t('cap.button'), (e) => toggleCaptions(e.currentTarget)));
   extra.append(pill(ui.panel ? 'on' : '', 'settings', t('call.settings_short'), toggleDevicePanel));
   ui.controls.append(main, extra);
   wakeControls();
+}
+
+// ---- watching together and drawing on a shared screen: small messages relayed by the call server
+function ensureTogether() {
+  cur.tg ||= createTogether({ host: ui.card, chatId: cur.chatId, send: (data) => wsSend({ type: 'call.sync', call_id: cur.id, data }) });
+  return cur.tg;
+}
+function ensureAnn() {
+  cur.ann ||= createAnnotations({
+    card: ui.card, send: (data) => wsSend({ type: 'call.sync', call_id: cur.id, data }),
+    surface: () => (cur?.remoteScreen ? ui?.remote : cur?.sharing ? ui?.local : null),
+  });
+  return cur.ann;
 }
 
 // ---- live captions (opt-in): my speech is recognised here, only text goes to the other side
@@ -651,6 +671,7 @@ function cleanup() {
     clearInterval(cur.statsTimer);
     clearTimeout(cur.restartTimer);
     try { cur.capStop?.(); } catch { /* ignore */ }
+    try { cur.tg?.destroy(); cur.ann?.destroy(); } catch { /* ignore */ }
     if (cur.summary && cur.connectedAt) {
       const dur = Math.round((Date.now() - cur.connectedAt) / 1000);
       wsSend({ type: 'call.stats', call_id: cur.id, stats: cur.summary.toJSON(dur) });
@@ -798,6 +819,12 @@ export async function handleCallEvent(ev) {
         }
       } catch { /* the next restart attempt retries */ }
       break;
+    case 'call.sync':
+      if (cur?.id === ev.call_id && ui && ev.data) {
+        if (ev.data.k === 'tg') ensureTogether().handle(ev.data, cur.peer?.id || 0);
+        else ensureAnn().handle(ev.data);
+      }
+      break;
     case 'call.caption':
       if (cur?.id === ev.call_id && ui) {
         showCaption('peer', ev.text, null, false);
@@ -809,6 +836,7 @@ export async function handleCallEvent(ev) {
         ui.root.classList.toggle('rvoff', !ev.video);
         if (ev.video) { ui.root.classList.add('video'); cur.video = true; }
         ui.remote.classList.toggle('screen', !!ev.screen);
+        if (!!ev.screen !== !!cur.remoteScreen) { cur.remoteScreen = !!ev.screen; if (!ev.screen) cur.ann?.setMode(false); renderControls(); }
       }
       break;
     case 'call.resumed':
