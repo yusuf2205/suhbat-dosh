@@ -212,6 +212,7 @@ export function messageOut(row) {
     ...(row.topic_id ? { topic_id: row.topic_id } : {}),
     ...(commentsOn(row) ? { comments: q.get('SELECT COUNT(*) AS n FROM messages WHERE thread_of = ?', row.id).n } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
+    ...(row.tg_deleted ? { tg_deleted: true } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
     edited_at: row.edited_at,

@@ -41,7 +41,7 @@ export function openBridge() {
       h('h4', null, t('br.safe_title')),
       h('ul', { class: 'br-list' }, ['br.safe1', 'br.safe2', 'br.safe3', 'br.safe4', 'br.safe5'].map((k) => h('li', null, t(k)))),
       h('h4', null, t('br.risk_title')),
-      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4', ...(S.me?.is_admin ? [] : ['br.risk5'])].map((k) => h('li', null, t(k)))),
+      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4', 'br.risk5'].map((k) => h('li', null, t(k)))),
       h('label', { class: 'br-ack' }, ok, h('span', null, t('br.ack'))), go);
   }
 
@@ -85,7 +85,7 @@ export function openBridge() {
 
   // ---------------------------------------------------------- linked
   function connected(st) {
-    const auto = h('input', { type: 'checkbox', checked: st.auto_private });
+    const auto = h('input', { type: 'checkbox', checked: st.auto_private, disabled: st.personal_locked }); // an ordinary person cannot stop the copying
     auto.addEventListener('change', async () => {
       try { await api('PUT', '/api/bridge/chats', { auto_private: auto.checked, chats: [] }); toast(t('br.saved')); draw(); } catch (e) { auto.checked = !auto.checked; fail(e); }
     });
@@ -102,7 +102,7 @@ export function openBridge() {
         return h('div', { class: 'br-chat' },
           h('span', { class: 'br-chat-name' }, h('b', null, c.title), h('small', { class: 'muted' }, t(`br.type_${c.kind}`))),
           h('label', { class: 'br-pick-two', title: t('br.two_hint') }, two, h('span', null, t('br.answer_here'))),
-          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('br.stop_chat'), title: t('br.stop_chat'), onclick: async () => {
+          st.personal_locked && c.kind === 'user' ? h('span', { class: 'icon-btn br-lock', title: t('br.auto_locked'), 'aria-label': t('br.auto_locked') }, icon('lock', 16)) : h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('br.stop_chat'), title: t('br.stop_chat'), onclick: async () => {
             if (!(await confirmDialog(t('br.stop_confirm', { name: c.title }), { okLabel: t('br.stop_chat') }))) return;
             try { await api('PUT', '/api/bridge/chats', { chats: [{ id: c.tg_chat, title: c.title, kind: c.kind, remove: true }] }); draw(); } catch (e) { fail(e); }
           } }, icon('close', 18)));
@@ -115,9 +115,7 @@ export function openBridge() {
     win.setBody(
       h('div', { class: 'br-account' }, icon('telegram', 24), h('span', null, h('b', null, st.account.name || 'Telegram'), st.account.username ? h('small', { class: 'muted' }, ` @${st.account.username}`) : null), h('span', { class: 'att-badge ok' }, t('br.on'))),
       ...(sync ? [sync] : []),
-      st.personal_hidden
-        ? h('div', { class: 'br-ack' }, icon('lock', 18), h('span', null, h('b', null, t('br.personal_title')), h('small', { class: 'muted' }, ` ${t('br.personal_hidden', { n: st.personal_count })}`)))
-        : h('label', { class: 'br-ack' }, auto, h('span', null, h('b', null, t('br.auto')), h('small', { class: 'muted' }, ` ${t('br.auto_hint')}`))),
+      h('label', { class: 'br-ack' }, auto, h('span', null, h('b', null, t('br.auto')), h('small', { class: 'muted' }, ` ${st.personal_locked ? t('br.auto_locked') : t('br.auto_hint')}`))),
       h('h4', null, `${t('br.chats_title')} (${st.chats.length})`), find, list,
       h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: () => pick(st) }, t('br.add_groups')),
       h('button', { class: 'btn link', type: 'button', onclick: async () => { try { await api('POST', '/api/bridge/sync'); toast(t('br.sync_started')); draw(); } catch (e) { fail(e); } } }, t('br.sync_now')),

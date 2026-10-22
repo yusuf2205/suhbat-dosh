@@ -2064,3 +2064,6 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .qr-canvas { image-rendering: auto; }
 
 .br-pick[hidden] { display: none; }
+
+.tg-gone { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+.br-lock { display: inline-grid; place-items: center; color: var(--muted); cursor: default; }

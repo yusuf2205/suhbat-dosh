@@ -38,7 +38,7 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { personal } from './personal.js';
-import { bridge, bridgeConfigured, bridgeIn, bridgeOut, bridgeTwoWay } from './bridge.js';
+import { bridge, bridgeConfigured, bridgeIn, bridgeLocked, bridgeOut, bridgeTwoWay } from './bridge.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -943,6 +943,7 @@ api.patch('/chats/:id/me', (req, res) => {
 api.post('/chats/:id/clear', (req, res) => {
   const id = int(req.params.id, 'id');
   requireMember(id, req.user.id);
+  if (bridgeLocked(id, req.user)) throw new HttpError(403, 'bridge_no_delete');
   const last = q.get('SELECT last_message_id AS n FROM chats WHERE id = ?', id)?.n || 0;
   q.run('UPDATE members SET cleared_before = ?, last_read_id = MAX(last_read_id, ?) WHERE chat_id = ? AND user_id = ?', last, last, id, req.user.id);
   aud(req, 'chat.clear_history', { chat_id: id, details: { up_to: last } });
@@ -955,6 +956,7 @@ api.post('/chats/:id/clear', (req, res) => {
 api.post('/chats/:id/hide', (req, res) => {
   const id = int(req.params.id, 'id');
   requireMember(id, req.user.id);
+  if (bridgeLocked(id, req.user)) throw new HttpError(403, 'bridge_no_delete');
   const c = q.get('SELECT type FROM chats WHERE id = ?', id);
   if (c?.type !== 'direct') throw new HttpError(400, 'invalid_input', 'use leave for groups and channels');
   const last = q.get('SELECT last_message_id AS n FROM chats WHERE id = ?', id)?.n || 0;
@@ -1018,6 +1020,7 @@ api.delete('/chats/:id/members/:uid', (req, res) => {
   const me = requireMember(id, req.user.id);
   const c = q.get('SELECT * FROM chats WHERE id = ?', id);
   if (c.type === 'direct') throw new HttpError(400, 'invalid_input');
+  if (uid === req.user.id && bridgeLocked(id, req.user)) throw new HttpError(403, 'bridge_no_delete');
   const ban = req.query.ban === '1';
   aud(req, uid === req.user.id ? 'chat.leave' : 'chat.member_remove', { chat_id: id, target_type: 'user', target_id: uid, details: { ban } });
   if (uid === req.user.id) {
@@ -1735,6 +1738,7 @@ api.patch('/messages/:id', (req, res) => {
   if (!m) throw new HttpError(404, 'not_found');
   requireMember(m.chat_id, req.user.id);
   if (m.sender_id !== req.user.id) throw new HttpError(403, 'forbidden');
+  if (bridgeLocked(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_edit'); // an edit here would not reach Telegram
   if (isSecretChat(m.chat_id)) throw new HttpError(403, 'secret_no_edit'); // the server cannot re-encrypt
   const text = str(req.body?.text, 'text', { min: m.file_id ? 0 : 1, max: LIMITS.TEXT_MAX });
   aud(req, 'message.edit', { chat_id: m.chat_id, target_type: 'message', target_id: m.id, details: { old: m.text, new: text } });
@@ -1748,6 +1752,7 @@ api.delete('/messages/:id', (req, res) => {
   const m = getMessage(int(req.params.id, 'id'));
   if (!m) throw new HttpError(404, 'not_found');
   const me = requireMember(m.chat_id, req.user.id);
+  if (bridgeLocked(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_delete');
   if (m.sender_id !== req.user.id) {
     const chat = q.get('SELECT type FROM chats WHERE id = ?', m.chat_id);
     const senderRole = membership(m.chat_id, m.sender_id)?.role ?? 'member';

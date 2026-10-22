@@ -142,6 +142,7 @@ class Acct:
         self.auto_private = True   # mirror every one-to-one chat
         self.chats = {}            # tg chat id (str) -> { two_way: bool }
         self.sent = deque(maxlen=500)   # ids this service sent itself (their echo is not forwarded back)
+        self.sent_edit = set()
         self.backfill = {"state": "idle", "done": 0, "total": 0}
         self.bf_task = None
         self.synced = False        # the first complete copy of the personal chats has finished
@@ -263,8 +264,45 @@ async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
         return False
 
 
+def is_mirrored(a: Acct, key: str, kind: str) -> bool:
+    """Is this Telegram chat one that is copied (chosen, or personal while the default is on)?"""
+    return key in a.chats or (a.auto_private and kind == "user")
+
+
 def attach_handlers(a: Acct):
     from telethon import events, utils
+
+    @a.client.on(events.MessageEdited())
+    async def on_edit(event):
+        try:
+            key = str(utils.get_peer_id(event.message.peer_id))
+            kind = "user" if event.is_private else "channel" if event.is_channel and not event.is_group else "group"
+            if not is_mirrored(a, key, kind) or event.message.id in a.sent_edit:
+                return
+            text = describe(event.message)
+            if text:
+                await to_server({"owner": a.uid, "edit": True, "tg_chat": key, "tg_msg": event.message.id, "text": text[:4000],
+                                 "ts": int((event.message.edit_date or event.message.date).timestamp() * 1000)})
+        except Exception as e:
+            log("edit skipped:", type(e).__name__)
+
+    @a.client.on(events.MessageDeleted())
+    async def on_delete(event):
+        try:
+            # for personal chats Telegram does not say which chat: the server finds the messages by their number
+            key = str(utils.get_peer_id(event.chat_id)) if getattr(event, "chat_id", None) else ""
+            await to_server({"owner": a.uid, "deleted": True, "tg_chat": key, "ids": list(event.deleted_ids or [])[:500]})
+        except Exception as e:
+            log("delete skipped:", type(e).__name__)
+
+    @a.client.on(events.MessageRead(inbox=True))
+    async def on_read(event):
+        try:
+            key = str(event.chat_id) if getattr(event, "chat_id", None) else ""
+            if key and is_mirrored(a, key, "user" if event.is_private else "group"):
+                await to_server({"owner": a.uid, "read": True, "tg_chat": key, "max_id": event.max_id})
+        except Exception as e:
+            log("read skipped:", type(e).__name__)
 
     @a.client.on(events.NewMessage())
     async def on_message(event):
@@ -310,10 +348,10 @@ def reply_id(msg):
     return getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
 
 
-async def copy_dialog(a: Acct, d):
+async def copy_dialog(a: Acct, d, limit=None):
     """The recent history of one personal chat, oldest first."""
     msgs = []
-    async for m in a.client.iter_messages(d.entity, limit=BACKFILL_MESSAGES):
+    async for m in a.client.iter_messages(d.entity, limit=limit or BACKFILL_MESSAGES):
         if describe(m):
             msgs.append(m)
     for m in reversed(msgs):
@@ -370,6 +408,22 @@ async def run_backfill(a: Acct):
         a.backfill["state"] = "error"
 
 
+async def sync_recent(a: Acct):
+    """A light pass over the newest messages of every personal chat: nothing that a dropped connection missed stays missing."""
+    if not a.me or not a.auto_private or a.backfill["state"] == "running":
+        return
+    n = 0
+    async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+        if d.is_user and private_ok(d.id, d.entity):
+            try:
+                await copy_dialog(a, d, limit=40)
+            except Exception as e:
+                log("recent sync skipped a chat:", repr(e)[:80])
+            n += 1
+            await asyncio.sleep(0.4)
+    log("recent sync done:", n)
+
+
 async def start_existing():
     """On start: continue with every saved session."""
     os.makedirs(DATA, exist_ok=True)
@@ -399,6 +453,10 @@ async def start_existing():
         me = await a.client.get_me()
         a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
         attach_handlers(a)
+        try:
+            await a.client.catch_up()  # everything that arrived, was edited or deleted while this service was not running
+        except Exception as e:
+            log("catch-up failed:", type(e).__name__)
         log("connected account", a.uid)
         if not a.synced:
             a.bf_task = asyncio.create_task(delayed_backfill(a))
@@ -582,6 +640,43 @@ async def send(r):
     return web.json_response({"tg_msg": mid})
 
 
+async def read_back(r):
+    """The chat was read here: mark it read in Telegram too (only for chats that may be answered from here)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    body = await r.json()
+    chat = str(body.get("chat"))
+    rule = a.chats.get(chat)
+    if not rule or not rule.get("two_way"):
+        return web.json_response({"error": "read_only"}, status=403)
+    if not MOCK:
+        await a.client.send_read_acknowledge(int(chat), max_id=int(body.get("max_id") or 0))
+    else:
+        a.read_acks = getattr(a, "read_acks", []) + [[chat, int(body.get("max_id") or 0)]]
+    return web.json_response({"ok": True})
+
+
+async def mock_event(r):
+    """Tests only: something happened in Telegram (an edit, a deletion, a read) or ask what was sent back."""
+    if not MOCK:
+        return web.json_response({"error": "forbidden"}, status=403)
+    a = who(r)
+    b = await r.json()
+    if b.get("type") == "acks":
+        return web.json_response({"acks": getattr(a, "read_acks", [])})
+    if not a.me:
+        return web.json_response({"forwarded": False})
+    key = str(b.get("chat", ""))
+    if b["type"] == "edit":
+        await to_server({"owner": a.uid, "edit": True, "tg_chat": key, "tg_msg": b["msg"], "text": b["text"], "ts": int(time.time() * 1000)})
+    elif b["type"] == "delete":
+        await to_server({"owner": a.uid, "deleted": True, "tg_chat": key if b.get("with_chat", True) else "", "ids": b["ids"]})
+    elif b["type"] == "read":
+        await to_server({"owner": a.uid, "read": True, "tg_chat": key, "max_id": b["max_id"]})
+    return web.json_response({"forwarded": True})
+
+
 async def logout(r):
     """End the session on Telegram's side and delete everything kept for this account."""
     a = who(r)
@@ -646,7 +741,7 @@ def app():
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/mock/message", mock_message), web.post("/mock/media", mock_media),
+        web.post("/read", read_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.post("/mock/media", mock_media),
     ])
     return a
 
@@ -666,6 +761,13 @@ async def main():
         if OUTBOX:
             await flush_outbox()
         ticks += 1
+        if ticks % 30 == 0 and not MOCK:  # every 15 minutes
+            for a in list(ACCTS.values()):
+                if a.me and a.synced:
+                    try:
+                        await sync_recent(a)
+                    except Exception as e:
+                        log("recent sync failed:", type(e).__name__)
         if ticks % 10 == 0 and not MOCK:
             # a session may have been ended from the phone (Settings -> Devices): then forget everything about that account
             for a in list(ACCTS.values()):

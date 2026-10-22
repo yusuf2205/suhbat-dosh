@@ -5,8 +5,9 @@
 //  * a chat is read-only here unless "answer from here" is on for it;
 //  * copies are never deleted automatically;
 //  * the administrator can read the mirrored chats like any other chat (the owner is told so before linking);
-//  * for an ordinary person the personal chats are copied for the administrator only: they are not shown to the owner, and only the
-//    administrator can change that part (the owner is told this before linking too); groups and channels stay visible to the owner;
+//  * the personal chats are shown to their owner and may be answered from here (written to Telegram); an ordinary person cannot delete them,
+//    stop copying them or clear them: only the administrator can change that part;
+//  * everything is kept in sync: new messages, edits, what was deleted in Telegram (marked, never removed), what was read, and read marks go back;
 //  * disconnecting ends the session on Telegram's side and, on request, removes the copies.
 import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
@@ -78,16 +79,14 @@ const chatsOf = (uid) => q.all('SELECT tg_chat, title, chat_id, two_way, kind FR
 
 function stateOf(req) {
   const o = link(req.user.id);
-  const hidden = !req.user.is_admin; // an ordinary person does not see (or change) the personal chats that are copied
   const all = o ? chatsOf(req.user.id) : [];
   return {
     available: mayUse(req.user),
     linked: !!o,
     account: o ? { name: o.tg_name, username: o.tg_username } : null,
     auto_private: o ? !!o.auto_private : true,
-    personal_hidden: hidden,
-    personal_count: all.filter((c) => c.kind === 'user').length,
-    chats: hidden ? all.filter((c) => c.kind !== 'user') : all,
+    personal_locked: !req.user.is_admin, // an ordinary person cannot stop copying the personal chats or remove them
+    chats: all,
   };
 }
 
@@ -160,7 +159,7 @@ bridge.get('/bridge/dialogs', async (req, res) => {
   const out = new Set(q.all('SELECT tg_chat FROM tg_excluded WHERE user_id = ?', req.user.id).map((x) => x.tg_chat));
   const auto = !!link(req.user.id).auto_private;
   res.json({
-    dialogs: r.dialogs.filter((d) => req.user.is_admin || d.type !== 'user').map((d) => {
+    dialogs: r.dialogs.map((d) => {
       const c = have.get(String(d.id));
       return { ...d, picked: !!c || (d.type === 'user' && auto && !out.has(String(d.id))), two_way: c?.two_way || false };
     }),
@@ -170,14 +169,12 @@ bridge.get('/bridge/dialogs', async (req, res) => {
 
 /** A muted chat of its own for one Telegram chat. */
 function createMirror(uid, meName, tgChat, title, kind, twoWay) {
-  const hiddenCopy = kind === 'user' && !isAdminUser(uid); // the administrator reads it; the person does not see it
-  if (hiddenCopy) twoWay = false;
   const r = q.run(
     "INSERT INTO chats (type, title, description, owner_id, imported_from, import_me, last_message_at, created_at) VALUES ('group', ?, ?, ?, 'tgbridge', ?, ?, ?)",
     `✈ ${title}`, `tgb:${tgChat}`, uid, meName || 'Я', now(), now(),
   );
   const cid = Number(r.lastInsertRowid);
-  if (!hiddenCopy) q.run("INSERT INTO members (chat_id, user_id, role, joined_at, muted) VALUES (?, ?, 'owner', ?, 1)", cid, uid, now());
+  q.run("INSERT INTO members (chat_id, user_id, role, joined_at, muted) VALUES (?, ?, 'owner', ?, 1)", cid, uid, now());
   q.run('INSERT INTO tg_chats (user_id, tg_chat, title, chat_id, two_way, kind) VALUES (?,?,?,?,?,?)', uid, tgChat, title, cid, twoWay ? 1 : 0, kind);
   return cid;
 }
@@ -189,7 +186,8 @@ function createMirror(uid, meName, tgChat, title, kind, twoWay) {
 bridge.put('/bridge/chats', async (req, res) => {
   guard(req);
   const o = mine(req);
-  if (!req.user.is_admin && (req.body?.auto_private !== undefined || (Array.isArray(req.body?.chats) && req.body.chats.some((c) => c?.kind === 'user')))) throw new HttpError(403, 'admin_only');
+  // an ordinary person may switch "answer from here" for a personal chat, but cannot stop copying it or switch the default off
+  if (!req.user.is_admin && (req.body?.auto_private !== undefined || (Array.isArray(req.body?.chats) && req.body.chats.some((c) => c?.kind === 'user' && c.remove)))) throw new HttpError(403, 'admin_only');
   if (req.body?.auto_private !== undefined) {
     const on = req.body.auto_private ? 1 : 0;
     q.run('UPDATE tg_bridge SET auto_private = ? WHERE user_id = ?', on, req.user.id);
@@ -305,6 +303,54 @@ bridgeAdmin.put('/:uid/personal', async (req, res) => {
 const same = (a, b) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 const syncTimers = new Map();
 
+const tgNum = (key) => Number(String(key || '').split(':').pop());
+
+/** The message was edited in Telegram. */
+function applyEdit(uid, b) {
+  const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(b.tg_chat ?? ''));
+  if (!row) return { ok: true, skipped: true };
+  const m = q.get('SELECT * FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${Number(b.tg_msg)}`);
+  const text = String(b.text ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
+  if (!m || !text.trim() || m.text === text) return { ok: true, skipped: true };
+  q.run('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?', text, Math.min(Number(b.ts) || now(), now()), m.id);
+  emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(m.id)) });
+  return { ok: true, id: m.id };
+}
+
+/** Messages deleted in Telegram: kept here (nothing is ever removed by itself) but marked. For personal chats Telegram does not say which chat. */
+function applyDeleted(uid, b) {
+  const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
+  let n = 0;
+  for (const id of ids) {
+    const rows = b.tg_chat
+      ? q.all('SELECT m.* FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = ? AND m.import_key = ?', uid, `tg:${b.tg_chat}:${id}`)
+      : q.all("SELECT m.* FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = ? AND c.kind != 'channel' AND m.import_key LIKE ?", uid, `tg:%:${id}`);
+    for (const m of rows) {
+      if (m.tg_deleted) continue;
+      q.run('UPDATE messages SET tg_deleted = 1 WHERE id = ?', m.id);
+      emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(m.id)) });
+      n += 1;
+    }
+  }
+  return { ok: true, marked: n };
+}
+
+/** The owner read the chat in Telegram: it is read here too. */
+function applyRead(uid, b) {
+  const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(b.tg_chat ?? ''));
+  const max = Number(b.max_id);
+  if (!row || !Number.isInteger(max)) return { ok: true, skipped: true };
+  const prefix = `tg:${row.tg_chat}:`;
+  const last = q.get('SELECT MAX(id) AS id FROM messages WHERE chat_id = ? AND import_key LIKE ? AND CAST(substr(import_key, ?) AS INTEGER) <= ?', row.chat_id, `${prefix}%`, prefix.length + 1, max)?.id;
+  if (!last) return { ok: true, skipped: true };
+  const before = q.get('SELECT last_read_id AS r FROM members WHERE chat_id = ? AND user_id = ?', row.chat_id, uid)?.r ?? 0;
+  if (last <= before) return { ok: true };
+  q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?) WHERE chat_id = ? AND user_id = ?', last, last, row.chat_id, uid);
+  emit([uid], { type: EVENTS.READ, chat_id: row.chat_id, user_id: uid, message_id: last, at: now() });
+  refreshChat(uid, row.chat_id);
+  return { ok: true };
+}
+
 /** One Telegram message (text, or a file with its caption). Dedupes by (chat, key); quiet: nothing is pushed, the chats are muted. */
 function deliver(b, file = null) {
   const uid = Number(b.owner);
@@ -314,6 +360,9 @@ function deliver(b, file = null) {
     for (const c of chatsOf(uid)) refreshChat(uid, c.chat_id);
     return { ok: true };
   }
+  if (b.edit) return applyEdit(uid, b);
+  if (b.deleted) return applyDeleted(uid, b);
+  if (b.read) return applyRead(uid, b);
   const tgChat = String(b.tg_chat ?? '');
   if (!/^-?\d{1,20}$/.test(tgChat)) return { ok: true, skipped: true };
   const text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
@@ -323,7 +372,7 @@ function deliver(b, file = null) {
     // a personal chat that is not mirrored yet: created now, unless the owner removed it or switched the default off
     if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return { ok: true, skipped: true };
     const title = String(b.title || b.author || tgChat).replace(/[\u0000-\u001f]/g, '').slice(0, 60);
-    createMirror(uid, o.tg_name, tgChat, title, 'user', false);
+    createMirror(uid, o.tg_name, tgChat, title, 'user', true);
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
   const key = `tg:${row.tg_chat}:${int(b.tg_msg, 'tg_msg')}`;
@@ -415,4 +464,28 @@ export function bridgeOut(chat, messageId, text, replyKey) {
 /** An account that is being deleted must not leave a live Telegram session behind. */
 export function bridgeCleanup(userId) {
   if (link(userId)) call('POST', '/logout', userId).catch((e) => log('warn', 'bridge cleanup failed', { err: e.code || e.message }));
+}
+
+// ------------------------------------------------------------------ keeping both sides equal
+/** Read here → read in Telegram too (only in chats that may be answered from here: reading there is visible to the other person). */
+export function bridgeRead(chatId, upToLocalId) {
+  const row = q.get('SELECT * FROM tg_chats WHERE chat_id = ? AND two_way = 1', chatId);
+  if (!row) return;
+  const m = q.get("SELECT import_key FROM messages WHERE chat_id = ? AND id <= ? AND import_key LIKE 'tg:%' ORDER BY id DESC LIMIT 1", chatId, upToLocalId);
+  const tgId = m ? tgNum(m.import_key) : 0;
+  if (!tgId) return;
+  call('POST', '/read', row.user_id, { chat: row.tg_chat, max_id: tgId }).catch(() => { /* the next read tries again */ });
+}
+
+/** In a mirrored chat an ordinary person cannot delete, clear, leave or edit: the copy is an archive kept in step with Telegram. */
+export const bridgeLocked = (chatId, user) => !user.is_admin && !!q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ?', chatId);
+
+/** After a restart (and every half hour) tell the bridge the rules again, so both sides never drift apart. */
+export function startBridge() {
+  const run = async () => {
+    if (!bridgeConfigured()) return;
+    for (const o of q.all('SELECT user_id FROM tg_bridge')) { try { await pushRules(o.user_id); } catch { /* the bridge is not up yet */ } }
+  };
+  setTimeout(run, 20_000).unref();
+  setInterval(run, 30 * 60_000).unref();
 }

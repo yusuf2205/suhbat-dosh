@@ -1062,7 +1062,7 @@ function renderMessages() {
       want.push(keyed('unread', () => h('div', { class: 'unread-div', role: 'separator' }, t('chat.new_messages'))));
       dividerDone = true;
     }
-    const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
+    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
       m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
@@ -1161,6 +1161,7 @@ function buildMessage(m, c) {
       }, `${emoji} ${ids.length}`))));
   }
   const status = mine ? h('span', { class: 'tick' }) : null;
+  if (m.tg_deleted) bubble.append(h('div', { class: 'tg-gone' }, `\u{1F5D1} ${t('br.deleted_in_tg')}`));
   bubble.append(h('div', { class: 'meta' }, m.edited_at ? h('span', null, t('chat.edited')) : null, h('span', null, fmtTime(m.created_at)), status));
   if (m.failed) {
     bubble.append(h('button', { class: 'btn link', type: 'button', onclick: () => retryFailed(m) }, t('msg.failed')));
@@ -1369,6 +1370,9 @@ function retryFailed(m) {
   void c;
 }
 
+/** A copy of a Telegram chat: an ordinary person cannot delete, clear, leave or edit in it (it is kept in step with Telegram). */
+const lockedChat = (c) => c?.imported === 'tgbridge' && !S.me.is_admin;
+
 function messageMenu(anchor, m) {
   const c = activeChat();
   const mine = m.sender_id === S.me.id;
@@ -1417,7 +1421,7 @@ function messageMenu(anchor, m) {
     items.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
-  if (mine && c.can_post && (m.kind === 'text' || m.file)) {
+  if (mine && c.can_post && !lockedChat(c) && (m.kind === 'text' || m.file)) {
     items.push({
       label: t('msg.edit'), onClick: () => {
         editing = m;
@@ -1439,7 +1443,7 @@ function messageMenu(anchor, m) {
       onClick: () => api('POST', `/api/chats/${c.id}/pin`, pinned ? { message_id: m.id, unpin: true } : { message_id: m.id }).catch((e) => toast(errText(e.code))),
     });
   }
-  if (mine || (c.type !== 'direct' && adminLike)) {
+  if ((mine || (c.type !== 'direct' && adminLike)) && !lockedChat(c)) {
     // right under the reactions / reply / copy rows, so it is visible without scrolling the menu
     items.splice(Math.min(items.length, 3), 0, {
       label: t('msg.delete'), danger: true, onClick: async () => {
@@ -1574,7 +1578,7 @@ function renderSelBar() {
   const c = activeChat();
   const msgs = selectedMessages();
   const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
-  const canDelete = msgs.length > 0 && msgs.every((m) => m.sender_id === S.me.id || (c.type !== 'direct' && adminLike));
+  const canDelete = !lockedChat(c) && msgs.length > 0 && msgs.every((m) => m.sender_id === S.me.id || (c.type !== 'direct' && adminLike));
   view.selbar = h('div', { class: 'selbar' },
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.cancel'), onclick: exitSelect }, icon('close', 22)),
     h('b', { class: 'grow' }, t('sel.count', { n: selected.size })),
@@ -1639,11 +1643,11 @@ function chatMoreMenu(anchor) {
     { label: t('chat.select_msgs'), onClick: () => enterSelect(null) },
     { label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
     { label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) },
-    { label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) },
+    ...(lockedChat(c) ? [] : [{ label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) }]),
   ];
   if (isSecret(c)) items.unshift({ label: t('secret.title'), onClick: () => showSecretInfo(c) });
   else if (c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot) items.splice(1, 0, { label: t('secret.start'), onClick: () => startSecretChat(c.peer.id) });
-  if (c.type === 'direct' && !c.saved) items.push({ label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
+  if (c.type === 'direct' && !c.saved && !lockedChat(c)) items.push({ label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
   popMenu(anchor, items);
 }
 

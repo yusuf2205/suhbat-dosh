@@ -5,6 +5,7 @@ import { q, tx } from './db.js';
 import { EVENTS, LIMITS } from '../../shared/contracts.js';
 import { HttpError, int, now, rateLimit, rid, str } from './util.js';
 import { emit } from './realtime.js';
+import { bridgeRead } from './bridge.js';
 import {
   audit, chatOut, getMessage, getUser, isAdmin, memberIds, membership, messageOut, publicUser, requireMember,
 } from './service.js';
@@ -55,6 +56,7 @@ extras.post('/chats/:id/read', (req, res) => {
     if (Math.random() < 0.02) q.run('DELETE FROM read_log WHERE at < ?', now() - 90 * 86400_000);
   }
   emit(memberIds(id), { type: EVENTS.READ, chat_id: id, user_id: req.user.id, message_id: m.last_read_id, at: now() });
+  if (m.last_read_id > before.last_read_id) bridgeRead(id, m.last_read_id);
   res.json({ ok: true, last_read_id: m.last_read_id });
 });
 

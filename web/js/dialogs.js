@@ -208,7 +208,7 @@ export async function renderInfo(m, chatId) {
       }
       nodes.push(h('h3', null, `${t('info.members')} (${members.filter((x) => !x.banned).length})`));
       for (const mem of members) nodes.push(memberRow(chat, mem, draw));
-      nodes.push(h('div', { style: { marginTop: '16px' } }, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+      if (!(chat.imported === 'tgbridge' && !S.me.is_admin)) nodes.push(h('div', { style: { marginTop: '16px' } }, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
         if (!(await confirmDialog(t('info.leave_confirm'), { okLabel: t('info.leave'), danger: true }))) return;
         await api('DELETE', `/api/chats/${chat.id}/members/${S.me.id}`).catch(fail);
         S.chats.delete(chat.id);

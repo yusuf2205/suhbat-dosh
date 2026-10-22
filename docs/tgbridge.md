@@ -10,9 +10,14 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
 * **What is copied:** every personal (one-to-one) chat, **by default**, including the recent history (up to 150 messages per chat, once).
   Groups and channels only when the owner picks them. Never copied: Telegram's service chat (it carries login codes), bots, Saved Messages,
   secret chats (Telegram does not expose them to this kind of client).
-* **Ordinary people do not see their personal copies.** For a person who is not an administrator the personal chats are copied for the administrator only:
-  they are not shown in that person's chat list or settings, and only the administrator can switch the copying off or stop it for one chat (admin panel). The person
-  is told this before linking, sees how many personal chats are copied, and keeps full control of groups and channels and of disconnecting.
+* **Personal chats are shown to their owner and can be answered from here** (text; it goes to Telegram from the owner's account).
+  An ordinary person cannot delete, clear, leave or edit them, and cannot stop the copying: only the administrator can
+  (admin panel → *Мост с Телеграмом*: "Личные чаты: копируются / не копируются"). The person can still switch "answer from here" off per chat
+  and fully controls the groups and channels they chose. The person is told all this before linking.
+* **Kept in step with Telegram:** new messages arrive at once; edits change the text here; what is deleted in Telegram stays here marked
+  "Удалено в Телеграме" (nothing is removed by itself); reading in Telegram marks the chat read here, and reading here marks it read in Telegram
+  (only in chats that may be answered from here: a read mark is visible to the other person). After a restart the bridge catches up on what it missed,
+  and every 15 minutes it re-checks the newest messages of every personal chat.
 * **Quiet:** the mirrored chats are muted and the bridge never triggers a push notification. History arrives already read.
 * **Read-only by default.** A chat can be answered from here only after "Answer from here" is switched on for it (text only).
 * **Copies are never deleted automatically.** They go only when the owner disconnects and chooses to delete them, or deletes their account.

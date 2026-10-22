@@ -193,7 +193,7 @@ function chatMenu(anchor, c) {
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
     { label: t('ctx.info'), onClick: () => openInfo(c.id) },
-    ...(c.saved ? [] : [{ label: c.type === 'direct' ? t('chat.delete') : t('info.leave'), danger: true, onClick: () => removeChat(c) }]),
+    ...(c.saved || (c.imported === 'tgbridge' && !S.me.is_admin) ? [] : [{ label: c.type === 'direct' ? t('chat.delete') : t('info.leave'), danger: true, onClick: () => removeChat(c) }]),
   ]);
 }
 
