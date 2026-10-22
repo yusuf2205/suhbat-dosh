@@ -244,6 +244,51 @@ function applyDynamicStyles() {
   document.querySelectorAll('.sw[data-c]').forEach((el) => { el.style.background = el.dataset.c; });
 }
 
+const ago = (ts) => {
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 60 ? `${m} мин назад` : m < 2880 ? `${Math.round(m / 60)} ч назад` : `${Math.round(m / 1440)} дн. назад`;
+};
+const upFor = (sec) => (sec < 3600 ? `${Math.round(sec / 60)} мин` : sec < 172800 ? `${Math.round(sec / 3600)} ч` : `${Math.round(sec / 86400)} дн.`);
+
+/** The dark top card: greeting, the three numbers that matter now, and the date. */
+function heroCard(o, st) {
+  const hr = new Date().getHours();
+  const hello = hr < 5 ? 'Доброй ночи' : hr < 12 ? 'Доброе утро' : hr < 18 ? 'Добрый день' : 'Добрый вечер';
+  const big = (v, l) => h('div', { class: 'hero-num' }, h('b', null, String(v)), h('span', null, l));
+  return h('section', { class: 'adm-hero' },
+    h('div', { class: 'hero-text' }, h('span', { class: 'hero-hi' }, hello), h('h2', null, 'Вот что происходит на сервере'),
+      h('span', { class: 'hero-date' }, new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }))),
+    h('div', { class: 'hero-nums' }, big(st.online, 'в сети сейчас'), big(o.messages_24h, 'сообщений за сутки'), big(`+${o.new_users_7d}`, 'новых за неделю')));
+}
+
+/** What needs a look (only real problems are highlighted) and which parts of the server are running. */
+function attentionPanels(o) {
+  const a = o.attention;
+  const items = [];
+  const add = (tone, ico, text, hint, go) => items.push(h('button', { class: `att-row ${tone}`, type: 'button', onclick: go }, h('span', { class: 'att-ico' }, icon(ico, 18)), h('span', { class: 'att-text' }, h('b', null, text), hint ? h('small', null, hint) : null), icon('chevron', 16)));
+  if (a.reports_open) add('warn', 'shield', `Жалоб без ответа: ${a.reports_open}`, 'Нужно посмотреть и решить', () => setTab('reports'));
+  const diskPct = a.disk_total ? Math.round((a.disk_free / a.disk_total) * 100) : 100;
+  if (diskPct < 15) add('bad', 'disk', `Мало места: свободно ${diskPct}%`, `${fmtBytes(a.disk_free)} из ${fmtBytes(a.disk_total)}`, () => setTab('server'));
+  if (!a.last_backup_at) add('bad', 'disk', 'Резервных копий нет', 'Сделайте первую копию', () => setTab('server'));
+  else if (Date.now() - a.last_backup_at > 2 * 86400_000) add('warn', 'disk', 'Давно не было резервной копии', ago(a.last_backup_at), () => setTab('server'));
+  if (a.failed_logins_24h >= 10) add('warn', 'lock', `Неудачных входов за сутки: ${a.failed_logins_24h}`, 'Возможен подбор пароля', () => { state.preset = { action: 'auth.login_failed' }; setTab('journal'); });
+  if (a.banned) add('info', 'block', `Заблокировано аккаунтов: ${a.banned}`, null, () => setTab('users'));
+  if (o.registration === 'open') add('info', 'users', 'Регистрация открыта для всех', 'Можно ограничить по приглашениям', () => setTab('access'));
+  const ok = !items.some((x) => /warn|bad/.test(x.className));
+  const svc = (name, on, hint) => h('div', { class: 'svc' }, h('span', { class: `svc-dot ${on ? 'on' : 'off'}` }), h('span', null, name), h('small', { class: 'muted' }, on ? 'работает' : hint));
+  const bar = (label, v) => h('div', { class: 'mtr' }, h('span', null, label), h('i', null, h('u', { dataset: { w: String(Math.min(100, Math.round(v))) } })), h('b', null, `${Math.round(v)}%`));
+  return h('div', { class: 'row-2 even' },
+    h('section', { class: 'panel' },
+      h('div', { class: 'panel-head' }, h('h2', null, 'Требует внимания'), h('span', { class: `att-badge ${ok ? 'ok' : 'warn'}` }, ok ? 'всё в порядке' : 'есть что проверить')),
+      items.length ? h('div', { class: 'att-list' }, items) : h('p', { class: 'muted' }, 'Жалоб, проблем с диском и копиями нет.')),
+    h('section', { class: 'panel' },
+      h('div', { class: 'panel-head' }, h('h2', null, 'Службы и нагрузка'), h('span', { class: 'muted' }, `работает ${upFor(a.uptime)}`)),
+      h('div', { class: 'svc-grid' },
+        svc('Звонки (TURN)', a.services.calls, 'не настроено'), svc('Расшифровка речи', a.services.speech, 'выключена'),
+        svc('Перевод', a.services.translate, 'выключен'), svc('Поиск по смыслу', a.services.search, 'выключен')),
+      h('div', { class: 'mtrs' }, bar('Процессор', a.cpu), bar('Память', a.mem), bar('Диск занят', 100 - diskPct))));
+}
+
 async function viewOverview() {
   const tz = -new Date().getTimezoneOffset();
   const [o, st, , ev] = await Promise.all([get('/api/admin/overview'), get(`/api/admin/stats?tz=${tz}&days=14`), loadDirectories(), get('/api/admin/audit?limit=12')]);
@@ -275,6 +320,8 @@ async function viewOverview() {
 
   const today = st.series.messages[st.series.messages.length - 1];
   setView(
+    heroCard(o, st),
+    attentionPanels(o),
     h('div', { class: 'kpis' },
       kpi('users', 'tone-gold', o.users, 'Пользователи', `+${o.new_users_7d} за 7 дней`, () => setTab('users')),
       kpi('bolt', 'tone-green', st.online, 'В сети сейчас', `${o.active_sessions} активных сессий`, () => { state.preset = { onlineOnly: true }; setTab('users'); }),

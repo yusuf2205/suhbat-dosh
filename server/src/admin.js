@@ -11,6 +11,9 @@ import { REGISTRATION_MODES, createInvite, getSetting, registrationMode, setSett
 import { broadcast } from './notify.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
+import { transcriberReady } from './transcribe.js';
+import { translatorReady } from './translate.js';
+import { embedderReady } from './semantic.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
@@ -51,6 +54,23 @@ admin.get('/overview', (_req, res) => {
     messages_24h: q.get('SELECT COUNT(*) n FROM messages WHERE created_at > ?', day).n,
     events_24h: q.get('SELECT COUNT(*) n FROM audit_log WHERE ts > ?', day).n,
     new_users_7d: q.get('SELECT COUNT(*) n FROM users WHERE created_at > ?', Date.now() - 7 * 86400_000).n,
+    // what needs a look, and which parts of the server are running
+    attention: (() => {
+      const sys = systemSnapshot().now;
+      const last = listBackups()[0];
+      return {
+        reports_open: n("SELECT COUNT(*) n FROM reports WHERE status = 'open'"),
+        banned: n('SELECT COUNT(*) n FROM users WHERE banned_at IS NOT NULL'),
+        failed_logins_24h: q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'auth.login_failed' AND ts > ?", day).n,
+        disk_free: sys.disk_free, disk_total: sys.disk_total, db_bytes: sys.db_bytes,
+        last_backup_at: last ? last.created_at : null,
+        uptime: sys.uptime, cpu: sys.cpu, mem: sys.mem,
+        services: {
+          calls: !!sys.turn?.configured, speech: transcriberReady(), translate: translatorReady(), search: embedderReady(),
+        },
+      };
+    })(),
+    registration: registrationMode(),
   });
 });
 
