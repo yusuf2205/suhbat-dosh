@@ -19,6 +19,7 @@ let listEl;
 let netEl;
 let searchInput;
 let titleEl;
+let greetEl;
 let tabsEl;
 let recentEl;
 let wired = false;
@@ -68,13 +69,17 @@ export function mount(sidebar) {
   const nav = h('nav', { class: 'bottomnav', 'aria-label': t('app.name') },
     navBtn('chat', t('nav.messages'), () => setView('chats'), 'chats'),
     navBtn('phone', t('nav.calls'), () => setView('calls'), 'calls'),
+    h('button', { type: 'button', class: 'nb-plus', 'aria-label': t('menu.new_chat'), 'aria-haspopup': 'menu', onclick: (e) => composeMenu(e.currentTarget) }, icon('plus', 26)),
     navBtn('users', t('nav.contacts'), () => setView('contacts'), 'contacts'),
     navBtn('settings', t('nav.settings'), openSettings));
 
+  greetEl = h('div', { class: 'greet' }, h('span', { class: 'greet-hi' }), h('b', { class: 'greet-main' }), h('span', { class: 'greet-sub' }));
+  const searchBox = h('div', { class: 'search' }, icon('search', 18), searchInput);
   clear(el).append(
+    h('div', { class: 'hero' },
     h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), searchBtn, composeBtn),
-    h('div', { class: 'search' }, icon('search', 18), searchInput),
-    storiesBar(), tabsEl, netEl, listEl, nav, fab,
+    greetEl, searchBox, storiesBar()),
+    tabsEl, netEl, listEl, nav, fab,
   );
 
   if (!wired) {
@@ -256,6 +261,13 @@ export function render() {
   if (!listEl) return;
   const view = S.view;
   titleEl.textContent = t(view === 'contacts' ? 'nav.contacts' : view === 'archive' ? 'nav.archive' : view === 'calls' ? 'nav.calls' : 'nav.messages');
+  if (greetEl) {
+    const hr = new Date().getHours();
+    const unread = [...S.chats.values()].reduce((a, c) => a + (isMuted(c) || c.archived ? 0 : c.unread), 0);
+    greetEl.querySelector('.greet-hi').textContent = t(hr < 5 ? 'greet.night' : hr < 12 ? 'greet.morning' : hr < 18 ? 'greet.day' : 'greet.evening');
+    greetEl.querySelector('.greet-main').textContent = (S.me?.name || '').split(' ')[0];
+    greetEl.querySelector('.greet-sub').textContent = unread ? t('greet.unread', { n: unread }) : t('greet.clear');
+  }
   const ph = t(view === 'contacts' ? 'search.people' : 'search.chats');
   searchInput.placeholder = ph;
   searchInput.setAttribute('aria-label', ph);

@@ -102,10 +102,15 @@ function openMore() {
 
 function render() {
   if (!el) return;
+  const wide = !!S.prefs.railWide;
+  el.classList.toggle('wide', wide);
+  el.closest('.app')?.classList.toggle('rail-wide', wide);
   const savedActive = S.active && S.chats.get(S.active)?.saved;
   const pinned = tools().filter((x) => pins().includes(x.id) && x.id !== 'settings');
   clear(el).append(
-    h('div', { class: 'rail-brand', title: 'Suhbat-dosh' }, h('img', { class: 'brand-logo', src: '/icon.svg?v=2', alt: '', width: 48, height: 48 }), h('span', { class: 'brand-name' }, 'Suhbat-dosh')),
+    h('div', { class: 'rail-brand', title: 'Suhbat-dosh' }, h('img', { class: 'brand-logo', src: '/icon.svg?v=2', alt: '', width: 48, height: 48 }), h('span', { class: 'brand-name' }, 'Suhbat-dosh'),
+      h('button', { class: 'rail-toggle', type: 'button', 'aria-label': wide ? t('nav.collapse') : t('nav.expand'), title: wide ? t('nav.collapse') : t('nav.expand'), 'aria-expanded': String(wide),
+        onclick: () => { S.prefs.railWide = !S.prefs.railWide; savePrefs(); render(); } }, icon('chevron', 18))),
     h('nav', { class: 'rail-nav', 'aria-label': t('app.name') },
       item('messages', 'chat', t('nav.messages'), { active: S.view === 'chats' && !savedActive, onclick: () => setView('chats') }),
       item('contacts', 'users', t('nav.contacts'), { active: S.view === 'contacts', onclick: () => setView('contacts') }),
@@ -116,7 +121,8 @@ function render() {
       h('div', { class: 'rail-sep', role: 'separator' }),
       item('more', 'apps', t('nav.more'), { onclick: openMore, active: tools().some((x) => x.active && x.id !== 'archive' && !pins().includes(x.id)) })),
     h('button', { class: 'rail-me', type: 'button', 'aria-label': S.me?.name || t('nav.settings'), onclick: openSettings },
-      avatar({ ...S.me, online: true }, '')),
+      avatar({ ...S.me, online: true }, ''),
+      h('span', { class: 'rail-me-text' }, h('b', null, S.me?.name || ''), h('small', null, S.me?.username ? `@${S.me.username}` : ''))),
   );
   renderBadge();
 }
