@@ -5,8 +5,9 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
 
 ## How it behaves
 
-* **Who may link:** administrators always; everybody else only if an administrator allowed them (admin panel → *Доступ и рассылка* → *Мост с Телеграмом*).
-  Several accounts can be linked side by side, each person has their own. Taking the permission away disconnects that person's session at once.
+* **Who may link:** everybody, each their own Telegram (several accounts side by side, nothing is shared between people).
+  The administrator can forbid a person or remove what they linked (admin panel → *Доступ и рассылка* → *Мост с Телеграмом*): "Запретить" ends that
+  person's session at once and keeps the copies; "Удалить" ends it and deletes all the mirrored chats.
 * **What is copied:** every personal (one-to-one) chat, **by default**, including the recent history (up to 150 messages per chat, once).
   Groups and channels only when the owner picks them. Never copied: Telegram's service chat (it carries login codes), bots, Saved Messages,
   secret chats (Telegram does not expose them to this kind of client).

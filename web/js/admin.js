@@ -545,17 +545,23 @@ function bridgePanel(data) {
       ? [h('span', { class: 'pill ok' }, 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
           h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются')]
       : h('span', { class: 'muted' }, 'не подключён')),
-    h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : h('button', {
-      class: `btn ${u.allowed ? 'danger' : 'secondary'}`, type: 'button',
+    h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {
+      class: `btn ${u.allowed ? 'secondary' : 'danger'}`, type: 'button',
       onclick: async () => {
         if (u.allowed && u.linked && !confirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`)) return;
         try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
       },
-    }, u.allowed ? 'Запретить' : 'Разрешить')))));
+    }, u.allowed ? 'Запретить' : 'Разрешить'), u.linked ? [' ', h('button', {
+      class: 'btn danger', type: 'button', title: 'Отключить Телеграм этого человека и удалить скопированные чаты',
+      onclick: async () => {
+        if (!confirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`)) return;
+        try { await send('DELETE', `/api/admin/bridge/${u.id}`); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
+      },
+    }, 'Удалить')] : '']))));
   draw(data.users);
   return h('div', { class: 'panel' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'),
     h('p', { class: 'muted' }, data.configured
-      ? 'Кому разрешено подключить свой Телеграм к мессенджеру. Все личные чаты такого человека копируются сюда тихо, без уведомлений; человек видит их и может отвечать из приложения, но не может их удалять, очищать или остановить копирование: это можете только вы. Вы видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
+      ? 'Подключить свой Телеграм может любой пользователь, пока вы не запретите. «Запретить» отключает его Телеграм (копии остаются), «Удалить» отключает и стирает все скопированные чаты. Все личные чаты такого человека копируются сюда тихо, без уведомлений; человек видит их и может отвечать из приложения, но не может их удалять, очищать или остановить копирование: это можете только вы. Вы видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
       : 'Мост не включён на сервере: нужны BRIDGE_TOKEN и контейнер tgbridge (см. docs/tgbridge.md).'),
     data.configured ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Пользователь', 'Телеграм', 'Доступ'].map((x) => h('th', null, x)))), body)) : null);
 }

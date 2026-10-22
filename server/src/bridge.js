@@ -1,5 +1,5 @@
 // Bridge to Telegram accounts. The Telegram sessions live in a separate container (tgbridge); this file is the part inside the server:
-// who may link (the administrator decides), which chats are mirrored, and where incoming messages land.
+// who may link (everybody, unless the administrator forbids it for a person), which chats are mirrored, and where incoming messages land.
 //  * every personal (one-to-one) chat is mirrored by default, quietly: the mirrored chats are muted and never push a notification;
 //  * groups and channels only when the owner picks them;
 //  * a chat is read-only here unless "answer from here" is on for it;
@@ -52,8 +52,8 @@ async function call(method, path, uid, body) {
   return j;
 }
 
-/** The administrator decides who may link an account. Administrators themselves may always. */
-const allowedUser = (u) => !!u.is_admin || !!q.get('SELECT 1 AS x FROM tg_allowed WHERE user_id = ?', u.id);
+/** Everybody may link their own Telegram; the administrator can forbid it for a person. Administrators themselves always may. */
+const allowedUser = (u) => !!u.is_admin || !q.get('SELECT 1 AS x FROM tg_denied WHERE user_id = ?', u.id);
 const mayUse = (u) => bridgeConfigured() && allowedUser(u);
 const link = (uid) => q.get('SELECT * FROM tg_bridge WHERE user_id = ?', uid);
 
@@ -248,16 +248,16 @@ bridge.post('/bridge/disconnect', async (req, res) => {
 // ------------------------------------------------------------------ the administrator decides who may link
 bridgeAdmin.get('/', (req, res) => {
   const rows = q.all(
-    `SELECT u.id, u.name, u.username, u.is_admin, a.at AS allowed_at, b.user_id AS linked_id, b.tg_name, b.tg_username, b.auto_private,
+    `SELECT u.id, u.name, u.username, u.is_admin, a.at AS denied_at, b.user_id AS linked_id, b.tg_name, b.tg_username, b.auto_private,
             (SELECT COUNT(*) FROM tg_chats c WHERE c.user_id = u.id) AS chats,
             (SELECT COUNT(*) FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = u.id) AS messages
-     FROM users u LEFT JOIN tg_allowed a ON a.user_id = u.id LEFT JOIN tg_bridge b ON b.user_id = u.id
-     WHERE u.is_bot = 0 AND u.banned_at IS NULL ORDER BY (b.user_id IS NULL), (a.user_id IS NULL), u.name LIMIT 500`,
+     FROM users u LEFT JOIN tg_denied a ON a.user_id = u.id LEFT JOIN tg_bridge b ON b.user_id = u.id
+     WHERE u.is_bot = 0 AND u.banned_at IS NULL ORDER BY (b.user_id IS NULL), (a.user_id IS NOT NULL) DESC, u.name LIMIT 500`,
   );
   res.json({
     configured: bridgeConfigured(),
     users: rows.map((r) => ({
-      id: r.id, name: r.name, username: r.username, is_admin: !!r.is_admin, allowed: !!r.is_admin || !!r.allowed_at,
+      id: r.id, name: r.name, username: r.username, is_admin: !!r.is_admin, allowed: !!r.is_admin || !r.denied_at,
       linked: !!r.linked_id, tg_name: r.tg_name || '', tg_username: r.tg_username || '', auto_private: !!r.auto_private, chats: r.chats, messages: r.messages,
     })),
   });
@@ -269,12 +269,23 @@ bridgeAdmin.put('/:uid', async (req, res) => {
   if (!u) throw new HttpError(404, 'not_found');
   if (u.is_admin) throw new HttpError(400, 'invalid_input'); // administrators always may
   if (req.body?.allowed) {
-    q.run('INSERT INTO tg_allowed (user_id, by_id, at) VALUES (?,?,?) ON CONFLICT(user_id) DO NOTHING', uid, req.user.id, now());
+    q.run('DELETE FROM tg_denied WHERE user_id = ?', uid);
   } else {
-    q.run('DELETE FROM tg_allowed WHERE user_id = ?', uid);
-    if (link(uid)) await disconnectUser(uid, false, req.user.id); // no permission, no live session; the copies stay
+    q.run('INSERT INTO tg_denied (user_id, by_id, at) VALUES (?,?,?) ON CONFLICT(user_id) DO NOTHING', uid, req.user.id, now());
+    if (link(uid)) await disconnectUser(uid, false, req.user.id); // forbidden: no live session; the copies stay
   }
   audit(req.user.id, 'bridge.permission', { target_type: 'user', target_id: uid, details: { allowed: !!req.body?.allowed } });
+  res.json({ ok: true });
+});
+
+/** Remove what a person linked: the Telegram session ends and the mirrored chats are deleted (the permission itself is not changed). */
+bridgeAdmin.delete('/:uid', async (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  if (!getUser(uid)) throw new HttpError(404, 'not_found');
+  if (!link(uid) && !q.get('SELECT 1 AS x FROM tg_chats WHERE user_id = ?', uid)) throw new HttpError(404, 'not_linked');
+  await disconnectUser(uid, true, req.user.id);
+  // also the copies that stayed from an earlier link (after "Запретить" the chats are kept, without a link)
+  for (const c of q.all("SELECT id FROM chats WHERE imported_from = 'tgbridge' AND owner_id = ?", uid)) { q.run('DELETE FROM chats WHERE id = ?', c.id); emit([uid], { type: EVENTS.CHAT_REMOVE, chat_id: c.id }); }
   res.json({ ok: true });
 });
 

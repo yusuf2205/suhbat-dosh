@@ -66,15 +66,17 @@ test('the bridge door needs the secret; only people the administrator allowed ma
   assert.equal((await call('', 'POST', '/api/bridge/in', { owner: 1, tg_chat: '1', tg_msg: 1, text: 'x' })).status, 403, 'no secret');
   assert.equal((await call('', 'POST', '/api/bridge/in', { owner: 1, tg_chat: '1', tg_msg: 1, text: 'x' }, { Authorization: 'Bearer wrong' })).status, 403);
   assert.equal((await fetch(`http://127.0.0.1:${BPORT}/dialogs?u=1`)).status, 403, 'the bridge itself refuses calls without the secret');
-  assert.equal((await call(friend.cookie, 'POST', '/api/bridge/start')).status, 403);
-  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, false);
+  // everybody may link their own Telegram ...
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, true);
   assert.equal((await call(admin.cookie, 'GET', '/api/bridge')).data.available, true);
-  // only an administrator can allow; a plain user cannot
-  assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: true })).status, 403);
+  // ... and only an administrator can forbid it for a person
+  assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: false })).status, 403);
+  assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: false })).status, 200);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, false);
+  assert.equal((await call(friend.cookie, 'POST', '/api/bridge/start')).status, 403);
+  assert.equal((await call(admin.cookie, 'GET', '/api/admin/bridge')).data.users.find((x) => x.id === friend.user.id).allowed, false);
   assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: true })).status, 200);
   assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, true);
-  const list = (await call(admin.cookie, 'GET', '/api/admin/bridge')).data;
-  assert.equal(list.users.find((x) => x.id === friend.user.id).allowed, true);
 });
 
 test('personal chats are mirrored by default and quietly, history comes along, groups only when chosen', { skip: !havePy }, async () => {
@@ -187,12 +189,22 @@ test('an ordinary person sees and answers the personal chats but cannot delete t
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(((await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || []).some((c) => c.owner?.id === friend.user.id && c.title.includes('Новый')), false);
   await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}/personal`, { auto_private: true });
-  // revoking the permission ends that person's session at once; the copies stay
+  // forbidding ends that person's session at once; the copies stay
   assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: false })).status, 200);
   assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.linked, false);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, false);
   assert.ok(((await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || []).some((c) => c.id === fchat.chat_id), 'the copies are kept');
   assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${friend.user.id}.`)), false, 'the session file of that person is gone');
   assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${admin.user.id}.`)), true, 'the other account is untouched');
+  // the administrator can also remove what was linked: the copies go too
+  assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: true })).status, 200);
+  await link(friend);
+  assert.ok(await until(async () => (await call(friend.cookie, 'GET', '/api/bridge')).data.chats.length >= 2));
+  assert.equal((await call(friend.cookie, 'DELETE', `/api/admin/bridge/${friend.user.id}`)).status, 403);
+  assert.equal((await call(admin.cookie, 'DELETE', `/api/admin/bridge/${friend.user.id}`)).status, 200);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.linked, false);
+  assert.equal(((await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || []).some((c) => c.owner?.id === friend.user.id), false, 'all the mirrored chats of that person are gone');
+  assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${friend.user.id}.`)), false);
 });
 
 test('both sides stay in step: edits, deletions marked not removed, read marks in both directions', { skip: !havePy }, async () => {
