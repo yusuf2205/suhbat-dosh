@@ -53,7 +53,7 @@ services:
     image: suhbat-tgbridge:latest
     profiles: ["tgbridge"]
     restart: unless-stopped
-    mem_limit: ${TGBRIDGE_MEM:-3g}   # about 150 MB plus 30-50 MB for every linked account: three gigabytes carry more than fifty
+    mem_limit: ${TGBRIDGE_MEM:-8g}   # about 150 MB plus 30-50 MB for every linked account; 8 GB is far more than dozens of accounts need
     env_file:
       - path: .env.bridge
         required: false

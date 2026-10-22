@@ -64,9 +64,10 @@ Every linked person is one permanent connection to Telegram inside the `tgbridge
 
 | Matter | How it is handled |
 | --- | --- |
-| Memory | About 150 MB for the service and 30-50 MB per account. The container is limited to 3 GB (`TGBRIDGE_MEM` in `.env`): fine for 50+ accounts. |
-| Load on Telegram | At most two history copies or light passes run at the same time, whatever the number of accounts; a restart reconnects accounts one by one, not all at once. |
-| Keeping in step | New messages come as events. Besides, each account is re-checked about every 15 minutes (a few accounts per half minute); the light pass looks only at chats with activity in the last 3 days. |
+| Memory | About 150 MB for the service and 30-50 MB per account. The container is limited to 8 GB (`TGBRIDGE_MEM` in `.env`): plenty for hundreds of accounts. |
+| Load on Telegram | Up to ten history copies or light passes run at the same time (`BRIDGE_HEAVY_JOBS`), each person's copy is paced on its own (about a chat every 0.6 s), so ten people can link at the same moment. A restart reconnects accounts one by one, not all at once. |
+| Speed | New messages, edits, deletions and read marks arrive as Telegram events, over one shared keep-alive connection to the server, with no queue shared between people (only messages of one chat keep their order). In a test with ten accounts getting twenty messages each at the same moment, a message was readable in the app after 13 ms (median), 95% within 30 ms. A message the server cannot take (it is restarting) is retried every 5 seconds. |
+| Keeping in step | New messages come as events. Besides, each account is re-checked about every 5 minutes as a safety net (a few accounts per half minute); the light pass looks only at chats with activity in the last 3 days. |
 | Telegram's limits | They apply per Telegram account (each person has their own) and per `api_id`. One `api_id` for a few dozen people is fine; a service with hundreds of accounts under one `api_id` risks being limited by Telegram. If that ever happens, register another application at my.telegram.org and give the bridge a second `api_id`. |
 | Who is connected | The administrator panel shows for every person whether the Telegram link is alive ("подключён" / "нет связи"). |
 | Ordinary people | Only their personal chats are copied. Groups and channels are for administrators, which also keeps the volume down. |

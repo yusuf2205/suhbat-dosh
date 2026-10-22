@@ -33,7 +33,7 @@ MOCK = os.environ.get("TGBRIDGE_MOCK") == "1"
 BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "150"))
 BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
 TELEGRAM_SERVICE = 777000
-HEAVY = asyncio.Semaphore(int(os.environ.get("BRIDGE_HEAVY_JOBS", "2")))   # history copies and light passes running at once
+HEAVY = asyncio.Semaphore(int(os.environ.get("BRIDGE_HEAVY_JOBS", "10")))   # history copies and light passes running at once
 RECENT_DAYS = 3        # the light pass looks only at chats with something new in the last days
 # media: photos and voice messages are copied; videos are prepared but OFF until BRIDGE_VIDEO=1
 MEDIA_MAX = int(os.environ.get("BRIDGE_MEDIA_MAX_MB", "25")) * 1024 * 1024
@@ -192,7 +192,6 @@ class Acct:
 
 
 ACCTS: dict = {}
-OUTBOX: deque = deque(maxlen=5000)
 
 
 def acct(uid) -> Acct:
@@ -205,23 +204,59 @@ def acct(uid) -> Acct:
 
 
 # ---------------------------------------------------------------- to the server
-async def to_server(payload):
-    """Hand one message to Suhbat-dosh. A short in-memory queue covers a server restart."""
-    OUTBOX.append(payload)
-    await flush_outbox()
+_HTTP = None
+RETRY: deque = deque(maxlen=20000)   # messages the server could not take yet (it was restarting)
+LOCKS: dict = {}
+
+
+def _http():
+    """One keep-alive connection pool for everything: no new connection (and no handshake) per message."""
+    global _HTTP
+    if _HTTP is None or _HTTP.closed:
+        from aiohttp import TCPConnector
+        _HTTP = ClientSession(timeout=ClientTimeout(total=15), connector=TCPConnector(limit=100, keepalive_timeout=60))
+    return _HTTP
+
+
+def chat_lock(uid, key):
+    """Messages of one chat reach the server in the order they came; different chats and different people never wait for each other."""
+    if len(LOCKS) > 20000:
+        for k in [k for k, v in LOCKS.items() if not v.locked()][:10000]:
+            LOCKS.pop(k, None)
+    return LOCKS.setdefault((str(uid), str(key)), asyncio.Lock())
+
+
+async def post_in(payload) -> bool:
+    try:
+        async with _http().post(f"{SERVER}/api/bridge/in", json=payload, headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+            return r.status < 500
+    except Exception:
+        return False
+
+
+async def to_server(payload, locked=False):
+    """Hand one message to Suhbat-dosh at once. If the server is not reachable the message waits in a queue and is sent again within seconds."""
+    if locked:
+        ok = await post_in(payload)
+    else:
+        async with chat_lock(payload.get("owner"), payload.get("tg_chat", "")):
+            ok = await post_in(payload)
+    if not ok:
+        RETRY.append(payload)
 
 
 async def flush_outbox():
-    async with ClientSession(timeout=ClientTimeout(total=10)) as http:
-        while OUTBOX:
-            item = OUTBOX[0]
-            try:
-                async with http.post(f"{SERVER}/api/bridge/in", json=item, headers={"Authorization": f"Bearer {TOKEN}"}) as r:
-                    if r.status >= 500:
-                        raise RuntimeError(r.status)
-            except Exception:
-                return  # try again later
-            OUTBOX.popleft()
+    while RETRY:
+        if not await post_in(RETRY[0]):
+            return
+        RETRY.popleft()
+
+
+async def retry_loop():
+    while True:
+        await asyncio.sleep(5)
+        if RETRY:
+            await flush_outbox()
 
 
 def private_ok(entity_id: int, entity) -> bool:
@@ -261,10 +296,9 @@ async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
         return False
     params = {"owner": a.uid, "kind": kind, **{k: ("1" if v is True else "" if v is None or v is False else str(v)) for k, v in meta.items()}}
     try:
-        async with ClientSession(timeout=ClientTimeout(total=180)) as http:
-            async with http.post(f"{SERVER}/api/bridge/media", params=params, data=data,
-                                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"}) as r:
-                return r.status < 300
+        async with _http().post(f"{SERVER}/api/bridge/media", params=params, data=data, timeout=ClientTimeout(total=180),
+                                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"}) as r:
+            return r.status < 300
     except Exception as e:
         log("media upload failed:", type(e).__name__)
         return False
@@ -333,18 +367,19 @@ def attach_handlers(a: Acct):
                 chat = await event.get_chat()
             sender = await event.get_sender()
             mk = media_kind(event.message)
-            if mk and await upload_media(a, event.message, mk, {
+            async with chat_lock(a.uid, key):
+              if mk and await upload_media(a, event.message, mk, {
                 "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
                 "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
                 "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message),
-            }):
+              }):
                 return
-            await to_server({
+              await to_server({
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
                 "reply_to": reply_id(event.message),
-            })
+              }, locked=True)
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
 
@@ -780,12 +815,11 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     log("bridge listening on", PORT, "(mock)" if MOCK else "")
+    asyncio.create_task(retry_loop())
     ticks = 0
     cursor = 0
     while True:
         await asyncio.sleep(30)
-        if OUTBOX:
-            await flush_outbox()
         ticks += 1
         if MOCK:
             continue
@@ -803,7 +837,7 @@ async def main():
                     log("a session was ended on Telegram's side")
                     await a.wipe()
                     continue
-                if a.synced and time.time() - a.last_sync > 14 * 60:
+                if a.synced and time.time() - a.last_sync > 5 * 60:
                     await sync_recent(a)
             except Exception as e:
                 log("account check:", type(e).__name__)
