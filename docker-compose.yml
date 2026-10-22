@@ -34,8 +34,19 @@ services:
     volumes:
       - ./whisper-models:/models    # downloaded models stay here
 
+  # Search by meaning (embeddings of messages). Start with:  docker compose --profile embed up -d --build embed
+  # (the server finds it at http://embed:9100 by itself; EMBED_URL in .env changes that)
+  embed:
+    build: ./embed
+    image: suhbat-embed:latest
+    profiles: ["embed"]
+    restart: unless-stopped
+    mem_limit: 2g
+    volumes:
+      - ./embed-models:/models
+
   # Translation of chats on your own server (LibreTranslate). Start with:  docker compose --profile translate up -d translate
-  # then add  TRANSLATE_URL=http://translate:5000  to the suhbat service environment.
+  # (the server finds it at http://translate:5000 by itself; TRANSLATE_URL in .env changes that)
   translate:
     image: libretranslate/libretranslate:latest
     profiles: ["translate"]

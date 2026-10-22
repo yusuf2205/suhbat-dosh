@@ -3,7 +3,7 @@ import { h } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S, on } from './state.js';
 import { api } from './net.js';
-import { modal, toast } from './ui.js';
+import { avatar, confirmDialog, modal, toast } from './ui.js';
 import { NoteClient } from './notesync.js';
 import { diffOp, shiftCaret } from '../../shared/ot.js';
 
@@ -44,7 +44,9 @@ export async function openNote(id, title = '') {
   const who = h('small', { class: 'note-who' });
   const win = modal({
     title: title || t('note.title'), className: 'note-editor',
-    body: [h('div', { class: 'note-bar' }, status, who, h('a', { class: 'btn secondary small', href: `/api/notes/${id}/export`, download: `${title || 'note'}.txt` }, t('note.download'))), ta],
+    body: [h('div', { class: 'note-bar' }, status, who,
+      h('button', { class: 'btn secondary small', type: 'button', onclick: () => openHistory(id, ta) }, `\u{1F552} ${t('note.history')}`),
+      h('a', { class: 'btn secondary small', href: `/api/notes/${id}/export`, download: `${title || 'note'}.txt` }, t('note.download'))), ta],
     onClose: () => { const s = sessions.get(id); if (s && !s.client.inflight && s.client.local === s.client.doc) s.client.stop(); sessions.delete(id); },
   });
 
@@ -93,3 +95,20 @@ on('ws', (ev) => {
   if (ev.user_id !== S.me.id) s.typing?.set(ev.user_id, Date.now());
   s.client.serverOp({ rev: ev.rev, op: ev.op, cid: ev.cid });
 });
+
+// ---------------------------------------------------------------- earlier versions of a note
+const when = (ts) => new Date(ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+async function openHistory(id, ta) {
+  const list = h('div', { class: 'ver-list' }, h('p', { class: 'muted' }, t('list.loading')));
+  const win = modal({ title: t('note.history'), className: 'drive', body: [h('p', { class: 'muted' }, t('note.history_hint')), list] });
+  let r;
+  try { r = await api('GET', `/api/notes/${id}/versions`); } catch (e) { win.close(); toast(errText(e.code)); return; }
+  list.replaceChildren(...(r.versions.length ? r.versions.map((v) => h('div', { class: 'ver-row' },
+    avatar(S.users.get(v.user_id) || { id: v.user_id || 0, name: nameOf(v.user_id) }, 'sm'),
+    h('div', { class: 'ver-main' }, h('b', null, `${when(v.at)}${v.user_id ? ` \u00B7 ${nameOf(v.user_id)}` : ''}`), h('small', { class: 'muted' }, v.preview || t('note.empty')), h('small', { class: 'muted' }, t('note.chars', { n: v.length }))),
+    h('button', { class: 'btn small secondary', type: 'button', onclick: async () => {
+      if (!(await confirmDialog(t('note.restore_confirm', { time: when(v.at) }), { okLabel: t('note.restore') }))) return;
+      try { await api('POST', `/api/notes/${id}/restore`, { rev: v.rev }); win.close(); toast(t('note.restored')); ta.focus(); } catch (e) { toast(errText(e.code)); }
+    } }, t('note.restore')))) : [h('p', { class: 'muted' }, t('note.no_versions'))]));
+}

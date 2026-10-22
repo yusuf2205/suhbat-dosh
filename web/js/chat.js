@@ -12,6 +12,11 @@ import { firstUrl, linkCard } from './linkcard.js';
 import { editImage, scanDocument } from './photoedit.js';
 import { attachQuick, openQuickManager } from './quick.js';
 import { autoAvailable, autoOn, autoTrNode, setAuto } from './autotr.js';
+import { onceNode } from './once.js';
+import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf } from './topics.js';
+import { openReaders } from './readers.js';
+import { applyChatTheme, openChatTheme } from './chattheme.js';
+import { commentsButton } from './comments.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -49,6 +54,7 @@ const nodeCache = new Map(); // key -> { el, sig, status }
 let replyTo = null;
 let editing = null;
 let unreadFrom = 0;
+const pinIndex = new Map(); // chat id -> which pinned message the bar shows
 let openUnread = 0; // unread messages when the chat was opened: shows the "what did I miss" button
 let highlightId = null;
 let rec = null; // voice recorder state
@@ -112,9 +118,32 @@ export async function openChat(id) {
     await loadLatest(id);
   }
   loadMembers(id);
+  if (c.forum) refreshTopics(id, true);
   renderAll({ scroll: 'unread' });
   markRead();
   if (c.secret?.group) syncGroup(c);
+}
+
+/** Another topic of the group: the list of messages starts over for it. */
+export async function switchTopic(topicId) {
+  const id = S.active;
+  const c = S.chats.get(id);
+  if (!c?.forum || (S.topic.get(id) || 0) === topicId) return;
+  S.topic.set(id, topicId);
+  const b = bucket(id);
+  b.list = [];
+  b.hasMore = true;
+  b.detached = false;
+  nodeCache.clear();
+  replyTo = null;
+  editing = null;
+  unreadFrom = (topicsOf(id).find((x) => x.id === topicId)?.unread || 0) > 0 ? 0 : 0;
+  renderComposer();
+  renderHeader();
+  renderAll();
+  await loadLatest(id);
+  renderAll({ scroll: 'bottom' });
+  markRead();
 }
 
 export function closeChat() {
@@ -130,7 +159,7 @@ async function loadLatest(id) {
   const b = bucket(id);
   b.loading = true;
   try {
-    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}`);
+    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}${topicQuery(id)}`);
     const pending = b.list.filter((m) => m.pending);
     b.list = [...r.messages, ...pending];
     b.hasMore = r.has_more;
@@ -152,7 +181,7 @@ async function loadOlder() {
   const sc = view.list;
   const prevH = sc.scrollHeight;
   try {
-    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}&before=${first.id}`);
+    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}&before=${first.id}${topicQuery(id)}`);
     if (S.active !== id) return;
     b.list = [...r.messages, ...b.list];
     b.hasMore = r.has_more;
@@ -171,7 +200,7 @@ async function loadNewer() {
   if (!last) return;
   b.loading = true;
   try {
-    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}&after=${last.id}`);
+    const r = await api('GET', `/api/chats/${id}/messages?limit=${LIMITS.PAGE_SIZE}&after=${last.id}${topicQuery(id)}`);
     if (S.active !== id) return;
     const pending = b.list.filter((m) => m.pending);
     b.list = [...b.list.filter((m) => !m.pending), ...r.messages, ...pending];
@@ -196,7 +225,7 @@ export async function jumpTo(chatId, msgId) {
   const b = bucket(chatId);
   if (!b.list.some((m) => m.id === msgId)) {
     try {
-      const r = await api('GET', `/api/chats/${chatId}/messages?limit=${LIMITS.PAGE_SIZE}&before=${msgId + 26}`);
+      const r = await api('GET', `/api/chats/${chatId}/messages?limit=${LIMITS.PAGE_SIZE}&before=${msgId + 26}${topicQuery(chatId)}`);
       b.list = r.messages;
       b.hasMore = r.has_more;
       b.detached = true;
@@ -235,6 +264,7 @@ function buildView() {
     back: h('button', { class: 'icon-btn back', type: 'button', 'aria-label': t('chat.back'), onclick: closeChat }, icon('back', 24)),
     who: h('button', { class: 'who', type: 'button', onclick: toggleInfo, 'aria-label': t('chat.info') }),
     pin: h('button', { class: 'pinbar', type: 'button', hidden: true }),
+    topics: h('div', { class: 'topic-bar', role: 'tablist', hidden: true }),
     list: h('div', { class: 'messages', role: 'log', 'aria-live': 'polite', 'aria-label': chatTitle(c) }),
     jump: h('button', { class: 'btn jump', type: 'button', hidden: true, onclick: jumpToLatest }, `↓ ${t('chat.jump_latest')}`),
     dg: h('button', { class: 'digest-pill', type: 'button', hidden: true, onclick: () => { openUnread = 0; renderHeader(); openDigest(S.active); } }, `✨ ${t('digest.title')}`),
@@ -250,7 +280,7 @@ function buildView() {
       h('button', { class: 'icon-btn call-start', type: 'button', 'aria-label': t('chat.call'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, false) : startCall(S.active, false)) }, icon('phone', 22)),
       h('button', { class: 'icon-btn call-start video', type: 'button', 'aria-label': t('chat.video'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, true) : startCall(S.active, true)) }, icon('video', 22)),
       (view.moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.more'), 'aria-haspopup': 'menu', onclick: () => chatMoreMenu(view.moreBtn) }, icon('more', 22)))),
-    view.pin, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.dg, view.list, view.jump, view.wrap, fileInput,
+    view.pin, view.topics, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.dg, view.list, view.jump, view.wrap, fileInput,
   );
   view.list.addEventListener('scroll', onScroll, { passive: true });
   const typingPing = () => {
@@ -333,13 +363,18 @@ export function renderHeader() {
     h('span', { class: 'grow' }, h('b', { class: 'ellipsis' }, chatTitle(c), c.ttl ? h('span', { class: 'ttl-chip', title: t('ttl.title') }, ` \u23F1 ${ttlLabel(c.ttl)}`) : null), h('span', { class: `sub ${subtitleLive(c) ? 'live' : ''}` }, subtitle(c))),
   );
   // pinned bar
-  if (c.pinned) {
+  const pins = c.pins?.length ? c.pins : (c.pinned ? [c.pinned] : []);
+  if (pins.length) {
+    const idx = Math.min(pinIndex.get(c.id) ?? pins.length - 1, pins.length - 1);
+    const cur = pins[idx];
     view.pin.hidden = false;
-    clear(view.pin).append(h('span', null, '📌'), h('span', { class: 'grow ellipsis' }, h('b', null, `${t('chat.pinned')}: `), previewText(c.pinned)));
-    view.pin.onclick = () => jumpTo(c.id, c.pinned.id);
+    clear(view.pin).append(h('span', null, '📌'), h('span', { class: 'grow ellipsis' }, h('b', null, `${t('chat.pinned')}${pins.length > 1 ? ` ${idx + 1}/${pins.length}` : ''}: `), previewText(cur)));
+    view.pin.onclick = () => { pinIndex.set(c.id, (idx - 1 + pins.length) % pins.length); jumpTo(c.id, cur.id); renderHeader(); };
   } else {
     view.pin.hidden = true;
   }
+  applyChatTheme(view.list, c.theme);
+  if (view.topics) renderTopicBar(view.topics, c, (tp) => switchTopic(tp));
   renderGroupCallBar(c);
   if (view.dg) view.dg.hidden = openUnread < 8;
   renderComposer();
@@ -469,7 +504,7 @@ function renderComposer() {
       { label: t('quick.title'), onClick: () => openQuickManager({ onPick: (text) => insertAtCursor(text) }) },
       { label: t('sc.title'), onClick: async () => { const chatId = S.active; const f = await scanDocument(); if (f) attachFiles(chatId, [f]); } },
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
-      { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
+      { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m), (txt) => insertAtCursor(txt)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
@@ -599,9 +634,9 @@ async function sendText({ silent = false, urgent = false } = {}) {
   const local = {
     id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind: secret ? 'secret' : 'text', text: envelope ?? text, plain: secret ? text : undefined, pending: true,
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
-    reactions: {}, file: null, created_at: Date.now(),
+    reactions: {}, file: null, created_at: Date.now(), ...(c.forum && currentTopic(c.id) ? { topic_id: currentTopic(c.id) } : {}),
   };
-  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined });
+  outbox.add({ ...(c.forum ? { topic: currentTopic(c.id) || 0 } : {}), chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -688,12 +723,12 @@ export async function restorePendingUploads() {
   } catch { /* storage unavailable: nothing to restore */ }
 }
 
-async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null } = {}) {
+async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null, once = false } = {}) {
   const c = S.chats.get(chatId);
   if (blob.size > cfg.max_upload_bytes) {
     return toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) }));
   }
-  const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null };
+  const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null, once: !!once, topic: c.forum ? currentTopic(c.id) || 0 : 0 };
   const secret = isSecret(c);
   let sendBlob = blob;
   let sendName = name;
@@ -714,7 +749,7 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
   // the message appears at once, with its progress card
   bucket(c.id).list.push(pendingUploadMessage(task));
   if (S.active === c.id) { renderMessages(); scrollBottom(); }
-  followUpload(task, c.id, voice || secret ? null : makeThumb(blob));
+  followUpload(task, c.id, voice || secret || once ? null : makeThumb(blob));
 }
 
 function attachFile(file0, onDone) {
@@ -742,6 +777,7 @@ function attachFile(file0, onDone) {
     ? h('input', { type: 'checkbox', checked: S.prefs.compress !== false })
     : null;
   const vsqueeze = canCompressVideo(file) ? h('input', { type: 'checkbox' }) : null;
+  const onceBox = (isImg || /^video\//.test(file.type)) && !activeChat()?.secret && activeChat()?.type !== 'channel' ? h('input', { type: 'checkbox' }) : null;
   const abortCompress = new AbortController();
   const m = modal({
     title: file.name,
@@ -753,6 +789,7 @@ function attachFile(file0, onDone) {
       h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
       squeeze ? h('label', { class: 'row compress-opt' }, squeeze, h('span', null, t('upload.compress', { size: formatBytes(file.size) }))) : null,
       vsqueeze ? h('label', { class: 'row compress-opt' }, vsqueeze, h('span', null, t('upload.compress_video'))) : null,
+      onceBox ? h('label', { class: 'row compress-opt' }, onceBox, h('span', null, `\u{1F525} ${t('once.option')}`)) : null,
       h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } }, edit,
         h('button', { class: 'btn', type: 'button', onclick: async (ev) => {
           const caption = cap.value.trim();
@@ -763,14 +800,14 @@ function attachFile(file0, onDone) {
             const out = await compressVideo(file, (p) => { btn.textContent = `${t('upload.compressing')} ${Math.round(p * 100)}%`; }, abortCompress.signal);
             if (abortCompress.signal.aborted) return;
             m.close();
-            uploadFile(c.id, out, out.name, { caption });
+            uploadFile(c.id, out, out.name, { caption, once: onceBox?.checked });
             return;
           }
           const want = squeeze?.checked;
           if (squeeze && S.prefs.compress !== want) { S.prefs.compress = want; savePrefs(); }
           m.close();
           const out = want ? await compressImage(file) : file;
-          uploadFile(c.id, out, out.name, { caption });
+          uploadFile(c.id, out, out.name, { caption, once: onceBox?.checked });
         } }, t('chat.send')))),
   });
 }
@@ -893,6 +930,8 @@ function closeRecorder(rerender = true) {
 
 // ---------------------------------------------------------------- message store
 export function upsert(chatId, m) {
+  const cf = S.chats.get(chatId);
+  if (cf?.forum && (m.topic_id || 0) !== (currentTopic(chatId) || 0)) { refreshTopics(chatId); return; }
   const b = bucket(chatId);
   const idx = b.list.findIndex((x) => x.id === m.id || (m.client_id && x.client_id === m.client_id));
   if (idx >= 0) {
@@ -976,6 +1015,10 @@ const markReadDebounced = debounce(async () => {
   c.last_read_id = last.id;
   c.unread = 0;
   fire('chats');
+  if (c.forum) {
+    api('POST', `/api/chats/${id}/read-topic`, { topic: currentTopic(id) || 0, message_id: last.id }).then(() => refreshTopics(id)).catch(() => {});
+    return;
+  }
   api('POST', `/api/chats/${id}/read`, { message_id: last.id }).catch(() => {});
 }, 250);
 export function markRead() { markReadDebounced(); }
@@ -1016,7 +1059,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1085,6 +1128,7 @@ function buildMessage(m, c) {
   }
   if (m.kind === 'sticker') bubble.append(stickerNode(m));
   else if (m.kind === 'secret' && !m.upload) bubble.append(secretNode(m, c));
+  else if (m.once && typeof m.id === 'number') bubble.append(onceNode(m));
   else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
@@ -1099,6 +1143,7 @@ function buildMessage(m, c) {
   else if (m.text) bubble.append(h('div', { class: 'text' }, linkify(m.text)));
   if (m.kind === 'text' && !mine && !c.secret && m.text && autoOn(c.id)) { const tr = autoTrNode(m.text); if (tr) bubble.append(tr); }
   if (m.kind === 'text' && !c.secret && m.text && typeof m.id === 'number') { const card = linkCard(firstUrl(m.text)); if (card) bubble.append(card); }
+  if (c.comments && c.type === 'channel' && typeof m.id === 'number' && !m.pending) bubble.append(commentsButton(m));
   if (m.markup?.inline_keyboard) bubble.append(keyboardNode(m));
   const reacts = Object.entries(m.reactions || {});
   if (reacts.length) {
@@ -1356,6 +1401,7 @@ function messageMenu(anchor, m) {
   if (m.kind === 'image' && m.file && navigator.clipboard?.write && window.ClipboardItem) {
     items.push({ label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
   }
+  if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') items.push({ label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
     if (!mine) items.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
     if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push({ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) });
@@ -1378,10 +1424,10 @@ function messageMenu(anchor, m) {
   }
   const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
   if (c.type === 'direct' || adminLike) {
-    const pinned = c.pinned?.id === m.id;
+    const pinned = (c.pins || []).some((p) => p.id === m.id) || c.pinned?.id === m.id;
     items.push({
       label: pinned ? t('msg.unpin') : t('msg.pin'),
-      onClick: () => api('POST', `/api/chats/${c.id}/pin`, { message_id: pinned ? null : m.id }).catch((e) => toast(errText(e.code))),
+      onClick: () => api('POST', `/api/chats/${c.id}/pin`, pinned ? { message_id: m.id, unpin: true } : { message_id: m.id }).catch((e) => toast(errText(e.code))),
     });
   }
   if (mine || (c.type !== 'direct' && adminLike)) {
@@ -1565,6 +1611,7 @@ function chatMoreMenu(anchor) {
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
     { label: t('sched.title'), onClick: () => openScheduled() },
+    { label: t('theme.title'), onClick: () => openChatTheme(c) },
     ...(!isSecret(c) ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
     { label: t('task.title'), onClick: () => openTasks() },
     ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
@@ -1596,5 +1643,9 @@ on('e2e-keys', (id) => {
   secretStatuses.clear();
   if (view && S.active === id) { nodeCache.clear(); view.ckey = ''; renderComposer(); renderMessages(); }
 });
+
+// the strip of topics (or its counters) changed
+document.addEventListener('suhbat:topics', (e) => { if (view && S.active === e.detail) renderHeader(); });
+on('chat-theme', (id) => { if (view && S.active === id) renderHeader(); });
 
 initPhoneMenu();

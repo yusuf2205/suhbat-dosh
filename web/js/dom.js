@@ -36,8 +36,31 @@ const viaShell = (href) => (e) => {
   const n = window.SuhbatNative;
   if (n?.openUrl) { e.preventDefault(); try { n.openUrl(href); } catch { /* browser default */ } }
 };
+/** A custom emoji sits in a text as {{e:FILEID}}; people without the set still see the picture (sets are public). */
+export const CEMOJI_RE = /\{\{e:([A-Za-z0-9_-]{8,40})\}\}/g;
+export const stripCustomEmoji = (text) => String(text || '').replace(CEMOJI_RE, '\u{1F642}');
+
+function expandEmoji(parts) {
+  const out = [];
+  for (const p of parts) {
+    if (typeof p !== 'string' || !p.includes('{{e:')) { out.push(p); continue; }
+    let last = 0;
+    for (const m of p.matchAll(CEMOJI_RE)) {
+      if (m.index > last) out.push(p.slice(last, m.index));
+      out.push(h('img', { class: 'cemoji', src: `/api/files/${m[1]}`, alt: '\u{1F642}', width: 22, height: 22, loading: 'lazy', draggable: false }));
+      last = m.index + m[0].length;
+    }
+    if (last < p.length) out.push(p.slice(last));
+  }
+  return out;
+}
+
 /** Turn plain text into nodes: links, e-mail addresses and phone numbers become tappable. */
 export function linkify(text) {
+  return expandEmoji(linkifyRaw(text));
+}
+
+function linkifyRaw(text) {
   const out = [];
   let last = 0;
   for (const m of text.matchAll(TOKEN_RE)) {

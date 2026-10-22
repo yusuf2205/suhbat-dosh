@@ -1,5 +1,5 @@
 import { closeLayer, openLayer } from './backnav.js';
-import { h, clear } from './dom.js';
+import { h, clear, stripCustomEmoji } from './dom.js';
 import { t, locale } from './i18n.js';
 import { S } from './state.js';
 
@@ -189,11 +189,12 @@ export function previewText(m) {
   if (m.kind === 'poll') return `📊 ${m.text}`;
   if (m.kind === 'event') return `📅 ${m.text}`;
   if (m.kind === 'miniapp') return `🧩 ${m.text}`;
+  if (m.once && (m.kind === 'image' || m.kind === 'video')) return `\u{1F525} ${t(m.kind === 'video' ? 'once.video' : 'once.photo')}`;
   if (m.kind === 'task') return `✅ ${m.text}`;
   if (m.kind === 'note') return `📝 ${m.text}`;
   if (m.kind === 'location') return `📍 ${t('msg.location')}`;
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return `👤 ${t('msg.contact')}`; } }
-  if (m.text) return m.text;
+  if (m.text) return stripCustomEmoji(m.text);
   const map = { image: `🖼 ${t('msg.photo')}`, video: `🎬 ${t('msg.video')}`, audio: `🎵 ${t('msg.audio')}`, voice: `🎤 ${t('msg.voice')}`, file: `${m.file?.name || t('msg.file')}` };
   return map[m.kind] || '';
 }

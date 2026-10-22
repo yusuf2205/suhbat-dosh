@@ -35,7 +35,9 @@ export function openDirectory() {
         } }, t('dir.start'))
         : h('button', { class: `btn small${it.joined ? ' secondary' : ''}`, type: 'button', onclick: async () => {
           try {
-            const c = (await api('POST', `/api/directory/${it.id}/join`)).chat;
+            const j = await api('POST', `/api/directory/${it.id}/join`);
+            if (j.pending) { toast(t('requests.sent'), 6000); win.close(); return; }
+            const c = j.chat;
             S.chats.set(c.id, c); fire('chats'); win.close(); fire('open-chat', c.id);
           } catch (e) { toast(errText(e.code)); }
         } }, it.joined ? t('dir.open') : t('dir.join'));

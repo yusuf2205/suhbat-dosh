@@ -106,6 +106,7 @@ import { formatBirthday, isBirthdayToday, photoGrid } from './settings.js';
 import { openBotFather } from './bots.js';
 import { e2eSupported, registerDevice, syncGroup } from './e2egroup.js';
 import { openSecretByDefault } from './secret.js';
+import { adminNodes } from './chatadmin.js';
 
 function shortUA(ua = '') {
   const br = /(Edg|Chrome|Firefox|Safari|OPR)\//.exec(ua)?.[1];
@@ -185,6 +186,7 @@ export async function renderInfo(m, chatId) {
         });
         nodes.push(h('label', { class: 'focus-row' }, h('span', null, h('b', null, t('dir.make_public')), h('small', { class: 'muted' }, t('dir.make_public_hint'))), pub));
       }
+      if (isAdmin) nodes.push(...adminNodes(chat, draw));
       if (isAdmin && chat.invite_code) {
         const link = `${location.origin}/#/join/${chat.invite_code}`;
         nodes.push(h('h3', null, t('info.invite')), h('div', { class: 'invite' }, link),
@@ -312,15 +314,17 @@ export async function openJoin(code) {
         h('p', { class: 'muted' }, t('common.members_n', { n: c.members_count })),
         r.banned ? h('div', { class: 'err' }, errText('user_banned'))
           : r.already_member ? h('button', { class: 'btn', type: 'button', onclick: () => { m.close(); fire('open-chat', c.id); } }, t('join.already'))
-            : h('button', { class: 'btn', type: 'button', onclick: async () => {
+            : r.requested ? h('p', { class: 'muted' }, t('requests.sent'))
+              : h('button', { class: 'btn', type: 'button', onclick: async () => {
               try {
                 const j = await api('POST', `/api/invite/${encodeURIComponent(code)}/join`);
+                if (j.pending) { m.close(); toast(t('requests.sent'), 6000); return; }
                 S.chats.set(j.chat.id, j.chat);
                 fire('chats');
                 m.close();
                 fire('open-chat', j.chat.id);
               } catch (e) { fail(e); }
-            } }, t('join.join'))),
+            } }, r.approval ? t('requests.ask') : t('join.join'))),
     });
   } catch {
     toast(t('join.invalid'));

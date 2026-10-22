@@ -38,6 +38,8 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { forum, wireForum } from './forum.js';
+import { sets, setItemFor } from './stickersets.js';
+import { semantic, embedderReady } from './semantic.js';
 import { directory, wireDirectory } from './directory.js';
 import { normalizeFocus } from '../../shared/focus.js';
 import { normalizeWork, workOpen } from '../../shared/work.js';
@@ -52,8 +54,16 @@ import { getBotUsername, pollLogin, startLogin, telegramEnabled } from './telegr
 import { checkCode, emailEnabled, issueCode, normalizeEmail } from './email.js';
 import { checkName, filePath, readHead, receive, removeFile, sniff, thumbPath } from './files.js';
 import zlib from 'node:zlib';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const api = express.Router();
+
+// the topic the sender is looking at travels in a header, so polls, tasks, notes and files land in the right topic too
+const requestContext = new AsyncLocalStorage();
+api.use((req, _res, next) => {
+  const t = Number(req.headers['x-topic']);
+  requestContext.run({ topic: Number.isInteger(t) && t > 0 ? t : 0 }, next);
+});
 
 // ------------------------------------------------------------------ auth plumbing
 
@@ -413,6 +423,7 @@ api.get('/config', (_req, res) => {
     max_upload_bytes: config.maxUploadBytes,
     transcribe: transcriberReady(),
     translate: translatorReady(),
+    semantic: embedderReady(),
     registration_open: registrationMode() !== 'closed',
     registration: registrationMode(),
     dev_otp: config.otpMode === 'dev',
@@ -440,6 +451,8 @@ api.use(linkpreview);
 api.use(quick);
 api.use(extras);
 api.use(forum);
+api.use(sets);
+api.use(semantic);
 api.use(translate);
 api.use(directory);
 api.use(transcribe);
@@ -1075,6 +1088,10 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     if (dup) return { message: messageOut(dup), duplicate: true };
   }
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
+  if (topicId === null && chat.forum && !threadOf) {
+    const want = requestContext.getStore()?.topic || 0;
+    topicId = want && q.get('SELECT 1 AS x FROM topics WHERE id = ? AND chat_id = ? AND closed = 0', want, chat.id) ? want : null;
+  }
   const t = now();
   const r = q.run(
     `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, created_at)
@@ -1358,7 +1375,8 @@ api.post('/chats/:id/stickers', async (req, res) => {
     fileId = row.file_id;
     emoji = String.fromCodePoint(...cp.split('_').map((x) => parseInt(x, 16)));
   } else {
-    const s = q.get('SELECT * FROM stickers WHERE id = ?', int(b.sticker_id, 'sticker_id'));
+    // a sticker of a set the person has, or one of their own
+    const s = b.set_item_id !== undefined ? setItemFor(req.user.id, int(b.set_item_id, 'set_item_id')) : q.get('SELECT * FROM stickers WHERE id = ?', int(b.sticker_id, 'sticker_id'));
     if (!s) throw new HttpError(404, 'not_found');
     fileId = s.file_id;
     emoji = s.emoji;
@@ -1569,6 +1587,7 @@ export function canAccessFile(userId, fid) {
   const once = onceAllows(userId, fid);
   if (once !== null) return once;
   if (q.get('SELECT 1 AS x FROM stickers WHERE file_id = ? AND user_id = ?', fid, userId)) return true;
+  if (q.get('SELECT 1 AS x FROM sticker_set_items WHERE file_id = ?', fid)) return true; // pictures of sticker and emoji sets are for everybody
   if (q.get('SELECT 1 AS x FROM drive_items WHERE file_id = ? AND user_id = ?', fid, userId)) return true; // kept in the person's own drive
   // a message may limit how long its recipients can open the file (its sender keeps access)
   return !!q.get(
@@ -1683,7 +1702,7 @@ api.delete('/messages/:id', (req, res) => {
   q.run('UPDATE chats SET pinned_message_id = NULL WHERE pinned_message_id = ?', m.id);
   q.run('DELETE FROM messages WHERE id = ?', m.id);
   if (m.file_id && !q.get('SELECT 1 AS x FROM messages WHERE file_id = ?', m.file_id)
-    && !q.get('SELECT 1 AS x FROM stickers WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM anim_files WHERE file_id = ?', m.file_id)) {
+    && !q.get('SELECT 1 AS x FROM stickers WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM sticker_set_items WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM anim_files WHERE file_id = ?', m.file_id)) {
     q.run('DELETE FROM files WHERE id = ?', m.file_id);
     removeFile(m.file_id);
   }

@@ -31,6 +31,9 @@ import { showLock } from './applock.js';
 import './tasks.js';
 import { startE2e } from './e2egroup.js';
 import { openPalette, wirePullDown } from './palette.js';
+import { resumeLives } from './share.js';
+import './topics.js';
+import './comments.js';
 import { focusMutes } from './focus.js';
 import './nearby.js'; // receives "nearby" messages even when its screen is closed
 
@@ -124,6 +127,7 @@ async function loadChats() {
   loadFolders();
   refreshGroupCalls();
   startE2e();
+  resumeLives();
 }
 
 /** Called on every (re)connect: pull what we missed while offline, then flush the outbox. */
@@ -302,9 +306,12 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------------------------------------------------------- session lifecycle
 function handleHash() {
-  const m = /^#\/(chat|join)\/([\w-]+)/.exec(location.hash);
+  const m = /^#\/(chat|join|stickers)\/([\w-]+)/.exec(location.hash);
   if (!m || !S.me) return;
-  if (m[1] === 'chat') {
+  if (m[1] === 'stickers') {
+    history.replaceState(null, '', '#/');
+    import('./stickers.js').then((x) => x.openSetByLink(m[2]));
+  } else if (m[1] === 'chat') {
     const id = Number(m[2]);
     if (S.chats.has(id) && S.active !== id) openChat(id);
   } else {
@@ -494,7 +501,7 @@ document.addEventListener('keydown', (e) => {
     const i = ids.indexOf(S.active);
     const next = e.key === 'ArrowDown' ? Math.min(ids.length - 1, i + 1) : Math.max(0, i === -1 ? 0 : i - 1);
     openChat(ids[next]);
-  } else if (e.key === 'Escape' && S.active && !document.querySelector('.overlay, .menu, .call-overlay')) {
+  } else if (e.key === 'Escape' && S.active && !document.querySelector('.overlay, .menu, .call-overlay, .once-view')) {
     if (document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value) return;
     closeChat();
   }

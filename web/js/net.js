@@ -1,5 +1,5 @@
 import { EVENTS, CLIENT_EVENTS } from '/shared/contracts.js';
-import { S, fire } from './state.js';
+import { S, currentTopic, fire } from './state.js';
 
 export class ApiError extends Error {
   constructor(status, code) {
@@ -12,11 +12,20 @@ export class ApiError extends Error {
 /** JSON API call. Network failures throw ApiError(0, 'network'). */
 export async function api(method, url, body, opts = {}) {
   let res;
+  const headers = {};
+  if (body !== undefined && !opts.raw) headers['content-type'] = 'application/json';
+  Object.assign(headers, opts.headers || {});
+  // in a group with topics every request that posts something carries the topic being looked at
+  const tm = /^\/api\/chats\/(\d+)\//.exec(url);
+  if (tm && method !== 'GET' && headers['x-topic'] === undefined) {
+    const tp = currentTopic(Number(tm[1]));
+    if (tp) headers['x-topic'] = String(tp);
+  }
   try {
     res = await fetch(url, {
       method,
       credentials: 'same-origin',
-      headers: body !== undefined && !opts.raw ? { 'content-type': 'application/json' } : opts.headers,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: opts.raw ?? (body !== undefined ? JSON.stringify(body) : undefined),
     });
   } catch {
@@ -138,7 +147,7 @@ export async function flushOutbox() {
       try {
         const r = await api('POST', `/api/chats/${item.chat_id}/messages`, {
           text: item.text, client_id: item.client_id, reply_to: item.reply_to ?? undefined, kind: item.kind ?? undefined, silent: item.silent || undefined, urgent: item.urgent || undefined,
-        });
+        }, item.topic !== undefined ? { headers: { 'x-topic': String(item.topic || 0) } } : {});
         outbox.remove(item.client_id);
         fire('outbox:sent', { client_id: item.client_id, message: r.message });
       } catch (e) {

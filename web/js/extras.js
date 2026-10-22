@@ -338,9 +338,10 @@ export function openGlobalSearch() {
   const since = h('input', { class: 'input', type: 'date', 'aria-label': t('gsearch.since') });
   const until = h('input', { class: 'input', type: 'date', 'aria-label': t('gsearch.until') });
   const out = h('div', { class: 'gs-results' });
+  const meaning = S.cfg?.semantic ? h('input', { type: 'checkbox', id: 'gs-meaning' }) : null;
   const m = modal({
     title: t('gsearch.title'), className: 'gsearch',
-    body: [q, h('div', { class: 'gs-filters' },
+    body: [q, meaning ? h('label', { class: 'row', for: 'gs-meaning' }, meaning, h('span', null, `\u2728 ${t('sem.toggle')}`), h('small', { class: 'muted' }, ` ${t('sem.hint')}`)) : null, h('div', { class: 'gs-filters' },
       h('label', { class: 'field' }, h('span', null, t('gsearch.from')), from),
       h('label', { class: 'field' }, h('span', null, t('gsearch.type')), type),
       h('label', { class: 'field' }, h('span', null, t('gsearch.where')), where),
@@ -356,9 +357,21 @@ export function openGlobalSearch() {
     if (where.value) params.set('chat_type', where.value);
     if (since.value) params.set('since', String(new Date(`${since.value}T00:00:00`).getTime()));
     if (until.value) params.set('until', String(new Date(`${until.value}T23:59:59`).getTime()));
-    if (term.length < 2 && ![from.value, type.value, since.value, until.value].some(Boolean)) { clear(out).append(h('p', { class: 'muted' }, t('gsearch.hint'))); return; }
+    if (!meaning?.checked && term.length < 2 && ![from.value, type.value, since.value, until.value].some(Boolean)) { clear(out).append(h('p', { class: 'muted' }, t('gsearch.hint'))); return; }
     clear(out).append(h('p', { class: 'muted' }, t('list.loading')));
     try {
+      if (meaning?.checked && term.length >= 3) {
+        const sr = await api('GET', `/api/search/semantic?q=${encodeURIComponent(term)}`);
+        const best = sr.results[0]?.score || 0;
+        const keep = sr.results.filter((x) => x.score >= Math.max(0.8, best - 0.05));
+        clear(out).append(...(keep.length ? keep.map((x) => h('button', {
+          class: 'ci', type: 'button',
+          onclick: () => { m.close(); fire('open-chat', x.message.chat_id); setTimeout(() => fire('jump', { chatId: x.message.chat_id, msgId: x.message.id }), 80); },
+        }, h('span', { class: 'ci-main' },
+          h('span', { class: 'ci-top' }, h('span', { class: 'ci-title ellipsis' }, S.chats.get(x.message.chat_id) ? chatTitle(S.chats.get(x.message.chat_id)) : ''), h('span', { class: 'ci-time' }, `${fmtDay(x.message.created_at)} ${fmtTime(x.message.created_at)}`)),
+          h('span', { class: 'ci-last' }, previewText(x.message))))) : [h('p', { class: 'muted' }, t('list.nothing'))]));
+        return;
+      }
       const r = await api('GET', `/api/search/global?${params}`);
       clear(out).append(...(r.results.length ? r.results.map((x) => h('button', {
         class: 'ci', type: 'button',

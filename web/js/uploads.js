@@ -95,10 +95,10 @@ async function ensureSession(t) {
     t.sent = 0;
   }
   const r = await xhr('POST', `/api/chats/${t.chatId}/uploads`, {
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(t.opts.topic ? { 'x-topic': String(t.opts.topic) } : {}) },
     body: JSON.stringify({
       name: t.name, size: t.size, client_id: t.id, caption: t.opts.caption || '', voice: !!t.opts.voice,
-      duration: t.opts.duration ?? undefined, reply_to: t.opts.replyTo ?? undefined, waveform: t.opts.waveform ?? undefined,
+      duration: t.opts.duration ?? undefined, reply_to: t.opts.replyTo ?? undefined, waveform: t.opts.waveform ?? undefined, once: t.opts.once ? true : undefined,
     }),
   });
   if (r.data?.done) { t.result = r.data; return; }

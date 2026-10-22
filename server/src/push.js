@@ -63,7 +63,7 @@ const preview = (m) => {
   if (m.kind === 'location') return '📍 Геолокация';
   if (m.kind === 'sticker') return `${m.text || ''} Стикер`.trim();
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return '👤 Контакт'; } }
-  if (m.text) return m.text.slice(0, 140);
+  if (m.text) return m.text.replace(/\{\{e:[\w-]{8,40}\}\}/g, '🙂').slice(0, 140);
   return ({ image: '🖼 Фото', video: '🎬 Видео', voice: '🎤 Голосовое сообщение', audio: '🎵 Аудио', file: '📎 Файл', call: '📞 Звонок' })[m.kind] || 'Новое сообщение';
 };
 

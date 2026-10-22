@@ -27,14 +27,58 @@ export function parseGeo(text) {
   return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
 }
 
+/** "Where am I": once, or as a live position for a quarter of an hour, an hour or eight hours. */
 export function sendLocation(chatId, done) {
   if (!navigator.geolocation) { toast(t('geo.unsupported')); return; }
+  const win = modal({
+    title: t('attach.location'),
+    body: h('div', { class: 'geo-choice' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { win.close(); sendLocationOnce(chatId, done, 0); } }, t('geo.now')),
+      h('p', { class: 'muted' }, t('geo.live_hint')),
+      ...[[15, 'geo.live_15'], [60, 'geo.live_60'], [480, 'geo.live_480']].map(([min, key]) => h('button', { class: 'btn secondary', type: 'button', onclick: () => { win.close(); sendLocationOnce(chatId, done, min); } }, `\u{1F4E1} ${t(key)}`))),
+  });
+}
+
+// ---- live position: the phone sends where it is every few seconds while the app is open
+const lives = new Map(); // message id -> { until, watch }
+const LIVE_KEY = 'suhbat.live';
+const saveLives = () => { try { localStorage.setItem(LIVE_KEY, JSON.stringify([...lives].map(([id, v]) => [id, v.until]))); } catch { /* private mode */ } };
+
+export function stopLive(id, tell = true) {
+  const v = lives.get(id);
+  if (v) { navigator.geolocation.clearWatch(v.watch); lives.delete(id); saveLives(); }
+  if (tell) api('POST', `/api/messages/${id}/live/stop`).catch(() => {});
+}
+
+export function startLive(id, until) {
+  if (lives.has(id) || !navigator.geolocation || until <= Date.now()) return;
+  let last = 0;
+  const watch = navigator.geolocation.watchPosition((p) => {
+    if (Date.now() > until) { stopLive(id, false); return; }
+    if (Date.now() - last < 8000) return;
+    last = Date.now();
+    api('PUT', `/api/messages/${id}/live`, { lat: p.coords.latitude, lon: p.coords.longitude }).catch((e) => { if (e.status === 409 || e.status === 404) stopLive(id, false); });
+  }, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  lives.set(id, { until, watch });
+  saveLives();
+  setTimeout(() => stopLive(id, false), Math.max(1000, until - Date.now()));
+}
+
+/** After a reload: a broadcast that has not ended yet continues. */
+export function resumeLives() {
+  try {
+    for (const [id, until] of JSON.parse(localStorage.getItem(LIVE_KEY) || '[]')) if (until > Date.now()) startLive(id, until);
+  } catch { /* nothing saved */ }
+}
+
+function sendLocationOnce(chatId, done, liveMinutes) {
   toast(t('geo.getting'));
   navigator.geolocation.getCurrentPosition(async (p) => {
     try {
       const text = `geo:${p.coords.latitude.toFixed(6)},${p.coords.longitude.toFixed(6)}`;
-      const r = await api('POST', `/api/chats/${chatId}/messages`, { kind: 'location', text, client_id: uuid() });
+      const r = await api('POST', `/api/chats/${chatId}/messages`, { kind: 'location', text, client_id: uuid(), ...(liveMinutes ? { live_minutes: liveMinutes } : {}) });
       done?.(r.message);
+      if (r.message.live_until) startLive(r.message.id, r.message.live_until);
     } catch (e) { toast(errText(e.code)); }
   }, (err) => toast(t(err.code === 1 ? 'geo.denied' : 'geo.failed')),
   { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
@@ -45,10 +89,17 @@ export function locationNode(m) {
   if (!g) return h('div', { class: 'text' }, m.text);
   // Yandex Maps takes longitude first: pt=lng,lat
   const url = `https://yandex.ru/maps/?pt=${g.lng},${g.lat}&z=16&l=map`;
-  return h('button', { class: 'geo-card', type: 'button', onclick: () => openExternal(url) },
+  const live = m.live_until ? m.live_until > Date.now() : null;
+  const clock = m.live_until ? new Date(m.live_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const card = h('button', { class: `geo-card${live ? ' live' : ''}`, type: 'button', onclick: () => openExternal(url) },
     h('span', { class: 'geo-pin' }, icon('pin', 26)),
-    h('span', { class: 'geo-txt' }, h('b', null, t('msg.location')), h('span', { class: 'muted' }, `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`),
+    h('span', { class: 'geo-txt' }, h('b', null, live ? `\u{1F534} ${t('geo.live_on', { time: clock })}` : m.live_until ? t('geo.live_off') : t('msg.location')),
+      h('span', { class: 'muted' }, `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`),
       h('span', { class: 'geo-open' }, t('geo.open'))));
+  if (live && m.sender_id === S.me.id) {
+    return h('div', { class: 'geo-wrap' }, card, h('button', { class: 'btn small danger', type: 'button', onclick: () => stopLive(m.id) }, t('geo.stop')));
+  }
+  return card;
 }
 
 // ------------------------------------------------------------------ contact

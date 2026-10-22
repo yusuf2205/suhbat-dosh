@@ -4,7 +4,7 @@ import express from 'express';
 import { HttpError, log, rateLimit } from './util.js';
 
 export const translate = express.Router();
-const BASE = () => (process.env.TRANSLATE_URL || '').replace(/\/+$/, '');
+const BASE = () => (process.env.TRANSLATE_URL || 'http://translate:5000').replace(/\/+$/, '');
 
 let health = { at: 0, ok: false };
 export async function translatorAvailable() {

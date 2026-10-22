@@ -439,6 +439,20 @@ export function openSettings() {
         cur === value ? h('span', { class: 'srow-value' }, '✓') : null);
       const text = h('textarea', { class: 'input', rows: 3, maxLength: 300, placeholder: t('pres.auto_ph'), 'aria-label': t('pres.auto_text') });
       text.value = S.me.auto_reply || '';
+      // working hours: outside them people who write get an automatic answer; a greeting goes to everybody who writes for the first time
+      const w = { ...S.me.work, days: [...(S.me.work?.days || [1, 2, 3, 4, 5])] };
+      const saveWork = (patch) => save({ work: { ...w, ...patch, tz: -new Date().getTimezoneOffset() } });
+      const from = h('input', { class: 'input', type: 'time', value: w.from, 'aria-label': t('work.from') });
+      const to = h('input', { class: 'input', type: 'time', value: w.to, 'aria-label': t('work.to') });
+      const away = h('textarea', { class: 'input', rows: 2, maxLength: 300, placeholder: t('work.text_ph'), 'aria-label': t('work.text') });
+      away.value = w.text || '';
+      const greet = h('textarea', { class: 'input', rows: 2, maxLength: 300, placeholder: t('work.greeting_ph'), 'aria-label': t('work.greeting') });
+      greet.value = S.me.greeting || '';
+      const dayNames = [t('day.sun'), t('day.mon'), t('day.tue'), t('day.wed'), t('day.thu'), t('day.fri'), t('day.sat')];
+      const days = h('div', { class: 'focus-days' }, [1, 2, 3, 4, 5, 6, 0].map((d) => h('button', {
+        class: 'chip', type: 'button', 'aria-pressed': String(w.days.includes(d)),
+        onclick: () => { const s = new Set(w.days); if (s.has(d)) s.delete(d); else s.add(d); if (!s.size) return; saveWork({ days: [...s] }); },
+      }, dayNames[d])));
       return {
         nodes: [
           group(choice('', 'pres.online', 'user'), choice('busy', 'pres.busy', 'bell'), choice('away', 'pres.away', 'clock')),
@@ -448,7 +462,18 @@ export function openSettings() {
           group(h('div', { class: 'sfield' }, text,
             h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } },
               h('button', { class: 'btn', type: 'button', onclick: () => save({ auto_reply: text.value.trim() }).then(() => toast(t('pres.saved'))) }, t('settings.save'))))),
-        ],
+          heading(t('work.title')),
+          group(switchRow(t('work.on'), w.on, (v) => saveWork({ on: v }), t('work.hint'))),
+          w.on ? group(h('div', { class: 'sfield' }, days,
+            h('div', { class: 'focus-times' }, h('label', null, t('work.from'), from), h('label', null, t('work.to'), to)),
+            away,
+            h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } },
+              h('button', { class: 'btn', type: 'button', onclick: () => saveWork({ from: from.value || w.from, to: to.value || w.to, text: away.value.trim() }).then(() => toast(t('pres.saved'))) }, t('settings.save'))))) : null,
+          heading(t('work.greeting')),
+          group(h('div', { class: 'sfield' }, greet, h('small', { class: 'muted' }, t('work.greeting_hint')),
+            h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } },
+              h('button', { class: 'btn', type: 'button', onclick: () => save({ greeting: greet.value.trim() }).then(() => toast(t('pres.saved'))) }, t('settings.save'))))),
+        ].filter(Boolean),
       };
     },
   };
@@ -482,6 +507,7 @@ export function openSettings() {
             row('devices', t('settings.sessions'), { value: sessN, onclick: () => go(pages.sessions) }),
             row('mail', t('settings.email'), { value: S.me.email || t('settings.email_none'), onclick: () => go(pages.account) })),
           note(t('st.sessions_hint')),
+          group(switchRow(t('readers.setting'), S.me.read_receipts !== false, async (v) => { try { S.me = (await api('PATCH', '/api/me', { read_receipts: v })).user; fire('me'); } catch (e) { fail(e); } }, t('readers.setting_hint'))),
           group(switchRow(t('lp.setting'), !S.prefs.noPreview, (v) => { S.prefs.noPreview = !v; savePrefs(); }, t('lp.setting_hint')), switchRow(t('e2e.default'), S.prefs.secretDefault, (v) => { S.prefs.secretDefault = v; savePrefs(); }, t('e2e.default_hint'))),
           heading(t('settings.privacy')),
           group(privacyRow('photo', 'st.photo'), privacyRow('status', 'st.status'), privacyRow('last_seen', 'st.lastseen'), privacyRow('birthday', 'st.birthday')),

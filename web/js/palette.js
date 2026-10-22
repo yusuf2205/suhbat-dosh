@@ -125,10 +125,20 @@ export function openPalette() {
     if (term.length < 3) { if (remote.length) { remote = []; build(); } return; }
     try {
       const r = await api('GET', `/api/search/global?q=${encodeURIComponent(term)}`);
+      let meaning = [];
+      if (S.cfg?.semantic && term.length >= 4) {
+        // by meaning: messages that say the same in other words (only close ones; they are marked)
+        try {
+          const sr = await api('GET', `/api/search/semantic?q=${encodeURIComponent(term)}`);
+          const best = sr.results[0]?.score || 0;
+          const have = new Set(r.results.map((x) => x.message.id));
+          meaning = sr.results.filter((x) => x.score >= Math.max(0.82, best - 0.04) && !have.has(x.message.id)).slice(0, 4);
+        } catch { /* the usual results stay */ }
+      }
       if (mine !== seq) return;
-      remote = r.results.slice(0, 6).map((x, i) => ({
+      remote = [...r.results.slice(0, 6).map((x) => ({ x, sem: false })), ...meaning.map((x) => ({ x, sem: true }))].map(({ x, sem }, i) => ({
         type: 'message', label: previewText(x.message).slice(0, 90), sub: `${x.chat_title}${x.sender_name && x.chat_type !== 'direct' ? ` · ${x.sender_name}` : ''}`,
-        kind: t('pal.message'), ico: 'search', s: 1 - i / 100,
+        kind: sem ? `\u2728 ${t('sem.kind')}` : t('pal.message'), ico: sem ? 'bolt' : 'search', s: (sem ? 0.5 : 1) - i / 100,
         run: () => { fire('open-chat', x.message.chat_id); setTimeout(() => fire('jump', { chatId: x.message.chat_id, msgId: x.message.id }), 80); },
       }));
       build();

@@ -58,7 +58,7 @@ publicPage.get('/c/:slug', (req, res) => {
 <link rel="canonical" href="${esc(`${origin}/c/${chat.slug}`)}"><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/c-page.css"></head>
 <body><main class="pp">
 <header class="pp-head"><a class="pp-brand" href="/"><img src="/icon.svg" alt="" width="36" height="36"> Suhbat-dosh</a></header>
-<section class="pp-channel"><h1>${esc(chat.title)}</h1>${chat.description ? `<p>${body(chat.description)}</p>` : ''}<p class="pp-meta">${subs} подписчиков</p>
+<section class="pp-channel"><h1>${esc(chat.title)}</h1>${chat.description ? `<p>${body(chat.description)}</p>` : ''}<p class="pp-meta">Подписчиков: ${subs}</p>
 <a class="pp-join" href="/#/join/${esc(chat.invite_code)}">Открыть в Suhbat-dosh</a></section>
 ${posts.length ? posts.map((m) => postHtml(chat.slug, m)).join('\n') : '<p class="pp-empty">Пока нет записей.</p>'}
 ${more ? `<p class="pp-more"><a href="/c/${esc(chat.slug)}?before=${posts[posts.length - 1].id}">Более ранние записи</a></p>` : ''}

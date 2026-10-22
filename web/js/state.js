@@ -41,6 +41,8 @@ export function fire(evt, data) {
   }
 }
 
+export const currentTopic = (chatId) => (S.chats.get(chatId)?.forum ? S.topic?.get(chatId) || 0 : null);
+
 export function bucket(chatId) {
   if (!S.msgs.has(chatId)) S.msgs.set(chatId, { list: [], hasMore: true, detached: false, loading: false });
   return S.msgs.get(chatId);
