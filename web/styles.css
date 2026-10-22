@@ -1750,3 +1750,19 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .note-who { flex: 1; color: var(--brand); font-weight: 700; }
 .note-text { flex: 1; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 14px; padding: 14px; font: inherit; font-size: 1.02rem; line-height: 1.55; background: var(--surface); color: var(--text); min-height: 50vh; }
 .note-text:focus { outline: 2px solid var(--brand); }
+
+/* ===== voice rooms ===== */
+.gcall.min.room { width: min(300px, calc(100vw - 24px)); grid-template-rows: auto auto auto; background: #1b1c20; }
+.gcall.min.room .gc-controls { display: flex; padding: 4px 10px 12px; margin: 0 auto; gap: 14px; }
+.gcall.min.room .gc-btn { width: 44px; height: 44px; }
+.gcall.min.room .gc-btn.end { width: 48px; height: 48px; }
+.gc-dock { display: none; flex-wrap: wrap; gap: 8px; padding: 0 12px 8px; }
+.gcall.min.room .gc-dock { display: flex; }
+.gc-dock-user { border-radius: 50%; padding: 2px; border: 3px solid transparent; transition: border-color .15s; }
+.gc-dock-user.speaking, .gc-tile.speaking { border-color: #3ddc84; box-shadow: 0 0 0 2px #3ddc84; }
+.gc-tile { border: 3px solid transparent; }
+.rooms-list { display: grid; gap: 8px; }
+.room-row { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; background: var(--surface-2); }
+.room-row .room-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.room-who { display: flex; gap: 4px; flex-wrap: wrap; }
+.gcall.min.room .gc-time { display: none; }

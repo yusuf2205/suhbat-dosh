@@ -11,7 +11,7 @@ export const ROOM_MAX = 6;
 const rooms = new Map(); // chatId -> { chatId, video, startedAt, startedBy, parts: Map<userId, { audio, video }> }
 
 const view = (r) => ({
-  chat_id: r.chatId, video: r.video, started_at: r.startedAt, started_by: r.startedBy,
+  chat_id: r.chatId, video: r.video, room: !!r.room, started_at: r.startedAt, started_by: r.startedBy,
   participants: [...r.parts.entries()].map(([id, s]) => ({ id, name: getUser(id)?.name || '', audio: s.audio, video: s.video })),
 });
 
@@ -56,9 +56,9 @@ export function handleGroupSignal(userId, m) {
       if (other && other.chatId !== chatId) return reject('busy');
       let r = rooms.get(chatId);
       if (!r) {
-        r = { chatId, video: !!m.video, startedAt: now(), startedBy: userId, parts: new Map() };
+        r = { chatId, video: !!m.video, room: !!m.room && !m.video, startedAt: now(), startedBy: userId, parts: new Map() };
         rooms.set(chatId, r);
-        audit(userId, 'gcall.start', { chat_id: chatId, details: { video: r.video } });
+        audit(userId, 'gcall.start', { chat_id: chatId, details: { video: r.video, room: r.room } });
       }
       if (!r.parts.has(userId) && r.parts.size >= ROOM_MAX) return reject('full');
       const peers = [...r.parts.keys()].filter((id) => id !== userId);

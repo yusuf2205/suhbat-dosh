@@ -10,6 +10,7 @@ import { openCalendar } from './events.js';
 import { nearbyAvailable, openNearby } from './nearby.js';
 import { openTasks, refreshTaskCount } from './tasks.js';
 import { focusOn, openFocus } from './focus.js';
+import { openRooms, roomsLive } from './rooms.js';
 
 // Left navigation rail (desktop / tablet): Messages, Contacts, Calls, Saved, Archive, Settings.
 let el;
@@ -38,6 +39,7 @@ export function mount(node) {
     on('me', render);
     on('chats', renderBadge);
     on('tasks', render);
+    on('gcalls', render);
     on('focus', render);
     refreshTaskCount();
   }
@@ -69,6 +71,7 @@ function render() {
       item('drive', 'folder', t('drive.title'), { onclick: openDrive }),
       item('calendar', 'clock', t('ev.calendar'), { onclick: openCalendar }),
       item('tasks', 'tasks', t('task.title'), { onclick: openTasks }),
+      item('rooms', 'speaker', t('room.title_all'), { onclick: openRooms, active: roomsLive() > 0 }),
       item('focus', 'moon', t('focus.title'), { onclick: openFocus, active: focusOn() }),
       nearbyAvailable() ? item('nearby', 'wifi', t('nb.title'), { onclick: openNearby }) : null,
       item('archive', 'archive', t('nav.archive'), { active: S.view === 'archive', onclick: () => setView('archive') }),

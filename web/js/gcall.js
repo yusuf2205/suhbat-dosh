@@ -28,7 +28,7 @@ export function handleGroupCallEvent(ev) {
       const had = S.gcalls.has(ev.chat_id);
       if (ev.ended || !ev.participants?.length) S.gcalls.delete(ev.chat_id);
       else S.gcalls.set(ev.chat_id, ev);
-      if (!had && S.gcalls.has(ev.chat_id) && ev.started_by !== S.me.id && cur?.chatId !== ev.chat_id) {
+      if (!had && S.gcalls.has(ev.chat_id) && !ev.room && ev.started_by !== S.me.id && cur?.chatId !== ev.chat_id) {
         const c = S.chats.get(ev.chat_id);
         toast(`${ev.participants.find((p) => p.id === ev.started_by)?.name || ''} ${t('gcall.started')} · ${c ? chatTitle(c) : ''}`, 6000);
         if (S.prefs.sound) beep();
@@ -168,10 +168,11 @@ function dropPeer(id) {
 }
 
 // ---------------------------------------------------------------- local media + UI
-export async function joinGroupCall(chatId, video = false) {
+export async function joinGroupCall(chatId, video = false, { room = false } = {}) {
   const c = S.chats.get(chatId);
   if (!c || c.type !== 'group') return;
   if (cur) { if (cur.chatId === chatId) { cur.ui.classList.remove('min'); return; } return toast(t('gcall.err_busy')); }
+  if (room) video = false;
   if (inCall()) return toast(t('gcall.err_busy'));
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) return toast(t('call.insecure'), 6000);
   let local;
@@ -185,10 +186,10 @@ export async function joinGroupCall(chatId, video = false) {
   }
   cur = {
     chatId, local, video, peers: new Map(), ui: null, started: Date.now(), timer: null,
-    ice: [{ urls: ['stun:stun.l.google.com:19302'] }], audioOn: true,
+    ice: [{ urls: ['stun:stun.l.google.com:19302'] }], audioOn: true, room,
   };
   buildUi(c);
-  wsSend({ type: 'gcall.join', chat_id: chatId, video });
+  wsSend({ type: 'gcall.join', chat_id: chatId, video, room });
   fire('gcalls');
 }
 
@@ -209,7 +210,7 @@ function buildUi(c) {
   cam.onclick = () => toggleCamera(cam);
   end.onclick = () => leaveGroupCall();
   const nat = window.SuhbatNative;
-  let spkOn = video;
+  let spkOn = cur.video;
   const spk = nat?.setSpeaker ? h('button', { class: 'gc-btn', type: 'button', 'aria-label': t('call.speaker_on'), onclick: () => {
     spkOn = !spkOn;
     try { nat.setSpeaker(spkOn); } catch { /* ignore */ }
@@ -218,7 +219,8 @@ function buildUi(c) {
   if (spk && !spkOn) spk.classList.add('off');
   try { nat?.callAudio?.(true, spkOn); } catch { /* ignore */ }
   cur.ui = h('div', { class: 'gcall', role: 'dialog', 'aria-label': t('gcall.title') },
-    h('div', { class: 'gc-head' }, min, h('b', { class: 'ellipsis' }, `${t('gcall.title')} · ${chatTitle(c)}`), time),
+    h('div', { class: 'gc-head' }, min, h('b', { class: 'ellipsis' }, `${cur.room ? t('room.title') : t('gcall.title')} · ${chatTitle(c)}`), time),
+    (cur.dock = h('div', { class: 'gc-dock' })),
     grid,
     h('div', { class: 'gc-controls' }, mic, cam, ...(spk ? [spk] : []), end));
   cur.grid = grid;
@@ -226,8 +228,51 @@ function buildUi(c) {
   cur.timeEl = time;
   cur.timer = setInterval(() => { time.textContent = formatDuration((Date.now() - cur.started) / 1000); }, 1000);
   if (!cur.local.getVideoTracks().length) cam.classList.add('off');
+  if (cur.room) cur.ui.classList.add('min', 'room'); // a room is a quiet strip in the corner, not a full screen
   document.body.append(cur.ui);
+  cur.meter = setInterval(measure, 140);
   drawTiles();
+}
+
+// ---------------------------------------------------------------- who is speaking
+function levelOf(entry) {
+  if (!entry.an) return 0;
+  entry.an.getByteTimeDomainData(entry.buf);
+  let sum = 0;
+  for (const v of entry.buf) sum += ((v - 128) / 128) ** 2;
+  return Math.sqrt(sum / entry.buf.length);
+}
+
+function meterFor(id, stream) {
+  cur.meters ||= new Map();
+  const have = cur.meters.get(id);
+  if (have?.stream === stream && have.tracks === stream.getAudioTracks().length) return have;
+  if (!stream || !stream.getAudioTracks().length) return null;
+  try {
+    cur.ac ||= new (window.AudioContext || window.webkitAudioContext)();
+    const an = cur.ac.createAnalyser();
+    an.fftSize = 512;
+    cur.ac.createMediaStreamSource(stream).connect(an);
+    const e = { stream, an, buf: new Uint8Array(an.fftSize), tracks: stream.getAudioTracks().length };
+    cur.meters.set(id, e);
+    return e;
+  } catch { return null; }
+}
+
+function measure() {
+  if (!cur) return;
+  const speaking = new Set();
+  const mine = meterFor(S.me.id, cur.local);
+  if (mine && cur.audioOn && levelOf(mine) > 0.04) speaking.add(S.me.id);
+  for (const p of cur.peers.values()) {
+    const m = meterFor(p.user.id, p.stream);
+    if (m && p.audio !== false && levelOf(m) > 0.04) speaking.add(p.user.id);
+  }
+  const same = cur.speaking && cur.speaking.size === speaking.size && [...speaking].every((x) => cur.speaking.has(x));
+  cur.speaking = speaking;
+  if (same) return;
+  for (const [id, t0] of cur.tiles || []) t0.el.classList.toggle('speaking', speaking.has(id));
+  for (const el of cur.dock?.children || []) el.classList.toggle('speaking', speaking.has(Number(el.dataset.uid)));
 }
 
 function announce() {
@@ -295,6 +340,9 @@ function drawTiles() {
     order.push(t0.el);
   }
   for (const id of [...cur.tiles.keys()]) if (!live.has(id)) cur.tiles.delete(id);
+  if (cur.dock) {
+    clear(cur.dock).append(...[S.me, ...[...cur.peers.values()].map((p) => p.user)].map((u) => h('div', { class: `gc-dock-user${cur.speaking?.has(u.id) ? ' speaking' : ''}`, dataset: { uid: String(u.id) }, title: u.name }, avatar(u, 'sm'))));
+  }
   order.forEach((el, i) => { if (cur.grid.children[i] !== el) cur.grid.insertBefore(el, cur.grid.children[i] || null); });
   for (const ch of [...cur.grid.children]) if (!order.includes(ch)) ch.remove();
   cur.grid.dataset.n = String(Math.min(order.length, 6));
@@ -310,6 +358,8 @@ function teardown() {
   try { window.SuhbatNative?.callAudio?.(false, false); } catch { /* ignore */ }
   if (!cur) return;
   clearInterval(cur.timer);
+  clearInterval(cur.meter);
+  try { cur.ac?.close(); } catch { /* ignore */ }
   for (const p of cur.peers.values()) { try { p.pc?.close(); } catch { /* ignore */ } }
   cur.local.getTracks().forEach((x) => x.stop());
   cur.ui?.remove();

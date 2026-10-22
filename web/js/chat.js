@@ -347,8 +347,8 @@ export function renderGroupCallBar(c = activeChat()) {
   const mine = groupCallChatId() === c.id;
   clear(view.gbar).append(
     icon('phone', 18),
-    h('span', { class: 'grow ellipsis' }, h('b', null, t('gcall.in_progress')), ` · ${room.participants.map((p) => p.name).slice(0, 3).join(', ')}${room.participants.length > 3 ? ` +${room.participants.length - 3}` : ''}`),
-    h('button', { class: 'btn', type: 'button', onclick: () => joinGroupCall(c.id, !!room.video) }, mine ? t('gcall.open') : t('gcall.join')));
+    h('span', { class: 'grow ellipsis' }, h('b', null, room.room ? t('room.title') : t('gcall.in_progress')), ` · ${room.participants.map((p) => p.name).slice(0, 3).join(', ')}${room.participants.length > 3 ? ` +${room.participants.length - 3}` : ''}`),
+    h('button', { class: 'btn', type: 'button', onclick: () => joinGroupCall(c.id, !!room.video, { room: !!room.room }) }, mine ? t('gcall.open') : t('gcall.join')));
 }
 
 function typingUsers(c) {
@@ -1548,6 +1548,7 @@ function chatMoreMenu(anchor) {
     ...(c.type === 'direct' || c.my_role !== 'member' ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
     { label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) },
     ...(c.type === 'group' ? [
+      ...(!c.imported ? [{ label: t('room.title'), onClick: () => joinGroupCall(c.id, false, { room: true }) }] : []),
       { label: t('gcall.audio'), onClick: () => joinGroupCall(c.id, false) },
       { label: t('gcall.video'), onClick: () => joinGroupCall(c.id, true) },
     ] : []),
