@@ -1739,3 +1739,14 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .imp-chat-head span { display: grid; min-width: 0; }
 .imp-me { display: grid; gap: 4px; }
 .imp-bar { height: 10px; }
+
+/* ===== shared notes ===== */
+.note-card { display: grid; gap: 8px; min-width: min(260px, 70vw); }
+.note-preview { overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.note-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.modal.note-editor { width: min(760px, 96vw); height: min(86vh, 900px); display: flex; flex-direction: column; }
+.modal.note-editor .modal-body { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.note-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.note-who { flex: 1; color: var(--brand); font-weight: 700; }
+.note-text { flex: 1; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 14px; padding: 14px; font: inherit; font-size: 1.02rem; line-height: 1.55; background: var(--surface); color: var(--text); min-height: 50vh; }
+.note-text:focus { outline: 2px solid var(--brand); }

@@ -30,6 +30,7 @@ import { mini, wireMini } from './miniapps.js';
 import { tasks, wireTasks } from './tasks.js';
 import { digest } from './digest.js';
 import { importer } from './importer.js';
+import { notes, wireNotes } from './notes.js';
 import { normalizeFocus } from '../../shared/focus.js';
 import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
@@ -420,6 +421,7 @@ api.use(mini);
 api.use(tasks);
 api.use(digest);
 api.use(importer);
+api.use(notes);
 api.use(transcribe);
 api.use(pushRouter);
 api.use(safety);
@@ -718,6 +720,7 @@ wireNotify({ postMessage, pushChat });
 wireFeatures({ postMessage });
 wireMini({ postMessage });
 wireTasks({ postMessage });
+wireNotes({ postMessage });
 
 api.get('/chats', (req, res) => res.json({ chats: listChats(req.user.id) }));
 

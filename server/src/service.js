@@ -97,6 +97,15 @@ export function transcriptOut(row) {
   return { status: t.status, lang: t.lang, text: t.text || '', words, model: t.model, error: t.error };
 }
 
+export function noteOut(row) {
+  const n = q.get('SELECT * FROM notes WHERE message_id = ?', row.id);
+  if (!n) return null;
+  return {
+    id: n.id, title: n.title, rev: n.rev, length: n.body.length, preview: n.body.replace(/\s+/g, ' ').trim().slice(0, 140),
+    creator_id: n.creator_id, updated_by: n.updated_by, updated_at: n.updated_at,
+  };
+}
+
 export function taskOut(row) {
   const k = q.get('SELECT * FROM tasks WHERE message_id = ?', row.id);
   if (!k) return null;
@@ -184,6 +193,7 @@ export function messageOut(row) {
     event: row.kind === 'event' ? eventOut(row) : null,
     mini: row.kind === 'miniapp' ? miniOut(row) : null,
     task: row.kind === 'task' ? taskOut(row) : null,
+    note: row.kind === 'note' ? noteOut(row) : null,
     ...(row.urgent ? { urgent: true } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,

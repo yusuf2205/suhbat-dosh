@@ -7,6 +7,7 @@ import { eventNode, openEventCreate } from './events.js';
 import { miniNode, openMiniCreate } from './mini.js';
 import { openTaskCreate, openTasks, taskNode } from './tasks.js';
 import { openDigest } from './digest.js';
+import { noteNode, openNoteCreate } from './notes.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -463,6 +464,7 @@ function renderComposer() {
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
       { label: t('task.new'), onClick: () => openTaskCreate(S.active) },
+      { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
         const r = await recordVideoNote();
@@ -994,7 +996,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.urgent, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1067,8 +1069,9 @@ function buildMessage(m, c) {
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
   if (m.kind === 'task' && m.task) bubble.append(taskNode(m));
+  if (m.kind === 'note' && m.note) bubble.append(noteNode(m));
   if (m.kind === 'miniapp' && m.mini) bubble.append(miniNode(m));
-  else if ((m.kind === 'poll' && m.poll) || (m.kind === 'event' && m.event) || (m.kind === 'task' && m.task)) { /* the card shows the text */ }
+  else if ((m.kind === 'poll' && m.poll) || (m.kind === 'event' && m.event) || (m.kind === 'task' && m.task) || (m.kind === 'note' && m.note)) { /* the card shows the text */ }
   else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));
