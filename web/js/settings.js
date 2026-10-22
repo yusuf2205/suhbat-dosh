@@ -22,7 +22,6 @@ import { storageSection } from './viewer.js';
 import { DEFAULT_AUTO, autoPolicy, cancelDownload, listDownloads, netClass, onDownload, pauseDownload, resumeDownload, setAutoPolicy } from './downloads.js';
 import { cancel as cancelUpload, listUploads, onUpload, pause as pauseUpload, resume as resumeUpload } from './uploads.js';
 import { callSettingsSection } from './call.js';
-import { openDrive } from './drive.js';
 import { openCalendar } from './events.js';
 import { openNearby } from './nearby.js';
 import { openTasks } from './tasks.js';
@@ -260,7 +259,6 @@ export function openSettings() {
         group(
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           row('edit', t('sn.title'), { onclick: () => { m.close(); openSelfNotes(); } }),
-          row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
           row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } })),

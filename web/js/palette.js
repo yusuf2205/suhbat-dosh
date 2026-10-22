@@ -36,7 +36,6 @@ function actions() {
     ['digest.all_title', 'list', lazy('./digest.js', 'openDigestAll')],
     ['room.title_all', 'speaker', lazy('./rooms.js', 'openRooms')],
     ['ev.calendar', 'clock', lazy('./events.js', 'openCalendar')],
-    ['drive.title', 'folder', lazy('./drive.js', 'openDrive')],
     ['gsearch.title', 'search', lazy('./extras.js', 'openGlobalSearch')],
     ['nav.saved', 'bookmark', lazy('./rail.js', 'openSaved')],
     ['nav.settings', 'settings', lazy('./dialogs.js', 'openSettings')],

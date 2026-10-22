@@ -1,109 +1,20 @@
-// Personal cloud drive: files kept from chats, folders, share links (password / expiry / download limit),
-// and "limit access" for a file you sent.
+// Sharing of files kept in Saved messages (link, password, expiry, download limit, QR code), and "limit access" for a file you sent.
+// There is no separate Drive screen: files live in Saved messages.
 import { h, clear, formatBytes } from './dom.js';
 import { t, errText, getLang } from './i18n.js';
-import { S, fire } from './state.js';
 import { api } from './net.js';
-import { icon } from './icons.js';
-import { confirmDialog, modal, popMenu, toast } from './ui.js';
-import { fileIcon } from './fileicons.js';
+import { modal, popMenu, toast } from './ui.js';
 import { showQr } from './qr.js';
 
 const fmtDate = (ts) => new Date(ts).toLocaleDateString(getLang() === 'uz' ? 'uz-UZ' : 'ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
 const fmtWhen = (ts) => new Date(ts).toLocaleString(getLang() === 'uz' ? 'uz-UZ' : 'ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
-/** "Save to Drive" from a message. */
-export async function saveToDrive(fileId, folder = '') {
+/** Share the file of a message (a message in Saved): a link with an optional password, expiry and download limit, and its QR code. */
+export async function shareMessageFile(m) {
   try {
-    await api('POST', '/api/drive', { file_id: fileId, folder });
-    toast(t('drive.saved'));
+    const r = await api('POST', '/api/drive', { file_id: m.file.id, folder: '' });
+    shareDialog(r.item, () => {});
   } catch (e) { toast(errText(e.code)); }
-}
-
-export async function openDrive() {
-  const state = { items: [], folders: [], folder: null, q: '', used: 0, loading: true };
-  const list = h('div', { class: 'drive-list', role: 'list' });
-  const chips = h('div', { class: 'drive-chips' });
-  const info = h('div', { class: 'drive-info muted' });
-  const search = h('input', { class: 'input', type: 'search', placeholder: t('drive.search'), 'aria-label': t('drive.search') });
-  let m = null;
-
-  const load = async () => {
-    try {
-      const r = await api('GET', '/api/drive');
-      Object.assign(state, r, { loading: false });
-    } catch (e) { state.loading = false; toast(errText(e.code)); }
-    draw();
-  };
-
-  const draw = () => {
-    clear(chips).append(
-      h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.folder === null), onclick: () => { state.folder = null; draw(); } }, t('drive.all')),
-      ...state.folders.map((f) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.folder === f), onclick: () => { state.folder = f; draw(); } }, `\u{1F4C1} ${f}`)));
-    const term = state.q.trim().toLowerCase();
-    const rows = state.items.filter((i) => (state.folder === null || i.folder === state.folder) && (!term || i.name.toLowerCase().includes(term)));
-    clear(info).append(`${t('drive.files')}: ${rows.length} · ${formatBytes(state.used)}`);
-    clear(list);
-    if (state.loading) { list.append(h('p', { class: 'muted' }, t('net.connecting'))); return; }
-    if (!rows.length) { list.append(h('p', { class: 'muted drive-empty' }, state.items.length ? t('drive.nothing') : t('drive.empty'))); return; }
-    for (const it of rows) {
-      const f = it.file;
-      list.append(h('div', { class: 'drive-row', role: 'listitem' },
-        h('a', { class: 'drive-main', href: `${f.url}?dl=1`, download: it.name, title: t('drive.download') },
-          h('span', { class: 'ficon' }, fileIcon(it.name, f.mime, 36)),
-          h('span', { class: 'drive-text' },
-            h('b', { class: 'ellipsis' }, it.name),
-            h('small', { class: 'muted' }, [formatBytes(f.size), fmtDate(it.created_at), it.folder ? `\u{1F4C1} ${it.folder}` : ''].filter(Boolean).join(' · '),
-              it.shares ? h('span', { class: 'drive-linked' }, ` · \u{1F517} ${it.shares}`) : null))),
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('drive.share'), title: t('drive.share'), onclick: () => shareDialog(it, load) }, icon('qr', 20)),
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('msg.more'), onclick: (e) => rowMenu(e.currentTarget, it) }, icon('more', 20))));
-    }
-  };
-
-  const rowMenu = (anchor, it) => popMenu(anchor, [
-    { label: t('drive.download'), onClick: () => { const a = h('a', { href: `${it.file.url}?dl=1`, download: it.name }); document.body.append(a); a.click(); a.remove(); } },
-    { label: t('drive.share'), onClick: () => shareDialog(it, load) },
-    { label: t('drive.rename'), onClick: () => promptText(t('drive.rename'), it.name, async (v) => { await api('PATCH', `/api/drive/${it.id}`, { name: v }); load(); }) },
-    { label: t('drive.move'), onClick: () => promptText(t('drive.folder_name'), it.folder, async (v) => { await api('PATCH', `/api/drive/${it.id}`, { folder: v }); load(); }, t('drive.folder_hint')) },
-    { label: t('drive.remove'), danger: true, onClick: async () => {
-      if (!(await confirmDialog(t('drive.remove_confirm'), { okLabel: t('drive.remove'), danger: true }))) return;
-      try { await api('DELETE', `/api/drive/${it.id}`); load(); } catch (e) { toast(errText(e.code)); }
-    } },
-  ]);
-
-  const upload = h('button', { class: 'btn', type: 'button', onclick: () => picker.click() }, `+ ${t('drive.upload')}`);
-  const picker = h('input', { type: 'file', multiple: true, hidden: true });
-  picker.addEventListener('change', async () => {
-    const files = [...picker.files];
-    picker.value = '';
-    if (!files.length) return;
-    try {
-      const saved = (await api('POST', '/api/chats/saved')).chat;
-      S.chats.set(saved.id, saved);
-      fire('chats');
-      const { attachFiles } = await import('./chat.js');
-      m?.close();
-      await attachFiles(saved.id, files); // goes through the usual resumable upload; it lands in the drive by itself
-      toast(t('drive.uploading'));
-    } catch (e) { toast(errText(e.code)); }
-  });
-  search.addEventListener('input', () => { state.q = search.value; draw(); });
-
-  m = modal({
-    title: t('drive.title'), className: 'drive',
-    body: [h('div', { class: 'drive-bar' }, search, upload), picker, chips, info, list, h('p', { class: 'muted drive-note' }, t('drive.note'))],
-  });
-  draw();
-  load();
-}
-
-function promptText(title, value, onOk, hint = '') {
-  const input = h('input', { class: 'input', value: value || '', maxLength: 120, 'aria-label': title });
-  let m = null;
-  const go = async () => { try { await onOk(input.value.trim()); m.close(); } catch (e) { toast(errText(e.code)); } };
-  m = modal({ title, body: [input, hint ? h('p', { class: 'muted' }, hint) : null, h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '12px' } }, h('button', { class: 'btn', type: 'button', onclick: go }, t('settings.save')))] });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-  setTimeout(() => { input.focus(); input.select(); }, 50);
 }
 
 // ---------------------------------------------------------------- share links

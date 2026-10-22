@@ -2,7 +2,7 @@ import { snapGet, snapSet } from './snap.js';
 import { canCompress, compressImage } from './imgcompress.js';
 import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
 import { canCompressVideo, compressVideo } from './videocompress.js';
-import { accessBadge, accessMenu, saveToDrive } from './drive.js';
+import { accessBadge, accessMenu, shareMessageFile } from './drive.js';
 import { eventNode, openEventCreate } from './events.js';
 import { miniNode, openMiniCreate } from './mini.js';
 import { openTaskCreate, openTasks, taskNode } from './tasks.js';
@@ -431,6 +431,7 @@ function composerBlockReason(c) {
   if (c.can_post) return null;
   if (c.blocked_by_me) return 'blocked_by_me';
   if (c.blocked_me) return 'blocked_me';
+  if (c.imported === 'tgbridge') return 'bridge_ro';
   if (c.type === 'channel') return 'readonly';
   return 'restricted';
 }
@@ -1322,7 +1323,10 @@ function buildFile(m) {
   }
   const node = buildFileInner(m);
   const badge = accessBadge(m, mine);
-  return badge ? h('div', { class: 'file-with-badge' }, node, badge) : node;
+  // in Saved messages a file can be handed on: link (password, expiry, download limit) and QR code
+  const share = S.chats.get(m.chat_id)?.saved && typeof m.id === 'number' && !m.upload
+    ? h('button', { class: 'btn secondary small share-chip', type: 'button', onclick: () => shareMessageFile(m) }, icon('qr', 16), h('span', null, t('sv.share'))) : null;
+  return badge || share ? h('div', { class: 'file-with-badge' }, node, badge, share) : node;
 }
 
 function buildFileInner(m) {
@@ -1397,7 +1401,7 @@ function messageMenu(anchor, m) {
     } });
   }
   if (m.file && !isSecret(c) && typeof m.id === 'number') {
-    items.push({ label: t('drive.save'), onClick: () => saveToDrive(m.file.id) });
+    if (c.saved) items.push({ label: t('sv.share'), onClick: () => shareMessageFile(m) });
     if (mine) items.push({ label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
   }
   if (m.file) {

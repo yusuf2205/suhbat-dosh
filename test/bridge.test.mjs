@@ -1,4 +1,5 @@
-// The Telegram bridge: login by QR, choosing chats, read-only vs two-way, dedupe, disconnect. The bridge container runs in mock mode.
+// The Telegram bridge: the administrator allows people, QR login per account, personal chats mirrored quietly by default,
+// groups only when chosen, read-only vs two-way, history, dedupe, disconnect. The bridge container runs in mock mode.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -47,60 +48,116 @@ async function phoneUser(phone, name) {
   const v = await call('', 'POST', '/api/auth/verify', { phone, code: a.data.dev_code, name });
   return { cookie: v.cookie, user: v.data.user };
 }
-const mock = (body) => fetch(`http://127.0.0.1:${BPORT}/mock/message`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+const mock = (uid, body) => fetch(`http://127.0.0.1:${BPORT}/mock/message?u=${uid}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 120)); } return null; };
+async function link(u) {
+  assert.equal((await call(u.cookie, 'POST', '/api/bridge/start')).status, 200);
+  const done = await until(async () => { const r = await call(u.cookie, 'GET', '/api/bridge/poll'); return r.data.status === 'done' ? r.data : null; });
+  assert.ok(done, 'the login finished');
+  return done;
+}
 
-test('only an administrator may link; the bridge door needs the secret', { skip: !havePy }, async () => {
-  const admin = await phoneUser('+998900002001', 'Админ');
-  const plain = await phoneUser('+998900002002', 'Обычный');
-  assert.equal((await call(plain.cookie, 'POST', '/api/bridge/start')).status, 403);
-  assert.equal((await call(plain.cookie, 'GET', '/api/bridge')).data.available, false);
+let admin; let friend;
+test('the bridge door needs the secret; only people the administrator allowed may link', { skip: !havePy }, async () => {
+  admin = await phoneUser('+998900002001', 'Админ');
+  friend = await phoneUser('+998900002002', 'Обычный');
+  assert.equal((await call('', 'POST', '/api/bridge/in', { owner: 1, tg_chat: '1', tg_msg: 1, text: 'x' })).status, 403, 'no secret');
+  assert.equal((await call('', 'POST', '/api/bridge/in', { owner: 1, tg_chat: '1', tg_msg: 1, text: 'x' }, { Authorization: 'Bearer wrong' })).status, 403);
+  assert.equal((await fetch(`http://127.0.0.1:${BPORT}/dialogs?u=1`)).status, 403, 'the bridge itself refuses calls without the secret');
+  assert.equal((await call(friend.cookie, 'POST', '/api/bridge/start')).status, 403);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, false);
   assert.equal((await call(admin.cookie, 'GET', '/api/bridge')).data.available, true);
-  assert.equal((await call('', 'POST', '/api/bridge/in', { tg_chat: '1', tg_msg: 1, text: 'x' })).status, 403, 'no secret');
-  assert.equal((await call('', 'POST', '/api/bridge/in', { tg_chat: '1', tg_msg: 1, text: 'x' }, { Authorization: 'Bearer wrong' })).status, 403);
-  assert.equal((await fetch(`http://127.0.0.1:${BPORT}/dialogs`)).status, 403, 'the bridge itself refuses calls without the secret');
+  // only an administrator can allow; a plain user cannot
+  assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: true })).status, 403);
+  assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: true })).status, 200);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.available, true);
+  const list = (await call(admin.cookie, 'GET', '/api/admin/bridge')).data;
+  assert.equal(list.users.find((x) => x.id === friend.user.id).allowed, true);
 });
 
-test('login by QR, pick chats, receive, answer in a two-way chat only, disconnect', { skip: !havePy }, async () => {
-  const admin = await phoneUser('+998900002001', 'Админ');
-  const plain = await phoneUser('+998900002002', 'Обычный');
-  const start = await call(admin.cookie, 'POST', '/api/bridge/start');
-  assert.equal(start.status, 200);
-  assert.match(start.data.url, /^tg:\/\/login\?token=/);
-  const done = await until(async () => { const r = await call(admin.cookie, 'GET', '/api/bridge/poll'); return r.data.status === 'done' ? r.data : null; });
-  assert.ok(done, 'the login finished');
-  assert.equal(done.account.username, 'mock_user');
-  assert.equal((await call(admin.cookie, 'GET', '/api/bridge')).data.linked, true);
-  const dlg = (await call(admin.cookie, 'GET', '/api/bridge/dialogs')).data.dialogs;
-  assert.equal(dlg.length, 3);
-  // nothing is mirrored until chosen
-  assert.equal((await mock({ chat: -1001, msg: 1, text: 'ещё не выбран' })).forwarded, false);
-  const put = await call(admin.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', two_way: true }, { id: 777, title: 'Дилшод', two_way: false }] });
+test('personal chats are mirrored by default and quietly, history comes along, groups only when chosen', { skip: !havePy }, async () => {
+  const done = await link(admin);
+  assert.equal(done.account.username, `mock_${admin.user.id}`);
+  const st = (await call(admin.cookie, 'GET', '/api/bridge')).data;
+  assert.equal(st.linked, true);
+  assert.equal(st.auto_private, true);
+  // the history of the personal chats arrives by itself
+  const chats = await until(async () => { const r = (await call(admin.cookie, 'GET', '/api/bridge')).data.chats; return r.length >= 2 ? r : null; });
+  assert.ok(chats, 'the personal chats were created');
+  assert.equal(chats.every((c) => c.kind === 'user' && !c.two_way), true);
+  const dil = chats.find((c) => c.tg_chat === '777');
+  const hist = await until(async () => { const r = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages; return r?.length >= 3 ? r : null; });
+  assert.ok(hist, 'the old messages were copied');
+  const info = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}`)).data.chat;
+  assert.equal(info.muted, true, 'mirrored chats are muted: no notifications');
+  assert.equal(info.unread, 0, 'history is not unread');
+  assert.equal(info.can_post, false, 'read-only until answering is allowed');
+  // a new message in a personal chat: arrives unread, once even if delivered twice, still muted
+  assert.equal((await mock(admin.user.id, { chat: 777, kind: 'user', title: 'Дилшод (мок)', msg: 50, author: 'Дилшод', text: 'Привет, как дела?' })).forwarded, true);
+  await mock(admin.user.id, { chat: 777, kind: 'user', msg: 50, author: 'Дилшод', text: 'Привет, как дела?' });
+  const after1 = await until(async () => { const c = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}`)).data.chat; return c.unread === 1 ? c : null; });
+  assert.ok(after1, 'one new unread message');
+  assert.equal((await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages.length, 4);
+  // a brand-new personal chat appears by itself
+  await mock(admin.user.id, { chat: 999, kind: 'user', title: 'Новый человек', msg: 1, author: 'Новый человек', text: 'Здравствуйте' });
+  assert.ok(await until(async () => (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '999')));
+  // a group is NOT mirrored until chosen
+  assert.equal((await mock(admin.user.id, { chat: -1001, kind: 'group', msg: 1, text: 'ещё не выбрана' })).forwarded, false);
+  const put = await call(admin.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: true }] });
   assert.equal(put.status, 200);
-  assert.equal(put.data.chats.length, 2);
-  const family = put.data.chats.find((c) => c.tg_chat === '-1001').chat_id;
-  const dil = put.data.chats.find((c) => c.tg_chat === '777').chat_id;
-  // an incoming message lands unread, with its author, once even when delivered twice
-  assert.equal((await mock({ chat: -1001, msg: 11, author: 'Бабушка', text: 'Привет всем' })).forwarded, true);
-  await mock({ chat: -1001, msg: 11, author: 'Бабушка', text: 'Привет всем' });
-  const msgs = await until(async () => { const r = (await call(admin.cookie, 'GET', `/api/chats/${family}/messages`)).data.messages; return r?.length ? r : null; });
-  assert.equal(msgs.length, 1);
-  assert.equal(msgs[0].import_author, 'Бабушка');
-  const chat = (await call(admin.cookie, 'GET', `/api/chats/${family}`)).data.chat;
-  assert.equal(chat.unread, 1);
-  assert.equal(chat.imported, 'tgbridge');
-  // answering: allowed in the two-way chat, refused in the read-only one
-  assert.equal((await call(admin.cookie, 'POST', `/api/chats/${dil}/messages`, { text: 'нельзя' })).status, 403);
-  assert.equal((await call(admin.cookie, 'GET', `/api/chats/${dil}`)).data.chat.can_post, false);
-  const sent = await call(admin.cookie, 'POST', `/api/chats/${family}/messages`, { text: 'Я дома' });
+  const family = put.data.chats.find((c) => c.tg_chat === '-1001');
+  assert.equal(family.two_way, true);
+  await mock(admin.user.id, { chat: -1001, kind: 'group', msg: 11, author: 'Бабушка', text: 'Приходите на обед' });
+  assert.ok(await until(async () => (await call(admin.cookie, 'GET', `/api/chats/${family.chat_id}/messages`)).data.messages?.length === 1));
+  // answering: refused in a read-only chat, allowed in a two-way chat
+  assert.equal((await call(admin.cookie, 'POST', `/api/chats/${dil.chat_id}/messages`, { text: 'нельзя' })).status, 403);
+  const sent = await call(admin.cookie, 'POST', `/api/chats/${family.chat_id}/messages`, { text: 'Я дома' });
   assert.equal(sent.status, 201);
   assert.equal(sent.data.message.import_author, 'Мок Аккаунт');
-  // another person cannot see mirrored chats
-  assert.equal((await call(plain.cookie, 'GET', `/api/chats/${family}`)).status, 404);
-  // disconnect: the bridge forgets everything, the mirrored chats are removed with it
+  // a personal chat can be switched to two-way
+  const two = await call(admin.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, title: 'Дилшод', kind: 'user', two_way: true }] });
+  assert.equal(two.data.chats.find((c) => c.tg_chat === '777').two_way, true);
+  assert.equal((await call(admin.cookie, 'POST', `/api/chats/${dil.chat_id}/messages`, { text: 'теперь можно' })).status, 201);
+  // a removed personal chat is not created again
+  await call(admin.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 999, title: 'Новый человек', kind: 'user', remove: true }] });
+  await mock(admin.user.id, { chat: 999, kind: 'user', msg: 2, author: 'Новый человек', text: 'ещё одно' });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal((await call(admin.cookie, 'GET', '/api/bridge')).data.chats.some((c) => c.tg_chat === '999'), false);
+  // the copies are never deleted by themselves (there is no retention setting any more)
+  assert.equal((await call(admin.cookie, 'PUT', '/api/bridge/settings', { keep_days: 1 })).status, 404);
+});
+
+test('two accounts side by side; the administrator reads everything; nobody else sees another person\'s copies', { skip: !havePy }, async () => {
+  await link(friend);
+  const mineF = await until(async () => { const r = (await call(friend.cookie, 'GET', '/api/bridge')).data.chats; return r.length >= 2 ? r : null; });
+  assert.ok(mineF, 'the second account got its own chats');
+  const fchat = mineF.find((c) => c.tg_chat === '777');
+  await mock(friend.user.id, { chat: 777, kind: 'user', msg: 77, author: 'Дилшод', text: 'Только для второго аккаунта' });
+  assert.ok(await until(async () => (await call(friend.cookie, 'GET', `/api/chats/${fchat.chat_id}/messages`)).data.messages?.some((m) => m.text.includes('второго'))));
+  // the first account's chat with the same Telegram id is a different chat
+  const adminChat = (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '777');
+  assert.notEqual(adminChat.chat_id, fchat.chat_id);
+  assert.equal((await call(admin.cookie, 'GET', `/api/chats/${adminChat.chat_id}/messages`)).data.messages.some((m) => m.text.includes('второго')), false);
+  assert.equal((await call(friend.cookie, 'GET', `/api/chats/${adminChat.chat_id}`)).status, 404);
+  // the administrator can read the copies of the other account
+  const all = await call(admin.cookie, 'GET', '/api/admin/chats');
+  assert.equal(all.status, 200);
+  const found = (all.data.chats || []).find((c) => c.id === fchat.chat_id);
+  assert.ok(found, 'the administrator sees the mirrored chat in the panel');
+  const msgs = await call(admin.cookie, 'GET', `/api/admin/chats/${fchat.chat_id}/messages`);
+  assert.equal(msgs.status, 200);
+  assert.ok(JSON.stringify(msgs.data).includes('Только для второго аккаунта'));
+  // revoking the permission ends that person's session at once; the copies stay
+  assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: false })).status, 200);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.linked, false);
+  assert.equal((await call(friend.cookie, 'GET', `/api/chats/${fchat.chat_id}`)).status, 200, 'the copies are kept');
+  assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${friend.user.id}.`)), false, 'the session file of that person is gone');
+  assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${admin.user.id}.`)), true, 'the other account is untouched');
+});
+
+test('disconnect: the bridge forgets the account, the mirrored chats can be removed with it', { skip: !havePy }, async () => {
   assert.equal((await call(admin.cookie, 'POST', '/api/bridge/disconnect', { delete_messages: true })).status, 200);
   assert.equal((await call(admin.cookie, 'GET', '/api/bridge')).data.linked, false);
-  assert.equal((await call(admin.cookie, 'GET', `/api/chats/${family}`)).status, 404);
-  assert.deepEqual(fs.readdirSync(bdir), [], 'no session or list is left on the bridge');
-  assert.equal((await mock({ chat: -1001, msg: 12, text: 'после отключения' })).forwarded, false);
+  assert.deepEqual(fs.readdirSync(bdir).filter((f) => f.includes(`-${admin.user.id}.`)), [], 'no session or list is left');
+  assert.equal((await mock(admin.user.id, { chat: 777, kind: 'user', msg: 90, text: 'после отключения' })).forwarded, false);
 });

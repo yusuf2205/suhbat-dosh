@@ -11,7 +11,6 @@ import { publicShare } from './drive.js';
 import { publicPage } from './publicpage.js';
 import { resumeTranscriptions } from './transcribe.js';
 import { startIndexer } from './semantic.js';
-import { startBridgeSweep } from './bridge.js';
 import { botApi } from './bots.js';
 import { counters, setWsCounter, startMonitors } from './ops.js';
 import { startScheduler } from './features.js';
@@ -267,7 +266,6 @@ server.listen(config.port, config.host, () => {
   startMonitors();
   startScheduler();
   setTimeout(resumeTranscriptions, 5000).unref();
-  startBridgeSweep();
   startIndexer(); // vectors for search by meaning (only when the embed service is configured)
   startSafetyJobs();
   startTurn();

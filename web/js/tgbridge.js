@@ -1,6 +1,7 @@
-// Settings → "Bridge with Telegram": link your own Telegram account by the QR code Telegram shows for a new device, choose the chats to
-// mirror, and decide for each one whether it may be answered from here. Disconnecting ends the session on Telegram's side.
-import { h, clear } from './dom.js';
+// Settings → "Bridge with Telegram": link your own Telegram account by the QR code Telegram shows for a new device. Every personal chat is
+// copied quietly (muted, no notifications); groups and channels only when picked; a chat can be answered from here only when allowed.
+// Disconnecting ends the session on Telegram's side.
+import { h } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S } from './state.js';
 import { api } from './net.js';
@@ -21,11 +22,11 @@ export function openBridge() {
   const fail = (e) => toast(e.status === 0 ? t('net.offline') : errText(e.code));
 
   async function draw() {
+    clearTimeout(timer);
     let st;
     try { st = await api('GET', '/api/bridge'); } catch (e) { fail(e); win.close(); return; }
     if (!alive) return;
     if (!st.available) return win.setBody(h('p', { class: 'muted' }, t('br.unavailable')));
-    if (st.busy) return win.setBody(h('p', { class: 'muted' }, t('br.busy')));
     if (!st.running && !st.linked) return win.setBody(h('p', { class: 'muted' }, t('br.not_running')), h('code', { class: 'br-cmd' }, 'docker compose --profile tgbridge up -d --build tgbridge'));
     return st.linked ? connected(st) : intro();
   }
@@ -40,7 +41,7 @@ export function openBridge() {
       h('h4', null, t('br.safe_title')),
       h('ul', { class: 'br-list' }, ['br.safe1', 'br.safe2', 'br.safe3', 'br.safe4', 'br.safe5'].map((k) => h('li', null, t(k)))),
       h('h4', null, t('br.risk_title')),
-      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3'].map((k) => h('li', null, t(k)))),
+      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4'].map((k) => h('li', null, t(k)))),
       h('label', { class: 'br-ack' }, ok, h('span', null, t('br.ack'))), go);
   }
 
@@ -54,15 +55,16 @@ export function openBridge() {
       h('div', { class: 'qrlogin' }, box, status, h('ol', { class: 'qrlogin-steps' }, ['br.step1', 'br.step2', 'br.step3'].map((k) => h('li', null, t(k))))),
       h('button', { class: 'btn link', type: 'button', onclick: () => draw() }, t('common.cancel')));
     const until = Date.now() + (s.expires_in || 120) * 1000;
+    const again = () => box.replaceChildren(h('button', { class: 'btn secondary', type: 'button', onclick: () => qrStep() }, t('qrl.refresh')));
     const tick = async () => {
       if (!alive) return;
-      if (Date.now() > until + 5000) { status.textContent = t('qrl.expired'); box.replaceChildren(h('button', { class: 'btn secondary', type: 'button', onclick: () => qrStep() }, t('qrl.refresh'))); return; }
+      if (Date.now() > until + 5000) { status.textContent = t('qrl.expired'); again(); return; }
       try {
         const r = await api('GET', '/api/bridge/poll');
         if (r.url && r.url !== s.url && r.status === 'waiting') { s.url = r.url; box.replaceChildren(qrCanvas(r.url, 240)); }
-        if (r.status === 'done') { toast(t('br.linked')); draw(); return; }
+        if (r.status === 'done') { toast(t('br.linked')); draw(); setTimeout(() => { if (alive && win.el.querySelector('.br-account') && !win.el.querySelector('.br-pick')) draw(); }, 6000); return; }
         if (r.status === 'password') { passwordStep(); return; }
-        if (r.status === 'expired' || r.status === 'error') { status.textContent = t(r.status === 'error' ? 'br.error' : 'qrl.expired'); box.replaceChildren(h('button', { class: 'btn secondary', type: 'button', onclick: () => qrStep() }, t('qrl.refresh'))); return; }
+        if (r.status === 'expired' || r.status === 'error') { status.textContent = t(r.status === 'error' ? 'br.error' : 'qrl.expired'); again(); return; }
       } catch (e) { if (e.status !== 0) { fail(e); return; } }
       timer = setTimeout(tick, 2000);
     };
@@ -74,7 +76,7 @@ export function openBridge() {
     const err = h('div', { class: 'err', role: 'alert' });
     const go = async () => {
       err.textContent = '';
-      try { await api('POST', '/api/bridge/password', { password: pw.value }); pw.value = ''; toast(t('br.linked')); draw(); } catch (e) { err.textContent = e.code === 'wrong_password' ? t('br.wrong_password') : errText(e.code); }
+      try { await api('POST', '/api/bridge/password', { password: pw.value }); pw.value = ''; toast(t('br.linked')); draw(); setTimeout(() => { if (alive && win.el.querySelector('.br-account') && !win.el.querySelector('.br-pick')) draw(); }, 6000); } catch (e) { err.textContent = e.code === 'wrong_password' ? t('br.wrong_password') : errText(e.code); }
     };
     pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     win.setBody(h('p', null, t('br.password_hint')), pw, err, h('button', { class: 'btn', type: 'button', onclick: go }, t('login.verify')));
@@ -83,24 +85,51 @@ export function openBridge() {
 
   // ---------------------------------------------------------- linked
   function connected(st) {
-    const keep = h('select', { class: 'input', 'aria-label': t('br.keep') }, [[0, 'br.keep_all'], [30, 'br.keep_30'], [7, 'br.keep_7'], [1, 'br.keep_1']].map(([v, k]) => h('option', { value: String(v), selected: st.keep_days === v }, t(k))));
-    keep.addEventListener('change', async () => { try { await api('PUT', '/api/bridge/settings', { keep_days: Number(keep.value) }); toast(t('br.saved')); } catch (e) { fail(e); } });
+    const auto = h('input', { type: 'checkbox', checked: st.auto_private });
+    auto.addEventListener('change', async () => {
+      try { await api('PUT', '/api/bridge/chats', { auto_private: auto.checked, chats: [] }); toast(t('br.saved')); draw(); } catch (e) { auto.checked = !auto.checked; fail(e); }
+    });
+    const find = h('input', { class: 'input', type: 'search', placeholder: t('br.search'), 'aria-label': t('br.search') });
+    const list = h('div', { class: 'br-chats' });
+    const drawList = () => {
+      const term = find.value.trim().toLowerCase();
+      const rows = st.chats.filter((c) => !term || c.title.toLowerCase().includes(term));
+      list.replaceChildren(...(rows.length ? rows.map((c) => {
+        const two = h('input', { type: 'checkbox', checked: c.two_way });
+        two.addEventListener('change', async () => {
+          try { await api('PUT', '/api/bridge/chats', { chats: [{ id: c.tg_chat, title: c.title, kind: c.kind, two_way: two.checked }] }); c.two_way = two.checked; toast(t('br.saved')); } catch (e) { two.checked = !two.checked; fail(e); }
+        });
+        return h('div', { class: 'br-chat' },
+          h('span', { class: 'br-chat-name' }, h('b', null, c.title), h('small', { class: 'muted' }, t(`br.type_${c.kind}`))),
+          h('label', { class: 'br-pick-two', title: t('br.two_hint') }, two, h('span', null, t('br.answer_here'))),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('br.stop_chat'), title: t('br.stop_chat'), onclick: async () => {
+            if (!(await confirmDialog(t('br.stop_confirm', { name: c.title }), { okLabel: t('br.stop_chat') }))) return;
+            try { await api('PUT', '/api/bridge/chats', { chats: [{ id: c.tg_chat, title: c.title, kind: c.kind, remove: true }] }); draw(); } catch (e) { fail(e); }
+          } }, icon('close', 18)));
+      }) : [h('p', { class: 'muted' }, st.chats.length ? t('sn.none_found') : t('br.no_chats'))]));
+    };
+    find.addEventListener('input', drawList);
+    drawList();
+    const sync = st.backfill ? h('p', { class: 'br-sync', role: 'status' }, t('br.syncing', { done: st.backfill.done, total: st.backfill.total })) : null;
+    if (sync) timer = setTimeout(draw, 4000);
     win.setBody(
       h('div', { class: 'br-account' }, icon('telegram', 24), h('span', null, h('b', null, st.account.name || 'Telegram'), st.account.username ? h('small', { class: 'muted' }, ` @${st.account.username}`) : null), h('span', { class: 'att-badge ok' }, t('br.on'))),
-      h('h4', null, t('br.chats_title')),
-      st.chats.length ? h('div', { class: 'br-chats' }, st.chats.map((c) => h('div', { class: 'br-chat' }, h('b', null, c.title), h('small', { class: 'muted' }, c.two_way ? t('br.two_way') : t('br.read_only'))))) : h('p', { class: 'muted' }, t('br.no_chats')),
-      h('button', { class: 'btn', type: 'button', onclick: () => pick(st) }, t(st.chats.length ? 'br.change_chats' : 'br.pick_chats')),
-      h('h4', null, t('br.keep')), keep, h('p', { class: 'muted small' }, t('br.keep_hint')),
+      ...(sync ? [sync] : []),
+      h('label', { class: 'br-ack' }, auto, h('span', null, h('b', null, t('br.auto')), h('small', { class: 'muted' }, ` ${t('br.auto_hint')}`))),
+      h('h4', null, `${t('br.chats_title')} (${st.chats.length})`), find, list,
+      h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: () => pick(st) }, t('br.add_groups')),
+      h('p', { class: 'muted small' }, t('br.admin_note')),
       h('div', { class: 'br-danger' },
         h('button', { class: 'btn danger', type: 'button', onclick: () => disconnect() }, t('br.disconnect')),
         h('p', { class: 'muted small' }, t('br.revoke_hint'))));
   }
 
+  /** Groups and channels: only those ticked here are copied. */
   async function pick(st) {
     win.setBody(h('div', { class: 'empty' }, t('list.loading')));
     let r;
     try { r = await api('GET', '/api/bridge/dialogs'); } catch (e) { fail(e); draw(); return; }
-    const rows = r.dialogs.map((d) => {
+    const rows = r.dialogs.filter((d) => d.type !== 'user').map((d) => {
       const on = h('input', { type: 'checkbox', checked: d.picked });
       const two = h('input', { type: 'checkbox', checked: d.two_way, disabled: !d.picked });
       on.addEventListener('change', () => { two.disabled = !on.checked; if (!on.checked) two.checked = false; });
@@ -109,12 +138,14 @@ export function openBridge() {
     });
     win.setBody(
       h('p', { class: 'muted' }, t('br.pick_hint')),
-      h('div', { class: 'br-picks' }, rows.map((x) => x.el)),
+      rows.length ? h('div', { class: 'br-picks' }, rows.map((x) => x.el)) : h('p', { class: 'muted' }, t('br.no_groups')),
       h('div', { class: 'row', style: { gap: '8px', marginTop: '10px' } },
         h('button', { class: 'btn secondary', type: 'button', style: { flex: 1 }, onclick: () => draw() }, t('common.cancel')),
         h('button', { class: 'btn', type: 'button', style: { flex: 1 }, onclick: async () => {
-          try { await api('PUT', '/api/bridge/chats', { chats: rows.filter((x) => x.on.checked).map((x) => ({ id: x.d.id, title: x.d.title, two_way: x.two.checked })) }); toast(t('br.saved')); draw(); } catch (e) { fail(e); }
+          const changes = rows.filter((x) => x.on.checked !== x.d.picked || x.two.checked !== !!x.d.two_way).map((x) => ({ id: x.d.id, title: x.d.title, kind: x.d.type, two_way: x.two.checked, remove: !x.on.checked }));
+          try { await api('PUT', '/api/bridge/chats', { chats: changes }); toast(t('br.saved')); draw(); } catch (e) { fail(e); }
         } }, t('settings.save'))));
+    void st;
   }
 
   async function disconnect() {
@@ -126,4 +157,3 @@ export function openBridge() {
   draw();
   return win;
 }
-void clear;

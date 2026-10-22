@@ -5,7 +5,6 @@ import { api } from './net.js';
 import { icon } from './icons.js';
 import { avatar, toast, modal } from './ui.js';
 import { openSettings } from './dialogs.js';
-import { openDrive } from './drive.js';
 import { openCalendar } from './events.js';
 import { nearbyAvailable, openNearby } from './nearby.js';
 import { openTasks, refreshTaskCount } from './tasks.js';
@@ -59,13 +58,12 @@ function item(id, ico, label, { onclick, active, soon } = {}) {
   return b;
 }
 
-const DEFAULT_PINS = ['drive', 'calendar', 'tasks'];
+const DEFAULT_PINS = ['calendar', 'tasks'];
 const pins = () => (Array.isArray(S.prefs.railPins) ? S.prefs.railPins : DEFAULT_PINS);
 
 /** Everything beyond the four main places; each can be pinned to the rail from the "More" window. */
 function tools() {
   return [
-    { id: 'drive', ico: 'folder', label: t('drive.title'), onclick: openDrive },
     { id: 'calendar', ico: 'clock', label: t('ev.calendar'), onclick: openCalendar },
     { id: 'tasks', ico: 'tasks', label: t('task.title'), onclick: openTasks },
     { id: 'selfnotes', ico: 'edit', label: t('sn.title'), onclick: openSelfNotes },

@@ -536,8 +536,31 @@ async function viewJournal() {
 }
 
 // ---------------------------------------------------------------- access: registration, invitations, broadcast
+/** Who may link a Telegram account to their messenger; the copies are readable in "Чаты и переписка". */
+function bridgePanel(data) {
+  const body = h('tbody');
+  const draw = (users) => clear(body).append(...users.map((u) => h('tr', null,
+    h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
+    h('td', null, u.linked
+      ? [h('span', { class: 'pill ok' }, 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages}`]
+      : h('span', { class: 'muted' }, 'не подключён')),
+    h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : h('button', {
+      class: `btn ${u.allowed ? 'danger' : 'secondary'}`, type: 'button',
+      onclick: async () => {
+        if (u.allowed && u.linked && !confirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`)) return;
+        try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
+      },
+    }, u.allowed ? 'Запретить' : 'Разрешить')))));
+  draw(data.users);
+  return h('div', { class: 'panel' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'),
+    h('p', { class: 'muted' }, data.configured
+      ? 'Кому разрешено подключить свой Телеграм к мессенджеру. Все личные чаты такого человека копируются сюда тихо, без уведомлений. Вы, как администратор, видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
+      : 'Мост не включён на сервере: нужны BRIDGE_TOKEN и контейнер tgbridge (см. docs/tgbridge.md).'),
+    data.configured ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Пользователь', 'Телеграм', 'Доступ'].map((x) => h('th', null, x)))), body)) : null);
+}
+
 async function viewAccess() {
-  const [st, inv] = await Promise.all([get('/api/admin/settings'), get('/api/admin/invites')]);
+  const [st, inv, br] = await Promise.all([get('/api/admin/settings'), get('/api/admin/invites'), get('/api/admin/bridge').catch(() => ({ configured: false, users: [] }))]);
   const MODES = {
     open: ['Открыта', 'Любой может зарегистрироваться'],
     invite: ['По приглашениям', 'Только по ссылке-приглашению'],
@@ -628,6 +651,7 @@ async function viewAccess() {
     h('div', { class: 'panel' }, h('h2', null, icon('phone', 18), 'Групповые звонки и голосовые комнаты'),
       h('p', { class: 'muted' }, `Сколько человек может быть в одном звонке или комнате (от 2 до ${st.gcall_max_top ?? 25}). Каждый участник отправляет своё видео всем остальным, поэтому при больших значениях нужен быстрый интернет у людей и на сервере TURN. Действует для новых входов, идущие звонки не прерываются.`),
       h('div', { class: 'toolbar' }, gcIn, gcSave, gcMsg)),
+    bridgePanel(br),
     h('div', { class: 'panel' }, h('h2', null, icon('lock', 18), 'Вход администратора'),
       h('p', { class: 'muted' }, cred.has_password
         ? `Включён вход по логину «${cred.login}» и паролю. Код из SMS для этого аккаунта больше не принимается.`

@@ -1,20 +1,22 @@
-"""Bridge between ONE Telegram account and Suhbat-dosh.
+"""Bridge between Telegram accounts and Suhbat-dosh. One session per Suhbat-dosh user whom the administrator has allowed.
 
 Safety rules built into this service:
   * it listens only inside the Docker network and every request needs the shared secret (BRIDGE_TOKEN);
-  * the Telegram session is stored encrypted (AES-256-GCM, key TGBRIDGE_KEY from the environment, never in the database);
-  * nothing is forwarded until a chat is explicitly chosen; a chat is read-only unless two-way was switched on for it;
+  * Telegram sessions are stored encrypted (AES-256-GCM, key TGBRIDGE_KEY from the environment, never in the database);
+  * personal (one-to-one) chats are mirrored by default; groups and channels only when chosen;
+  * a chat is read-only unless two-way was switched on for it;
+  * Telegram's own service chat (login codes), bots and Saved Messages are never mirrored;
   * message texts are never written to the log;
-  * /logout ends the session on Telegram's side too and deletes every file this service keeps;
-  * one account only.
+  * /logout ends the session on Telegram's side too and deletes every file kept for that account.
 
-Set TGBRIDGE_MOCK=1 to run without Telegram (used by the tests): a fake account and fake chats.
+Set TGBRIDGE_MOCK=1 to run without Telegram (used by the tests): fake accounts and fake chats.
 """
 import asyncio
 import base64
 import hmac
 import json
 import os
+import re
 import time
 from collections import deque
 
@@ -28,8 +30,9 @@ SERVER = os.environ.get("SERVER_URL", "http://suhbat:3000").rstrip("/")
 API_ID = int(os.environ.get("TG_API_ID", "0") or 0)
 API_HASH = os.environ.get("TG_API_HASH", "")
 MOCK = os.environ.get("TGBRIDGE_MOCK") == "1"
-SESSION_FILE = os.path.join(DATA, "session.bin")
-LIST_FILE = os.path.join(DATA, "chats.json")
+BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "150"))
+BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
+TELEGRAM_SERVICE = 777000
 
 
 def log(*a):
@@ -64,52 +67,29 @@ def write_secret(path: str, data: bytes):
     os.replace(tmp, path)
 
 
-class State:
-    client = None
-    login = None            # { qr, task, status, error }
-    me = None               # { name, username }
-    allowed: dict = {}      # tg chat id (str) -> { two_way: bool }
-    sent: deque = deque(maxlen=500)   # message ids this service sent itself (their echo is not forwarded back)
-    outbox: deque = deque(maxlen=200)
-
-
-S = State()
-
-
-def load_allowed():
-    try:
-        with open(LIST_FILE, encoding="utf-8") as f:
-            S.allowed = {str(k): v for k, v in json.load(f).items()}
-    except Exception:
-        S.allowed = {}
-
-
-def save_allowed():
-    write_secret(LIST_FILE, json.dumps(S.allowed).encode())
-
-
-# ---------------------------------------------------------------- Telegram (or the mock)
+# ---------------------------------------------------------------- one Telegram account
 class MockClient:
     """A stand-in for Telethon so the whole path can be tested without an account."""
 
     def __init__(self):
-        self.handlers = []
-        self.connected = False
+        self.authorized = False
         self.n = 1000
 
     async def connect(self):
-        self.connected = True
+        pass
 
     async def is_user_authorized(self):
-        return getattr(self, "authorized", False)
-
-    async def get_me(self):
-        return type("Me", (), {"first_name": "Мок", "last_name": "Аккаунт", "username": "mock_user"})()
+        return self.authorized
 
     async def dialogs(self):
         return [{"id": -1001, "title": "Семья (мок)", "type": "group", "unread": 2},
                 {"id": 777, "title": "Дилшод (мок)", "type": "user", "unread": 0},
+                {"id": 778, "title": "Мадина (мок)", "type": "user", "unread": 1},
                 {"id": -1002, "title": "Новости (мок)", "type": "channel", "unread": 5}]
+
+    async def history(self, chat_id, limit):
+        base = int(time.time() * 1000) - 86400_000
+        return [{"tg_msg": 1 + i, "author": "Дилшод (мок)", "out": i % 2 == 1, "text": f"старое сообщение {i + 1}", "ts": base + i * 60_000} for i in range(3)]
 
     async def send(self, chat_id, text, reply_to=None):
         self.n += 1
@@ -123,13 +103,6 @@ def telethon_client(session_str=""):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
     return TelegramClient(StringSession(session_str), API_ID, API_HASH, device_model="Suhbat-dosh bridge", app_version="1.0", lang_code="ru")
-
-
-async def persist_session():
-    if MOCK:
-        write_secret(SESSION_FILE, seal("mock"))
-        return
-    write_secret(SESSION_FILE, seal(S.client.session.save()))
 
 
 def display_name(u):
@@ -155,41 +128,123 @@ def describe(msg) -> str:
     return f"{kind} {text}".strip() if kind else text
 
 
+class Acct:
+    def __init__(self, uid: str):
+        self.uid = uid
+        self.client = None
+        self.login = None          # { qr, task, status, url, started }
+        self.me = None             # { name, username }
+        self.auto_private = True   # mirror every one-to-one chat
+        self.chats = {}            # tg chat id (str) -> { two_way: bool }
+        self.sent = deque(maxlen=500)   # ids this service sent itself (their echo is not forwarded back)
+        self.backfill = {"state": "idle", "done": 0, "total": 0}
+        self.bf_task = None
+
+    @property
+    def session_file(self):
+        return os.path.join(DATA, f"session-{self.uid}.bin")
+
+    @property
+    def list_file(self):
+        return os.path.join(DATA, f"chats-{self.uid}.json")
+
+    def load_list(self):
+        try:
+            with open(self.list_file, encoding="utf-8") as f:
+                d = json.load(f)
+            self.auto_private = bool(d.get("auto_private", True))
+            self.chats = {str(k): v for k, v in d.get("chats", {}).items()}
+        except Exception:
+            pass
+
+    def save_list(self):
+        write_secret(self.list_file, json.dumps({"auto_private": self.auto_private, "chats": self.chats}).encode())
+
+    async def persist_session(self):
+        write_secret(self.session_file, seal("mock" if MOCK else self.client.session.save()))
+
+    async def wipe(self):
+        if self.bf_task:
+            self.bf_task.cancel()
+        for p in (self.session_file, self.list_file, self.session_file + ".tmp", self.list_file + ".tmp"):
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
+        self.me = None
+        self.chats = {}
+        self.client = None
+        self.login = None
+
+
+ACCTS: dict = {}
+OUTBOX: deque = deque(maxlen=500)
+
+
+def acct(uid) -> Acct:
+    uid = str(uid)
+    if not re.fullmatch(r"\d{1,12}", uid):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "invalid_input"}), content_type="application/json")
+    if uid not in ACCTS:
+        ACCTS[uid] = Acct(uid)
+    return ACCTS[uid]
+
+
+# ---------------------------------------------------------------- to the server
 async def to_server(payload):
     """Hand one message to Suhbat-dosh. A short in-memory queue covers a server restart."""
-    S.outbox.append(payload)
+    OUTBOX.append(payload)
     await flush_outbox()
 
 
 async def flush_outbox():
     async with ClientSession(timeout=ClientTimeout(total=10)) as http:
-        while S.outbox:
-            item = S.outbox[0]
+        while OUTBOX:
+            item = OUTBOX[0]
             try:
                 async with http.post(f"{SERVER}/api/bridge/in", json=item, headers={"Authorization": f"Bearer {TOKEN}"}) as r:
                     if r.status >= 500:
                         raise RuntimeError(r.status)
             except Exception:
-                return  # try again with the next message
-            S.outbox.popleft()
+                return  # try again later
+            OUTBOX.popleft()
 
 
-def attach_handlers():
+def private_ok(entity_id: int, entity) -> bool:
+    """One-to-one chats with real people: not bots, not Telegram's own service chat (it carries login codes)."""
+    if entity_id == TELEGRAM_SERVICE:
+        return False
+    return not getattr(entity, "bot", False) and not getattr(entity, "is_self", False)
+
+
+def attach_handlers(a: Acct):
     from telethon import events, utils
 
-    @S.client.on(events.NewMessage())
+    @a.client.on(events.NewMessage())
     async def on_message(event):
         try:
-            chat_id = str(utils.get_peer_id(event.message.peer_id))
-            rule = S.allowed.get(chat_id)
-            if not rule or event.message.id in S.sent:
+            chat_id = utils.get_peer_id(event.message.peer_id)
+            key = str(chat_id)
+            rule = a.chats.get(key)
+            kind = "user" if event.is_private else "channel" if event.is_channel and not event.is_group else "group"
+            chat = None
+            if rule is None:
+                if not (a.auto_private and kind == "user"):
+                    return
+                chat = await event.get_chat()
+                if not private_ok(chat_id, chat):
+                    return
+            if event.message.id in a.sent:
                 return
             text = describe(event.message)
             if not text:
                 return
+            if chat is None and kind == "user":
+                chat = await event.get_chat()
             sender = await event.get_sender()
             await to_server({
-                "tg_chat": chat_id, "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
+                "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
+                "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
                 "reply_to": event.message.reply_to.reply_to_msg_id if event.message.reply_to else None,
             })
@@ -197,45 +252,78 @@ def attach_handlers():
             log("message skipped:", type(e).__name__)
 
 
-async def start_existing():
-    """On start: continue with the saved session if there is one."""
-    load_allowed()
-    if not os.path.exists(SESSION_FILE):
-        return
+async def run_backfill(a: Acct):
+    """Copy the recent history of every personal chat once (quietly: no notifications, nothing unread)."""
+    a.backfill = {"state": "running", "done": 0, "total": 0}
     try:
-        with open(SESSION_FILE, "rb") as f:
-            raw = unseal(f.read())
-    except Exception:
-        log("saved session cannot be read: sign in again")
-        return
-    if MOCK:
-        S.client = MockClient()
-        await S.client.connect()
-        S.client.authorized = True
-        S.me = {"name": "Мок Аккаунт", "username": "mock_user"}
-        return
-    S.client = telethon_client(raw)
-    await S.client.connect()
-    if not await S.client.is_user_authorized():
-        log("the session was ended on Telegram's side")
-        await wipe()
-        return
-    me = await S.client.get_me()
-    S.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
-    attach_handlers()
-    log("connected")
+        if MOCK:
+            dialogs_ = [d for d in await a.client.dialogs() if d["type"] == "user"]
+            a.backfill["total"] = len(dialogs_)
+            for d in dialogs_:
+                for m in await a.client.history(d["id"], BACKFILL_MESSAGES):
+                    await to_server({"owner": a.uid, "tg_chat": str(d["id"]), "kind": "user", "title": d["title"], "backfill": True, **m})
+                a.backfill["done"] += 1
+            a.backfill["state"] = "done"
+            await to_server({"owner": a.uid, "sync_done": True})
+            return
+        todo = []
+        async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+            if d.is_user and private_ok(d.id, d.entity):
+                todo.append(d)
+        a.backfill["total"] = len(todo)
+        for d in todo:
+            msgs = []
+            async for m in a.client.iter_messages(d.entity, limit=BACKFILL_MESSAGES):
+                if describe(m):
+                    msgs.append(m)
+            for m in reversed(msgs):
+                sender = await m.get_sender()
+                await to_server({
+                    "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
+                    "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000),
+                    "reply_to": m.reply_to.reply_to_msg_id if m.reply_to else None,
+                })
+            a.backfill["done"] += 1
+            await asyncio.sleep(0.6)  # be gentle with Telegram's limits
+        a.backfill["state"] = "done"
+        await to_server({"owner": a.uid, "sync_done": True})
+    except asyncio.CancelledError:
+        a.backfill["state"] = "stopped"
+    except Exception as e:
+        log("backfill failed:", type(e).__name__)
+        a.backfill["state"] = "error"
 
 
-async def wipe():
-    for p in (SESSION_FILE, LIST_FILE, SESSION_FILE + ".tmp", LIST_FILE + ".tmp"):
+async def start_existing():
+    """On start: continue with every saved session."""
+    os.makedirs(DATA, exist_ok=True)
+    for name in os.listdir(DATA):
+        m = re.fullmatch(r"session-(\d{1,12})\.bin", name)
+        if not m:
+            continue
+        a = acct(m.group(1))
+        a.load_list()
         try:
-            os.remove(p)
-        except FileNotFoundError:
-            pass
-    S.me = None
-    S.allowed = {}
-    S.client = None
-    S.login = None
+            with open(a.session_file, "rb") as f:
+                raw = unseal(f.read())
+        except Exception:
+            log("a saved session cannot be read: sign in again")
+            continue
+        if MOCK:
+            a.client = MockClient()
+            a.client.authorized = True
+            a.me = {"name": "Мок Аккаунт", "username": f"mock_{a.uid}"}
+            continue
+        a.client = telethon_client(raw)
+        await a.client.connect()
+        if not await a.client.is_user_authorized():
+            log("a session was ended on Telegram's side")
+            await a.wipe()
+            continue
+        me = await a.client.get_me()
+        a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
+        attach_handlers(a)
+        log("connected account", a.uid)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -255,18 +343,23 @@ async def guard(request, handler):
         return web.json_response({"error": "bridge_error"}, status=500)
 
 
+def who(request) -> Acct:
+    return acct(request.query.get("u", ""))
+
+
 async def health(_r):
-    return web.json_response({"ok": True, "linked": S.me is not None, "mock": MOCK})
+    return web.json_response({"ok": True, "accounts": sum(1 for a in ACCTS.values() if a.me), "mock": MOCK})
 
 
-async def login_task(first=True):
-    L = S.login
+async def login_task(a: Acct):
+    L = a.login
     try:
         if MOCK:
             await asyncio.sleep(float(os.environ.get("MOCK_LOGIN_DELAY", "1.5")))
-            S.client.authorized = True
-            S.me = {"name": "Мок Аккаунт", "username": "mock_user"}
-            await persist_session()
+            a.client.authorized = True
+            a.me = {"name": "Мок Аккаунт", "username": f"mock_{a.uid}"}
+            await a.persist_session()
+            a.save_list()
             L["status"] = "done"
             return
         while True:
@@ -285,90 +378,111 @@ async def login_task(first=True):
                     L["status"] = "password"
                     return
                 raise
-        await finish_login()
+        await finish_login(a)
     except Exception as e:
         log("login failed:", type(e).__name__)
         L["status"] = "error"
 
 
-async def finish_login():
-    me = await S.client.get_me()
-    S.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
-    await persist_session()
-    attach_handlers()
-    S.login["status"] = "done"
-    log("connected")
+async def finish_login(a: Acct):
+    me = await a.client.get_me()
+    a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
+    await a.persist_session()
+    a.save_list()
+    attach_handlers(a)
+    a.login["status"] = "done"
+    log("connected account", a.uid)
 
 
-async def login_start(_r):
-    if S.me:
+async def login_start(r):
+    a = who(r)
+    if a.me:
         return web.json_response({"error": "already_linked"}, status=409)
     if not MOCK and (not API_ID or not API_HASH):
         return web.json_response({"error": "no_api_keys"}, status=503)
-    if S.login and S.login.get("task"):
-        S.login["task"].cancel()
+    if a.login and a.login.get("task"):
+        a.login["task"].cancel()
     if MOCK:
-        S.client = MockClient()
-        await S.client.connect()
-        S.login = {"status": "waiting", "url": "tg://login?token=MOCKTOKEN", "started": time.time()}
+        a.client = MockClient()
+        a.login = {"status": "waiting", "url": f"tg://login?token=MOCK{a.uid}", "started": time.time()}
     else:
-        S.client = telethon_client()
-        await S.client.connect()
-        qr = await S.client.qr_login()
-        S.login = {"status": "waiting", "qr": qr, "url": qr.url, "started": time.time()}
-    S.login["task"] = asyncio.create_task(login_task())
-    return web.json_response({"url": S.login["url"], "expires_in": 120})
+        a.client = telethon_client()
+        await a.client.connect()
+        qr = await a.client.qr_login()
+        a.login = {"status": "waiting", "qr": qr, "url": qr.url, "started": time.time()}
+    a.login["task"] = asyncio.create_task(login_task(a))
+    return web.json_response({"url": a.login["url"], "expires_in": 120})
 
 
-async def login_status(_r):
-    L = S.login
+async def login_status(r):
+    a = who(r)
+    L = a.login
     if not L:
-        return web.json_response({"status": "none", "linked": S.me is not None, "account": S.me})
-    return web.json_response({"status": L["status"], "linked": S.me is not None, "url": L.get("url"), "account": S.me if L["status"] == "done" else None})
+        return web.json_response({"status": "none", "linked": a.me is not None, "account": a.me})
+    return web.json_response({"status": L["status"], "linked": a.me is not None, "url": L.get("url"), "account": a.me if L["status"] == "done" else None})
 
 
 async def login_password(r):
-    L = S.login
+    a = who(r)
+    L = a.login
     if not L or L["status"] != "password":
         return web.json_response({"error": "no_login"}, status=409)
     pw = (await r.json()).get("password", "")
     try:
-        await S.client.sign_in(password=pw)
+        await a.client.sign_in(password=pw)
     except Exception as e:
-        name = type(e).__name__
-        return web.json_response({"error": "wrong_password" if "Password" in name else "bridge_error"}, status=400)
-    await finish_login()
-    return web.json_response({"status": "done", "account": S.me})
+        return web.json_response({"error": "wrong_password" if "Password" in type(e).__name__ else "bridge_error"}, status=400)
+    await finish_login(a)
+    return web.json_response({"status": "done", "account": a.me})
 
 
-async def dialogs(_r):
-    if not S.me:
+async def dialogs(r):
+    a = who(r)
+    if not a.me:
         return web.json_response({"error": "not_linked"}, status=409)
     if MOCK:
-        return web.json_response({"dialogs": await S.client.dialogs()})
+        return web.json_response({"dialogs": await a.client.dialogs()})
     out = []
-    async for d in S.client.iter_dialogs(limit=150):
+    async for d in a.client.iter_dialogs(limit=200):
+        if d.is_user and not private_ok(d.id, d.entity):
+            continue
         kind = "channel" if d.is_channel and not d.is_group else "group" if d.is_group else "user"
         out.append({"id": d.id, "title": d.name or "?", "type": kind, "unread": d.unread_count})
     return web.json_response({"dialogs": out})
 
 
 async def set_chats(r):
-    """{ chats: [{ id, two_way }] }: exactly these chats are forwarded; everything else is ignored."""
-    if not S.me:
+    """{ auto_private, chats: [{ id, two_way }] }: the rules the bridge applies to what arrives and to what may be sent."""
+    a = who(r)
+    if not a.me:
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
-    S.allowed = {str(c["id"]): {"two_way": bool(c.get("two_way"))} for c in body.get("chats", [])[:100]}
-    save_allowed()
-    return web.json_response({"ok": True, "count": len(S.allowed)})
+    a.auto_private = bool(body.get("auto_private", True))
+    a.chats = {str(c["id"]): {"two_way": bool(c.get("two_way"))} for c in body.get("chats", [])[:600]}
+    a.save_list()
+    return web.json_response({"ok": True, "count": len(a.chats)})
+
+
+async def backfill(r):
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    if a.backfill["state"] != "running":
+        a.bf_task = asyncio.create_task(run_backfill(a))
+    return web.json_response({"ok": True})
+
+
+async def backfill_status(r):
+    return web.json_response(who(r).backfill)
 
 
 async def send(r):
-    if not S.me:
+    a = who(r)
+    if not a.me:
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
     chat = str(body.get("chat"))
-    rule = S.allowed.get(chat)
+    rule = a.chats.get(chat)
     if not rule or not rule.get("two_way"):
         return web.json_response({"error": "read_only"}, status=403)
     text = str(body.get("text", ""))[:4000]
@@ -376,27 +490,28 @@ async def send(r):
         return web.json_response({"error": "empty"}, status=400)
     reply = body.get("reply_to")
     if MOCK:
-        mid = await S.client.send(int(chat), text, reply)
+        mid = await a.client.send(int(chat), text, reply)
     else:
-        m = await S.client.send_message(int(chat), text, reply_to=int(reply) if reply else None)
+        m = await a.client.send_message(int(chat), text, reply_to=int(reply) if reply else None)
         mid = m.id
-    S.sent.append(mid)
+    a.sent.append(mid)
     return web.json_response({"tg_msg": mid})
 
 
-async def logout(_r):
-    """End the session on Telegram's side and delete everything kept here."""
+async def logout(r):
+    """End the session on Telegram's side and delete everything kept for this account."""
+    a = who(r)
     try:
-        if S.client:
+        if a.client:
             if MOCK:
-                await S.client.log_out()
-            elif await S.client.is_user_authorized():
-                await S.client.log_out()
-            if not MOCK:
-                await S.client.disconnect()
+                await a.client.log_out()
+            else:
+                if await a.client.is_user_authorized():
+                    await a.client.log_out()
+                await a.client.disconnect()
     except Exception as e:
         log("logout:", type(e).__name__)
-    await wipe()
+    await a.wipe()
     return web.json_response({"ok": True})
 
 
@@ -404,20 +519,26 @@ async def mock_message(r):
     """Tests only: pretend that a message arrived in Telegram."""
     if not MOCK:
         return web.json_response({"error": "forbidden"}, status=403)
+    a = who(r)
     b = await r.json()
-    rule = S.allowed.get(str(b["chat"]))
-    if not rule:
+    key = str(b["chat"])
+    kind = b.get("kind", "user")
+    if not a.me:
         return web.json_response({"forwarded": False})
-    await to_server({"tg_chat": str(b["chat"]), "tg_msg": b["msg"], "author": b.get("author", "Кто-то"), "out": bool(b.get("out")),
-                     "text": b["text"], "ts": int(time.time() * 1000), "reply_to": None})
+    if key not in a.chats and not (a.auto_private and kind == "user"):
+        return web.json_response({"forwarded": False})
+    await to_server({"owner": a.uid, "tg_chat": key, "kind": kind, "title": b.get("title", ""), "tg_msg": b["msg"], "author": b.get("author", "Кто-то"),
+                     "out": bool(b.get("out")), "text": b["text"], "ts": int(time.time() * 1000), "reply_to": None})
     return web.json_response({"forwarded": True})
 
 
 def app():
-    a = web.Application(middlewares=[guard], client_max_size=64 * 1024)
+    a = web.Application(middlewares=[guard], client_max_size=256 * 1024)
     a.add_routes([
+        web.get("/health", health),
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/logout", logout),
+        web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
         web.post("/mock/message", mock_message),
     ])
     return a
@@ -427,29 +548,28 @@ async def main():
     if len(TOKEN) < 24:
         raise SystemExit("BRIDGE_TOKEN must be at least 24 characters")
     _key()
-    os.makedirs(DATA, exist_ok=True)
     await start_existing()
-    # /health is open inside the network so the server can tell whether the service is up (it reveals nothing else)
-    app_ = app()
-    app_.router.add_get("/health", health)
-    runner = web.AppRunner(app_)
+    runner = web.AppRunner(app())
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     log("bridge listening on", PORT, "(mock)" if MOCK else "")
     ticks = 0
     while True:
         await asyncio.sleep(30)
-        if S.outbox:
+        if OUTBOX:
             await flush_outbox()
         ticks += 1
-        if ticks % 10 == 0 and S.me and not MOCK:
-            # the session may have been ended from the phone (Settings -> Devices): then forget everything
-            try:
-                if not await S.client.is_user_authorized():
-                    log("the session was ended on Telegram's side")
-                    await wipe()
-            except Exception as e:
-                log("session check:", type(e).__name__)
+        if ticks % 10 == 0 and not MOCK:
+            # a session may have been ended from the phone (Settings -> Devices): then forget everything about that account
+            for a in list(ACCTS.values()):
+                if not a.me:
+                    continue
+                try:
+                    if not await a.client.is_user_authorized():
+                        log("a session was ended on Telegram's side")
+                        await a.wipe()
+                except Exception as e:
+                    log("session check:", type(e).__name__)
 
 
 if __name__ == "__main__":
