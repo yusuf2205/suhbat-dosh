@@ -180,8 +180,14 @@ function storyOut(s, viewerId) {
     seen: s.user_id === viewerId || !!q.get('SELECT 1 AS x FROM story_views WHERE story_id = ? AND user_id = ?', s.id, viewerId),
     views: s.user_id === viewerId ? views : undefined,
     active: s.expires_at > now(),
+    ...(s.user_id === viewerId && s.restricted ? { audience: q.all('SELECT user_id FROM story_audience WHERE story_id = ?', s.id).map((r) => r.user_id) } : {}),
   };
 }
+
+// Stories for chosen people only. Built, but switched off until the administrator turns it on (setting `stories_audience`).
+const audienceOn = () => getSetting('stories_audience', '0') === '1';
+const canSeeStory = (viewerId, s) => s.user_id === viewerId
+  || (canSeeStories(viewerId, s.user_id) && (!s.restricted || !!q.get('SELECT 1 AS x FROM story_audience WHERE story_id = ? AND user_id = ?', s.id, viewerId)));
 
 const canSeeStories = (viewerId, ownerId) => viewerId === ownerId
   || (isContact(viewerId, ownerId) && !isBlockedEitherWay(viewerId, ownerId));
@@ -196,11 +202,29 @@ safety.get('/stories', (req, res) => {
   const ids = [req.user.id, ...mates];
   const out = [];
   for (const uid of ids) {
-    const list = q.all('SELECT * FROM stories WHERE user_id = ? AND expires_at > ? ORDER BY id', uid, t).map((s) => storyOut(s, req.user.id));
+    const list = q.all('SELECT * FROM stories WHERE user_id = ? AND expires_at > ? ORDER BY id', uid, t).filter((s) => canSeeStory(req.user.id, s)).map((s) => storyOut(s, req.user.id));
     if (!list.length && uid !== req.user.id) continue;
     out.push({ user: publicUser(getUser(uid), req.user.id), stories: list, all_seen: list.every((s) => s.seen) });
   }
   res.json({ feed: out });
+});
+
+// lists of people ("close friends") to pick as the audience of a story
+safety.get('/stories/lists', (req, res) => {
+  if (!audienceOn()) throw new HttpError(404, 'not_found');
+  res.json({ lists: q.all('SELECT * FROM story_lists WHERE owner_id = ? ORDER BY id', req.user.id).map((l) => ({ id: l.id, name: l.name, members: JSON.parse(l.members || '[]') })) });
+});
+safety.post('/stories/lists', (req, res) => {
+  if (!audienceOn()) throw new HttpError(404, 'not_found');
+  const name = str(String(req.body?.name ?? ''), 'name', { min: 1, max: 40 });
+  const members = [...new Set((Array.isArray(req.body?.members) ? req.body.members : []).map(Number).filter((x) => Number.isInteger(x) && x > 0 && isContact(req.user.id, x)))].slice(0, 500);
+  if (q.get('SELECT COUNT(*) AS n FROM story_lists WHERE owner_id = ?', req.user.id).n >= 20) throw new HttpError(400, 'too_many');
+  const r = q.run('INSERT INTO story_lists (owner_id, name, members) VALUES (?,?,?)', req.user.id, name, JSON.stringify(members));
+  res.status(201).json({ list: { id: Number(r.lastInsertRowid), name, members } });
+});
+safety.delete('/stories/lists/:id', (req, res) => {
+  q.run('DELETE FROM story_lists WHERE id = ? AND owner_id = ?', int(req.params.id, 'id'), req.user.id);
+  res.json({ ok: true });
 });
 
 safety.get('/stories/archive', (req, res) => {
@@ -213,6 +237,12 @@ safety.post('/stories', async (req, res) => {
   let text = '';
   let bg = '';
   let fid = null;
+  let audience = [];
+  if (audienceOn()) {
+    const raw = ctype.includes('application/json') ? req.body?.audience : String(req.query.audience ?? '').split(',').filter(Boolean);
+    if (Array.isArray(raw) && raw.length) audience = [...new Set(raw.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0 && x !== req.user.id && isContact(req.user.id, x) && !isBlockedEitherWay(req.user.id, x)))].slice(0, 500);
+    if (Array.isArray(raw) && raw.length && !audience.length) throw new HttpError(400, 'invalid_input');
+  }
   if (ctype.includes('application/json')) {
     text = str(req.body?.text, 'text', { min: 1, max: 280 });
     bg = BG.has(req.body?.bg) ? req.body.bg : '#fbc700';
@@ -225,14 +255,15 @@ safety.post('/stories', async (req, res) => {
     if (!type || type.kind !== 'image') { removeFile(fid); throw new HttpError(415, 'image_required'); }
     q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,NULL,?,?,?,?)', fid, req.user.id, 'story', type.mime, size, now());
   }
-  const r = q.run('INSERT INTO stories (user_id, file_id, text, bg, created_at, expires_at) VALUES (?,?,?,?,?,?)', req.user.id, fid, text, bg, now(), now() + DAY);
+  const r = q.run('INSERT INTO stories (user_id, file_id, text, bg, created_at, expires_at, restricted) VALUES (?,?,?,?,?,?,?)', req.user.id, fid, text, bg, now(), now() + DAY, audience.length ? 1 : 0);
+  for (const uid of audience) q.run('INSERT OR IGNORE INTO story_audience (story_id, user_id) VALUES (?,?)', Number(r.lastInsertRowid), uid);
   audit(req.user.id, 'story.post', { target_type: 'story', target_id: Number(r.lastInsertRowid) });
   res.status(201).json({ story: storyOut(q.get('SELECT * FROM stories WHERE id = ?', Number(r.lastInsertRowid)), req.user.id) });
 });
 
 safety.get('/stories/:id/media', (req, res) => {
   const s = q.get('SELECT * FROM stories WHERE id = ?', int(req.params.id, 'id'));
-  if (!s || !s.file_id || !canSeeStories(req.user.id, s.user_id) || (s.user_id !== req.user.id && s.expires_at < now())) throw new HttpError(404, 'not_found');
+  if (!s || !s.file_id || !canSeeStory(req.user.id, s) || (s.user_id !== req.user.id && s.expires_at < now())) throw new HttpError(404, 'not_found');
   const f = q.get('SELECT * FROM files WHERE id = ?', s.file_id);
   if (!f) throw new HttpError(404, 'not_found');
   res.setHeader('Content-Type', f.mime);
@@ -243,7 +274,7 @@ safety.get('/stories/:id/media', (req, res) => {
 
 safety.post('/stories/:id/view', (req, res) => {
   const s = q.get('SELECT * FROM stories WHERE id = ?', int(req.params.id, 'id'));
-  if (!s || !canSeeStories(req.user.id, s.user_id) || s.expires_at < now()) throw new HttpError(404, 'not_found');
+  if (!s || !canSeeStory(req.user.id, s) || s.expires_at < now()) throw new HttpError(404, 'not_found');
   if (s.user_id !== req.user.id) q.run('INSERT OR IGNORE INTO story_views (story_id, user_id, at) VALUES (?,?,?)', s.id, req.user.id, now());
   res.json({ ok: true });
 });

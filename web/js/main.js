@@ -30,6 +30,7 @@ import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 import { showLock } from './applock.js';
 import './tasks.js';
 import { startE2e } from './e2egroup.js';
+import { startScreenGuard } from './screenguard.js';
 import { openPalette, wirePullDown } from './palette.js';
 import { resumeLives } from './share.js';
 import './topics.js';
@@ -127,6 +128,7 @@ async function loadChats() {
   loadFolders();
   refreshGroupCalls();
   startE2e();
+  startScreenGuard();
   resumeLives();
 }
 

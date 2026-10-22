@@ -36,6 +36,7 @@ import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
 import { canOpenNative, isOffice, openNative, prefetchNative } from './native.js';
 import { fileIcon } from './fileicons.js';
+import { aliasOf, shownName, aliasSig, animalAvatar } from './persona.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
 import { fileBlob } from './downloads.js';
@@ -403,7 +404,7 @@ function subtitle(c) {
   const typers = typingUsers(c);
   if (typers.length) {
     if (c.type === 'direct') return t('chat.typing');
-    const names = typers.map((id) => S.users.get(id)?.name).filter(Boolean);
+    const names = typers.map((id) => shownName(c, id, S.users.get(id)?.name)).filter(Boolean);
     return `${names.join(', ')} ${typers.length > 1 ? t('chat.typing_many') : t('chat.typing')}`;
   }
   if (c.type === 'direct' && !c.saved) {
@@ -1026,7 +1027,7 @@ export function markRead() { markReadDebounced(); }
 
 export function senderName(m) {
   if (m.sender_id === S.me.id) return S.me.name;
-  return S.users.get(m.sender_id)?.name ?? m.reply_to?.sender_name ?? '…';
+  return shownName(S.chats.get(m.chat_id), m.sender_id, S.users.get(m.sender_id)?.name ?? m.reply_to?.sender_name ?? '…');
 }
 
 function statusOf(m, c) {
@@ -1060,7 +1061,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1120,12 +1121,14 @@ function buildMessage(m, c) {
   const bigEmoji = m.kind === 'text' && !m.file && /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*){1,3}$/u.test((m.text || '').trim());
   const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}${m.kind === 'sticker' ? ' sticker-bubble' : ''}` });
   if (!mine && c.type !== 'direct') {
-    bubble.append(h('div', { class: 'sender' }, m.import_author || (S.users.get(m.sender_id)?.name ?? '…')));
+    const al = aliasOf(c, m.sender_id);
+    bubble.append(h('div', { class: `sender${al ? ' persona' : ''}` }, al ? animalAvatar(al.a, 'xs') : null,
+      m.import_author || (al ? al.n : (S.users.get(m.sender_id)?.name ?? '…')), al?.real ? h('small', { class: 'muted' }, ` · ${al.real}`) : null));
   }
   if (m.forward_from) bubble.append(h('div', { class: 'fwd' }, t('chat.forwarded_from', { name: m.forward_from })));
   if (m.reply_to) {
     bubble.append(h('div', { class: 'quote', onclick: () => jumpTo(c.id, m.reply_to.id) },
-      h('b', null, m.reply_to.sender_name || ''), previewText(m.reply_to)));
+      h('b', null, shownName(c, m.reply_to.sender_id, m.reply_to.sender_name || '')), previewText(m.reply_to)));
   }
   if (m.kind === 'sticker') bubble.append(stickerNode(m));
   else if (m.kind === 'secret' && !m.upload) bubble.append(secretNode(m, c));

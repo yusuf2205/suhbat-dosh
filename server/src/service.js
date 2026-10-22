@@ -233,6 +233,19 @@ export function refreshLastMessage(chatId) {
 
 // ---------------- chats ----------------
 
+/** Who uses an animal name in this group: { aliases: { userId: { n, a, real? } } }. Admins also get the real name. */
+function aliasesOf(chatId, viewerId, viewerMember) {
+  const rows = q.all("SELECT user_id, alias_name, alias_animal FROM members WHERE chat_id = ? AND alias_animal != '' AND banned = 0", chatId);
+  if (!rows.length) return {};
+  const boss = isAdmin(viewerMember);
+  const out = {};
+  for (const r of rows) {
+    out[r.user_id] = { n: r.alias_name, a: r.alias_animal };
+    if (boss || r.user_id === viewerId) out[r.user_id].real = getUser(r.user_id)?.name || '';
+  }
+  return { aliases: out };
+}
+
 export function chatOut(chatId, viewerId) {
   const c = q.get('SELECT * FROM chats WHERE id = ?', chatId);
   if (!c) return null;
@@ -292,6 +305,7 @@ export function chatOut(chatId, viewerId) {
     sound: m.sound || null,
     saved: c.type === 'direct' && /^(\d+):\1$/.test(c.direct_key || ''),
     secret: c.e2e ? { group: true, state: c.e2e_epoch > 0 ? 'ready' : 'pending', epoch: c.e2e_epoch, rotate: !!c.e2e_rotate, initiator_id: c.owner_id } : sc ? { state: sc.peer_pub ? 'ready' : 'pending', initiator_id: sc.initiator_id, peer_id: sc.peer_id, init_pub: sc.init_pub, peer_pub: sc.peer_pub } : null,
+    ...(c.type === 'group' ? aliasesOf(chatId, viewerId, m) : {}),
     ...(c.is_public ? { public: true } : {}),
     ...(c.forum ? { forum: true } : {}),
     ...(c.comments ? { comments: true } : {}),

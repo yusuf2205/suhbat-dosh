@@ -179,6 +179,7 @@ ipcMain.handle('suhbat:update-install', () => {
   autoUpdater.quitAndInstall(true, true); // silent installer, then the app starts again
 });
 ipcMain.handle('suhbat:version', () => app.getVersion());
+ipcMain.handle('suhbat:protect', (_e, on) => { try { win?.setContentProtection(!!on); } catch { /* not supported here */ } return !!on; });
 
 // ---- notification windows: like Telegram Desktop, in the chosen screen corner, up to N at a time
 const popups = []; // { win, timer }

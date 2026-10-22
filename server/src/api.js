@@ -21,7 +21,7 @@ import { admin } from './admin.js';
 import { botsRouter, notifyBots, wireBots } from './bots.js';
 import { handleFatherMessage } from './botfather.js';
 import { pushNewMessage, pushRouter } from './push.js';
-import { consumeInvite, gateRegistration, registrationMode } from './access.js';
+import { consumeInvite, gateRegistration, registrationMode, getSetting } from './access.js';
 import { serviceMessage, wireNotify } from './notify.js';
 import { features, wireFeatures } from './features.js';
 import { drive, wireDrive } from './drive.js';
@@ -37,6 +37,7 @@ import { quick } from './quick.js';
 import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
+import { personal } from './personal.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -424,6 +425,7 @@ api.get('/config', (_req, res) => {
     transcribe: transcriberReady(),
     translate: translatorReady(),
     semantic: embedderReady(),
+    stories_audience: getSetting('stories_audience', '0') === '1',
     registration_open: registrationMode() !== 'closed',
     registration: registrationMode(),
     dev_otp: config.otpMode === 'dev',
@@ -498,6 +500,7 @@ api.use(e2e);
 api.use(linkpreview);
 api.use(quick);
 api.use(extras);
+api.use(personal);
 api.use(forum);
 api.use(sets);
 api.use(semantic);

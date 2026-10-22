@@ -13,12 +13,19 @@ export function initials(name = '') {
 }
 
 /** entity: { id, name, avatar?, online? } */
+import { ANIMALS } from '../../shared/animals.js';
+
 export function avatar(entity, size = '') {
   const id = entity?.id ?? 0;
   const name = entity?.name ?? entity?.title ?? '';
   const el = h('span', { class: `avatar ${size}`, 'aria-hidden': 'true' });
   el.style.background = COLORS[Math.abs(Number(id) * 7 + name.length) % COLORS.length];
-  if (entity?.avatar) {
+  if (entity?.animal) {
+    el.classList.add('animal');
+    const a = ANIMALS.find((x) => x.id === entity.animal);
+    el.textContent = a ? a.emoji : initials(name);
+    if (a) el.style.background = `linear-gradient(145deg, ${a.color[0]}, ${a.color[1]})`;
+  } else if (entity?.avatar) {
     el.append(h('img', { src: entity.avatar, alt: '', loading: 'lazy' }));
   } else {
     el.textContent = initials(name);

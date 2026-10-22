@@ -31,6 +31,7 @@ function actions() {
     ['menu.new_group', 'users', lazy('./dialogs.js', 'openNewGroup', 'group')],
     ['menu.new_channel', 'chat', lazy('./dialogs.js', 'openNewGroup', 'channel')],
     ['task.title', 'tasks', lazy('./tasks.js', 'openTasks')],
+    ['sn.title', 'edit', lazy('./selfnotes.js', 'openSelfNotes')],
     ['focus.title', 'moon', lazy('./focus.js', 'openFocus')],
     ['digest.all_title', 'list', lazy('./digest.js', 'openDigestAll')],
     ['room.title_all', 'speaker', lazy('./rooms.js', 'openRooms')],

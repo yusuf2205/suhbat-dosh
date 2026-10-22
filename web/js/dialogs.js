@@ -105,6 +105,8 @@ export { openSettings } from './settings.js';
 import { formatBirthday, isBirthdayToday, photoGrid } from './settings.js';
 import { openBotFather } from './bots.js';
 import { e2eSupported, registerDevice, syncGroup } from './e2egroup.js';
+import { safetyRow } from './safety.js';
+import { aliasOf, animalAvatar, openAliasDialog } from './persona.js';
 import { openSecretByDefault } from './secret.js';
 import { adminNodes } from './chatadmin.js';
 
@@ -145,6 +147,7 @@ export async function renderInfo(m, chatId) {
       if (p.username) rows.push(infoRow(`@${p.username}`, t('settings.username')));
       if (p.status) rows.push(infoRow(p.status, t('settings.status')));
       if (rows.length) nodes.push(h('div', { class: 'sgroup' }, ...rows));
+      if (!chat.saved && !p.is_bot && p.id !== S.me.id) nodes.push(h('div', { class: 'sgroup' }, safetyRow(p)));
       if (p.avatar) nodes.push(h('div', { class: 'sheading' }, t('st.album')), h('div', { class: 'sgroup album' }, photoGrid(p.id, false)));
     } else {
       nodes.push(h('div', { style: { textAlign: 'center' } }, h('div', { style: { display: 'inline-block' } }, avatar({ id: chat.id, name: chat.title }, 'lg')),
@@ -162,6 +165,7 @@ export async function renderInfo(m, chatId) {
       actions.unshift(act('video', t('info.act_video'), () => { startCall(chat.id, true); }));
       actions.unshift(act('phone', t('info.act_call'), () => { startCall(chat.id, false); }));
     }
+    if (chat.type === 'group') actions.push(act('users', t('al.title'), () => openAliasDialog(chat)));
     actions.push(act('grid', t('info.act_media'), () => openMediaPanel(chat.id)));
     nodes.push(h('div', { class: 'info-actions' }, actions));
     if (counts) {
@@ -226,8 +230,10 @@ function memberRow(chat, mem, redraw) {
   if (mem.banned) tags.push(h('span', { class: 'tag' }, t('info.banned')));
   if (!mem.can_send && mem.role === 'member' && !mem.banned) tags.push(h('span', { class: 'tag' }, t('info.restricted')));
   const canManage = u.id !== S.me.id && mem.role !== 'owner' && (me === 'owner' || (me === 'admin' && mem.role === 'member'));
-  const row = h('div', { class: 'list-item' }, avatar(u, 'sm'),
-    h('span', { class: 'grow' }, h('b', null, u.name), ' ', tags, h('br'), h('span', { class: 'muted' }, u.username ? `@${u.username}` : '')));
+  const al = aliasOf(chat, u.id);
+  const boss = chat.my_role === 'owner' || chat.my_role === 'admin';
+  const row = h('div', { class: 'list-item' }, al ? animalAvatar(al.a, 'sm') : avatar(u, 'sm'),
+    h('span', { class: 'grow' }, h('b', null, al ? al.n : u.name), al && (boss || u.id === S.me.id) ? h('small', { class: 'muted' }, ` · ${u.name}`) : null, ' ', tags, h('br'), h('span', { class: 'muted' }, u.username && (!al || boss || u.id === S.me.id) ? `@${u.username}` : '')));
   if (canManage) {
     const btn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': u.name, 'aria-haspopup': 'menu' }, '⋯');
     btn.onclick = () => {

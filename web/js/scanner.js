@@ -6,6 +6,7 @@ import { api } from './net.js';
 import { modal, toast } from './ui.js';
 import jsQR from './vendor/jsqr.js';
 import { qrTokenFrom, approveQrLogin } from './qrlogin.js';
+import { handleVerifyScan } from './safety.js';
 
 export async function openChatWithUsername(username) {
   const name = String(username || '').replace(/^@/, '');
@@ -65,6 +66,7 @@ export function openScanner() {
             const img = ctx.getImageData(0, 0, w, hh);
             text = jsQR(img.data, w, hh, { inversionAttempts: 'dontInvert' })?.data || null;
           }
+          if (text && text.startsWith('suhbat-verify:')) { alive = false; m.close(); handleVerifyScan(text.trim()); return; }
           const loginToken = text && qrTokenFrom(text.trim());
           if (loginToken) { alive = false; m.close(); approveQrLogin(loginToken); return; }
           const name = text && usernameFrom(text.trim());

@@ -12,6 +12,7 @@ import qrcode from './vendor/qrcode.js';
 import { dndRows, openFolders, openGlobalSearch, quietSettings } from './extras.js';
 import { compose as composeStory, openStoryArchive } from './stories.js';
 import { openScanner } from './scanner.js';
+import { screenGuardNative } from './screenguard.js';
 import { openBotFather } from './bots.js';
 import { openSaved, setView } from './rail.js';
 import { updatesSection } from './updates.js';
@@ -508,6 +509,7 @@ export function openSettings() {
             row('mail', t('settings.email'), { value: S.me.email || t('settings.email_none'), onclick: () => go(pages.account) })),
           note(t('st.sessions_hint')),
           group(switchRow(t('readers.setting'), S.me.read_receipts !== false, async (v) => { try { S.me = (await api('PATCH', '/api/me', { read_receipts: v })).user; fire('me'); } catch (e) { fail(e); } }, t('readers.setting_hint'))),
+          group(switchRow(t('shot.setting'), !!S.prefs.noShot, (v) => { S.prefs.noShot = v; savePrefs(); fire('shotguard'); }, screenGuardNative() ? t('shot.hint_app') : t('shot.hint_web'))),
           group(switchRow(t('lp.setting'), !S.prefs.noPreview, (v) => { S.prefs.noPreview = !v; savePrefs(); }, t('lp.setting_hint')), switchRow(t('e2e.default'), S.prefs.secretDefault, (v) => { S.prefs.secretDefault = v; savePrefs(); }, t('e2e.default_hint'))),
           heading(t('settings.privacy')),
           group(privacyRow('photo', 'st.photo'), privacyRow('status', 'st.status'), privacyRow('last_seen', 'st.lastseen'), privacyRow('birthday', 'st.birthday')),

@@ -143,20 +143,21 @@ export function compose() {
   const cap = h('input', { class: 'input', maxLength: 280, placeholder: t('story.caption_ph'), 'aria-label': t('story.caption_ph') });
   const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'sr', tabIndex: -1 });
   const err = h('div', { class: 'err', role: 'alert' });
+  const aud = S.cfg?.stories_audience ? audiencePicker() : null; // switched off by the administrator until this is released
   const m = modal({
     title: t('story.new'),
     body: [
       h('div', { class: 'row' },
         h('button', { class: 'btn', type: 'button', onclick: () => file.click() }, `${t('story.photo')}…`)),
       cap, file,
-      h('h3', null, t('story.text_title')), text, swatches, err,
+      h('h3', null, t('story.text_title')), text, swatches, aud?.node, err,
       h('button', { class: 'btn', type: 'button', onclick: async () => {
         err.textContent = '';
         try {
           if (file.files[0]) {
-            await api('POST', `/api/stories?caption=${encodeURIComponent(cap.value.trim())}`, undefined, { raw: file.files[0], headers: { 'content-type': 'application/octet-stream' } });
+            await api('POST', `/api/stories?caption=${encodeURIComponent(cap.value.trim())}${aud?.ids().length ? `&audience=${aud.ids().join(',')}` : ''}`, undefined, { raw: file.files[0], headers: { 'content-type': 'application/octet-stream' } });
           } else if (text.value.trim()) {
-            await api('POST', '/api/stories', { text: text.value.trim(), bg: color });
+            await api('POST', '/api/stories', { text: text.value.trim(), bg: color, ...(aud?.ids().length ? { audience: aud.ids() } : {}) });
           } else { err.textContent = t('story.empty'); return; }
           m.close();
           toast(t('story.posted'));
@@ -165,6 +166,35 @@ export function compose() {
       } }, t('story.publish')),
     ],
   });
+}
+
+/** "Who sees it": every contact, or only the people ticked here (with saved lists such as "Close friends"). */
+function audiencePicker() {
+  const people = [...S.chats.values()].filter((c) => c.type === 'direct' && c.peer && !c.saved && !c.peer.is_bot).map((c) => c.peer);
+  const picked = new Set();
+  let only = false;
+  const box = h('div', { class: 'aud-box', hidden: true });
+  const lists = h('div', { class: 'aud-lists' });
+  const rows = people.map((p) => {
+    const cb = h('input', { type: 'checkbox' });
+    cb.addEventListener('change', () => { if (cb.checked) picked.add(p.id); else picked.delete(p.id); });
+    return { cb, p, el: h('label', { class: 'aud-row' }, cb, avatar(p, 'sm'), h('span', null, p.name)) };
+  });
+  const loadLists = async () => {
+    try {
+      const r = await api('GET', '/api/stories/lists');
+      clear(lists).append(...r.lists.map((l) => h('button', { class: 'chip', type: 'button', onclick: () => { for (const x of rows) { x.cb.checked = l.members.includes(x.p.id); if (x.cb.checked) picked.add(x.p.id); else picked.delete(x.p.id); } } }, l.name)),
+        h('button', { class: 'chip', type: 'button', onclick: async () => {
+          const name = window.prompt(t('aud.list_name'));
+          if (!name || !picked.size) return;
+          try { await api('POST', '/api/stories/lists', { name, members: [...picked] }); loadLists(); } catch (e) { toast(errText(e.code)); }
+        } }, `+ ${t('aud.save_list')}`));
+    } catch { /* lists are optional */ }
+  };
+  const mode = h('select', { class: 'input', 'aria-label': t('aud.who') }, h('option', { value: 'all' }, t('aud.all')), h('option', { value: 'some' }, t('aud.some')));
+  mode.addEventListener('change', () => { only = mode.value === 'some'; box.hidden = !only; if (only) loadLists(); });
+  box.append(lists, ...rows.map((r) => r.el));
+  return { node: h('div', { class: 'aud' }, h('h3', null, t('aud.who')), mode, box), ids: () => (only ? [...picked] : []) };
 }
 
 // ---------------------------------------------------------------- archive (settings)

@@ -1,6 +1,6 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v77';
-const SHELL = ['/', '/styles.css?v=12', '/splash.css?v=3', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
+const CACHE = 'suhbat-shell-v79';
+const SHELL = ['/', '/styles.css?v=13', '/splash.css?v=3', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

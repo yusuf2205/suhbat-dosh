@@ -188,6 +188,15 @@ public class MainActivity extends BridgeActivity {
             runOnUiThread(() -> { startBackground(); askBatteryExemptionOnce(); });
         }
 
+        /** Screenshot protection: no screenshots, no screen recording, a blank preview in the recent-apps list. */
+        @JavascriptInterface
+        public void setSecure(boolean on) {
+            runOnUiThread(() -> {
+                if (on) getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            });
+        }
+
         @JavascriptInterface
         public boolean isBatteryUnrestricted() {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);

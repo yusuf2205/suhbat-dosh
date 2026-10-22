@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('suhbatShell', {
   checkUpdate: () => ipcRenderer.invoke('suhbat:update-check'),
   installUpdate: () => ipcRenderer.invoke('suhbat:update-install'),
   version: () => ipcRenderer.invoke('suhbat:version'),
+  // screenshot protection: the window is left out of screen capture
+  protect: (on) => ipcRenderer.invoke('suhbat:protect', !!on),
   openFile: (url, name) => ipcRenderer.invoke('suhbat:open-file', url, name),
   // custom notification windows (position / count are chosen in the settings)
   notify: (n) => ipcRenderer.invoke('suhbat:notify', n),

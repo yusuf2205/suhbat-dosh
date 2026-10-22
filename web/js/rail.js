@@ -11,6 +11,7 @@ import { nearbyAvailable, openNearby } from './nearby.js';
 import { openTasks, refreshTaskCount } from './tasks.js';
 import { focusOn, openFocus } from './focus.js';
 import { openRooms, roomsLive } from './rooms.js';
+import { openSelfNotes } from './selfnotes.js';
 
 // Left navigation rail (desktop / tablet): Messages, Contacts, Calls, Saved, Archive, Settings.
 let el;
@@ -67,6 +68,7 @@ function tools() {
     { id: 'drive', ico: 'folder', label: t('drive.title'), onclick: openDrive },
     { id: 'calendar', ico: 'clock', label: t('ev.calendar'), onclick: openCalendar },
     { id: 'tasks', ico: 'tasks', label: t('task.title'), onclick: openTasks },
+    { id: 'selfnotes', ico: 'edit', label: t('sn.title'), onclick: openSelfNotes },
     { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, active: roomsLive() > 0 },
     { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, active: focusOn() },
     ...(nearbyAvailable() ? [{ id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: openNearby }] : []),

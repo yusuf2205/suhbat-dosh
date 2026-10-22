@@ -4,7 +4,7 @@ import express from 'express';
 import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
 import { applyOp, diffOp, transform } from '../../shared/ot.js';
-import { HttpError, int, now, rateLimit, str } from './util.js';
+import { HttpError, escapeLike, int, now, rateLimit, str } from './util.js';
 import { emit } from './realtime.js';
 import { getMessage, isEncrypted, memberIds, messageOut, requireMember } from './service.js';
 
@@ -58,6 +58,19 @@ notes.post('/chats/:id/notes', (req, res) => {
   q.run('INSERT INTO notes (message_id, chat_id, title, creator_id, updated_at) VALUES (?,?,?,?,?)', out.message.id, id, title, req.user.id, now());
   refreshCard(q.get('SELECT * FROM notes WHERE message_id = ?', out.message.id), true); // the card was announced before its text existed
   res.status(201).json({ message: messageOut(getMessage(out.message.id)) });
+});
+
+/** My own notes (the ones in my Saved chat), newest first; ?q= searches titles and text. */
+notes.get('/notes/mine', (req, res) => {
+  const term = String(req.query.q ?? '').trim().toLowerCase().slice(0, 100);
+  const key = `${req.user.id}:${req.user.id}`;
+  const like = `%${escapeLike(term)}%`;
+  const rows = q.all(
+    `SELECT n.id, n.title, n.body, n.updated_at, n.chat_id FROM notes n JOIN chats c ON c.id = n.chat_id
+     WHERE c.type = 'direct' AND c.direct_key = ? ${term ? "AND (lc(n.title) LIKE ? ESCAPE '\\' OR lc(n.body) LIKE ? ESCAPE '\\')" : ''}
+     ORDER BY n.updated_at DESC LIMIT 200`, ...(term ? [key, like, like] : [key]),
+  );
+  res.json({ notes: rows.map((n) => ({ id: n.id, title: n.title, preview: n.body.replace(/\s+/g, ' ').slice(0, 140), updated_at: n.updated_at, chat_id: n.chat_id })) });
 });
 
 notes.get('/notes/:id', (req, res) => {
