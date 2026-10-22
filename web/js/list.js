@@ -69,7 +69,6 @@ export function mount(sidebar) {
   const nav = h('nav', { class: 'bottomnav', 'aria-label': t('app.name') },
     navBtn('chat', t('nav.messages'), () => setView('chats'), 'chats'),
     navBtn('phone', t('nav.calls'), () => setView('calls'), 'calls'),
-    h('button', { type: 'button', class: 'nb-plus', 'aria-label': t('menu.new_chat'), 'aria-haspopup': 'menu', onclick: (e) => composeMenu(e.currentTarget) }, icon('plus', 26)),
     navBtn('users', t('nav.contacts'), () => setView('contacts'), 'contacts'),
     navBtn('settings', t('nav.settings'), openSettings));
 

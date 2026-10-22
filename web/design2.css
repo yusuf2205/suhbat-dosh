@@ -160,7 +160,7 @@
   /* the dock: dark, floating; the open section is a yellow pill with its name */
   .app .fab { display: none; }
   .app[data-view='list'] .bottomnav {
-    display: flex; align-items: center; justify-content: space-between; gap: 2px;
+    display: flex; align-items: center; justify-content: space-around; gap: 2px;
     left: 14px; right: 14px; bottom: calc(12px + env(safe-area-inset-bottom)); padding: 8px 10px; height: 68px;
     background: var(--ink); border: 0; border-radius: 34px; backdrop-filter: none; box-shadow: 0 16px 36px rgba(0, 0, 0, .35);
   }
@@ -170,15 +170,10 @@
   .app .bottomnav button[aria-current='true'] .nb-label { display: block; max-width: 110px; animation: nb-in .3s .05s both; }
   .app .bottomnav .nb-badge { top: -6px; left: auto; right: -9px; background: var(--yel); color: var(--ink); border-color: var(--ink); }
   .app .bottomnav button[aria-current='true'] .nb-badge { background: var(--ink); color: var(--yel); border-color: var(--yel); }
-  .app .bottomnav .nb-plus {
-    flex: 0 0 58px; width: 58px; height: 58px; margin-top: -26px; border-radius: 50%; color: var(--ink);
-    background: linear-gradient(135deg, var(--yel-2), var(--yel)); box-shadow: 0 0 0 6px var(--bg), 0 10px 22px rgba(251, 199, 0, .5);
-  }
-  .app .bottomnav .nb-plus:active { transform: scale(.93); }
 }
 @keyframes nb-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
 
-@media (min-width: 601px) { .greet { display: none; } .bottomnav, .nb-plus { display: none; } }
+@media (min-width: 601px) { .greet { display: none; } .bottomnav { display: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   .app, .rail .rail-item, .app .ci, .app .bottomnav button { transition: none; }
