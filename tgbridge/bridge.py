@@ -292,17 +292,42 @@ def attach_handlers(a: Acct):
             if mk and await upload_media(a, event.message, mk, {
                 "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
                 "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
-                "ts": int(event.message.date.timestamp() * 1000), "reply_to": event.message.reply_to.reply_to_msg_id if event.message.reply_to else None,
+                "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message),
             }):
                 return
             await to_server({
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
-                "reply_to": event.message.reply_to.reply_to_msg_id if event.message.reply_to else None,
+                "reply_to": reply_id(event.message),
             })
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
+
+
+def reply_id(msg):
+    """The id of the message this one answers (a reply to a story or another odd header has none)."""
+    return getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
+
+
+async def copy_dialog(a: Acct, d):
+    """The recent history of one personal chat, oldest first."""
+    msgs = []
+    async for m in a.client.iter_messages(d.entity, limit=BACKFILL_MESSAGES):
+        if describe(m):
+            msgs.append(m)
+    for m in reversed(msgs):
+        sender = await m.get_sender()
+        mk = media_kind(m) if BACKFILL_MEDIA else None
+        if mk and await upload_media(a, m, mk, {
+            "tg_chat": str(d.id), "chat_kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+            "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+        }):
+            continue
+        await to_server({
+            "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
+            "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+        })
 
 
 async def run_backfill(a: Acct):
@@ -325,23 +350,13 @@ async def run_backfill(a: Acct):
                 todo.append(d)
         a.backfill["total"] = len(todo)
         for d in todo:
-            msgs = []
-            async for m in a.client.iter_messages(d.entity, limit=BACKFILL_MESSAGES):
-                if describe(m):
-                    msgs.append(m)
-            for m in reversed(msgs):
-                sender = await m.get_sender()
-                mk = media_kind(m) if BACKFILL_MEDIA else None
-                if mk and await upload_media(a, m, mk, {
-                    "tg_chat": str(d.id), "chat_kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
-                    "out": bool(m.out), "caption": (m.message or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": m.reply_to.reply_to_msg_id if m.reply_to else None,
-                }):
-                    continue
-                await to_server({
-                    "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
-                    "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000),
-                    "reply_to": m.reply_to.reply_to_msg_id if m.reply_to else None,
-                })
+            try:
+                await copy_dialog(a, d)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # one odd chat must not stop the other fifteen
+                log("a chat was skipped in the history copy:", repr(e)[:100])
+                a.backfill["errors"] = a.backfill.get("errors", 0) + 1
             a.backfill["done"] += 1
             await asyncio.sleep(0.6)  # be gentle with Telegram's limits
         a.backfill["state"] = "done"
@@ -351,7 +366,7 @@ async def run_backfill(a: Acct):
     except asyncio.CancelledError:
         a.backfill["state"] = "stopped"
     except Exception as e:
-        log("backfill failed:", type(e).__name__)
+        log("backfill failed:", repr(e)[:100])
         a.backfill["state"] = "error"
 
 

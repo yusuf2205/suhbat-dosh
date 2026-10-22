@@ -24,3 +24,5 @@ release/
 
 tgbridge-data/
 .env.bridge
+
+__pycache__/
