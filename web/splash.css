@@ -1,3 +1,4 @@
+@font-face { font-family: "Lilita One"; src: url("/fonts/LilitaOne.ttf") format("truetype"); font-display: block; }
 /* Launch animation: the emblem pops in, blinks, then the name is wiped in next to a heavy shadow, and the screen fades into the app. */
 #splash {
   position: fixed; inset: 0; z-index: 9999; background: #fbc700;
@@ -12,7 +13,7 @@
 #splash .sp-dot:nth-child(2) { animation-delay: .62s; }
 #splash .sp-dot:nth-child(3) { animation-delay: .74s; }
 #splash .sp-word {
-  font: italic 900 clamp(34px, 11vw, 64px)/1 "Arial Black", Impact, "Segoe UI", system-ui, sans-serif; letter-spacing: .01em; text-transform: uppercase;
+  font: 400 clamp(38px, 12vw, 70px)/1 "Lilita One", "Arial Black", Impact, "Segoe UI", system-ui, sans-serif; letter-spacing: .02em; transform: rotate(-3deg);
   color: #fff; -webkit-text-stroke: 3px #17171a; paint-order: stroke fill;
   text-shadow: 3px 3px 0 #17171a, 5px 5px 0 #17171a, 7px 7px 0 #17171a;
   padding: 0 12px 10px 4px; white-space: nowrap;
