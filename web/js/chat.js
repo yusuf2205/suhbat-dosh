@@ -370,6 +370,7 @@ function subtitle(c) {
     return (c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden')) + pres;
   }
   if (c.saved) return '';
+  if (c.imported) return t('imp.subtitle');
   return `${c.members_count} ${c.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;
 }
 
@@ -993,7 +994,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.urgent, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.urgent, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1049,11 +1050,11 @@ function buildCallEntry(m, c) {
 
 function buildMessage(m, c) {
   if (m.kind === 'call') return buildCallEntry(m, c);
-  const mine = m.sender_id === S.me.id;
+  const mine = c.imported ? m.import_author === c.import_me : m.sender_id === S.me.id;
   const bigEmoji = m.kind === 'text' && !m.file && /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*){1,3}$/u.test((m.text || '').trim());
   const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}${m.kind === 'sticker' ? ' sticker-bubble' : ''}` });
   if (!mine && c.type !== 'direct') {
-    bubble.append(h('div', { class: 'sender' }, S.users.get(m.sender_id)?.name ?? '…'));
+    bubble.append(h('div', { class: 'sender' }, m.import_author || (S.users.get(m.sender_id)?.name ?? '…')));
   }
   if (m.forward_from) bubble.append(h('div', { class: 'fwd' }, t('chat.forwarded_from', { name: m.forward_from })));
   if (m.reply_to) {

@@ -336,7 +336,7 @@ async function enter(user) {
   outbox.clearForOtherUsers();
   if (paintedFor !== user.id) buildApp();
   paintedFor = null;
-  try { setConfig(await api('GET', '/api/config')); } catch { /* defaults */ }
+  try { const conf = await api('GET', '/api/config'); S.cfg = conf; setConfig(conf); } catch { /* defaults */ }
   try {
     await loadChats();
   } catch { /* offline start: list stays empty until reconnect */ }

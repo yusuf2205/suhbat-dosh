@@ -25,6 +25,7 @@ import { openNearby } from './nearby.js';
 import { openTasks } from './tasks.js';
 import { focusSummary, openFocus } from './focus.js';
 import { openDigestAll } from './digest.js';
+import { openImport } from './import.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -260,6 +261,7 @@ export function openSettings() {
           row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
           row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
           row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
+          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
           null),
         group(
           row('user', t('st.account'), { onclick: () => go(pages.account) }),

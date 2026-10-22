@@ -98,6 +98,7 @@ app.use('/api', (req, res, next) => {
   }
   next();
 });
+app.use('/api/import', express.json({ limit: '3mb' })); // batches of imported messages
 app.use('/api', express.json({ limit: '32kb' }));
 app.use('/api/s', publicShare); // share links work without an account
 app.use('/api', api);
