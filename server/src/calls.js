@@ -3,6 +3,7 @@ import { emit, isOnline } from './realtime.js';
 import { audit, directPeerId, getUser, isBlockedEitherWay, membership, publicUser } from './service.js';
 import { postMessage } from './api.js';
 import { now } from './util.js';
+import { pushToUser } from './push.js';
 
 // 1:1 audio/video calls. The server only relays WebRTC signalling (SDP + ICE) between the two
 // participants and keeps a history entry in the chat; media flows peer-to-peer (or via TURN).
@@ -50,6 +51,7 @@ function invite(userId, m) {
   if (isBlockedEitherWay(userId, peer)) return reject('blocked');
   if (calls.has(m.call_id)) return;
   if (busy.has(userId) || busy.has(peer)) return reject('busy');
+  if (getUser(peer)?.presence === 'busy') return reject('busy'); // "busy" status: calls are declined politely
 
   const call = {
     id: m.call_id, chatId, caller: userId, callee: peer, video: !!m.video, startedAt: now(), answeredAt: 0, timer: null,
@@ -59,17 +61,30 @@ function invite(userId, m) {
   busy.set(peer, call.id);
   audit(userId, 'call.start', { chat_id: chatId, target_type: 'user', target_id: peer, details: { video: call.video } });
 
+  const incoming = {
+    type: 'call.incoming', call_id: call.id, chat_id: chatId, video: call.video, sdp: m.sdp,
+    from: publicUser(getUser(userId), peer),
+  };
   if (!isOnline(peer)) {
-    // nobody to ring: register it as a missed call so the callee sees it later
+    // the callee's app is closed or asleep (typical for an iPhone): wake it with a push and keep ringing;
+    // the call is handed over as soon as the app connects. Without any push device: a missed call.
+    const caller = getUser(userId);
+    const pushed = pushToUser(peer, {
+      title: caller?.name || 'Suhbat-dosh', body: call.video ? '📹 Входящий видеозвонок' : '📞 Входящий звонок',
+      chat_id: chatId, tag: `call-${call.id}`, call: true,
+    }, { ttl: 45 });
+    if (pushed) {
+      call.pending = incoming;
+      call.timer = setTimeout(() => finish(call, 'missed'), RING_MS);
+      emit([userId], { type: 'call.ringing', call_id: call.id });
+      return;
+    }
     emit([userId], { type: 'call.ringing', call_id: call.id, offline: true });
     call.timer = setTimeout(() => finish(call, 'missed'), 4000);
     return;
   }
   call.timer = setTimeout(() => finish(call, 'missed'), RING_MS);
-  emit([peer], {
-    type: 'call.incoming', call_id: call.id, chat_id: chatId, video: call.video, sdp: m.sdp,
-    from: publicUser(getUser(userId), peer),
-  });
+  emit([peer], incoming);
   emit([userId], { type: 'call.ringing', call_id: call.id });
 }
 
@@ -142,6 +157,7 @@ export function handleOffline(userId) {
   const id = busy.get(userId);
   const call = id ? calls.get(id) : null;
   if (!call) return;
+  if (call.pending && userId === call.callee) return; // still ringing through the push: the timer decides
   if (!call.answeredAt) {
     finish(call, userId === call.caller ? 'cancel' : 'missed');
     return;
@@ -154,6 +170,11 @@ export function handleOffline(userId) {
 export function handleOnline(userId) {
   const id = busy.get(userId);
   const call = id ? calls.get(id) : null;
+  if (call?.pending && userId === call.callee && !call.answeredAt) {
+    // the callee opened the app from the push notification: ring now
+    emit([userId], call.pending);
+    return;
+  }
   if (call?.graceTimer) {
     clearTimeout(call.graceTimer);
     call.graceTimer = null;

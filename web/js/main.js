@@ -27,18 +27,29 @@ import { renderGroupCallBar as renderGcallBar, restorePendingUploads } from './c
 import { checkForUpdate, initUpdates } from './updates.js';
 import { clearAll as clearMediaCache } from './mediacache.js';
 import { snapClear, snapGet, snapSaveBoot } from './snap.js';
+import { showLock } from './applock.js';
 
 const root = document.getElementById('root');
 let appEl = null;
 
 // ---------------------------------------------------------------- theme
 const mq = matchMedia('(prefers-color-scheme: dark)');
+/** "By schedule": dark between two times of day (the interval may cross midnight). */
+function inDarkHours() {
+  const toMin = (v, d) => { const m = /^(\d{1,2}):(\d{2})$/.exec(v || d); return m ? Number(m[1]) * 60 + Number(m[2]) : 0; };
+  const from = toMin(S.prefs.themeFrom, '21:00');
+  const to = toMin(S.prefs.themeTo, '07:00');
+  const d = new Date();
+  const now = d.getHours() * 60 + d.getMinutes();
+  return from <= to ? now >= from && now < to : now >= from || now < to;
+}
 function applyTheme() {
-  const dark = S.prefs.theme === 'dark' || (S.prefs.theme === 'auto' && mq.matches);
+  const dark = S.prefs.theme === 'dark' || (S.prefs.theme === 'auto' && mq.matches) || (S.prefs.theme === 'schedule' && inDarkHours());
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.documentElement.style.setProperty('--text-scale', String(S.prefs.textScale || 1));
 }
 mq.addEventListener?.('change', applyTheme);
+setInterval(() => { if (S.prefs.theme === 'schedule') applyTheme(); }, 60000);
 on('theme', applyTheme);
 applyTheme();
 setLang(S.prefs.lang);
@@ -383,6 +394,10 @@ on('relang', () => {
 on('me', () => {
   if (S.me) S.users.set(S.me.id, S.me);
 });
+
+// the app lock covers everything from the first moment
+showLock();
+document.addEventListener('suhbat:logout-local', () => fire('logged-out-request'));
 
 (async function boot() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

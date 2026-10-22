@@ -353,8 +353,9 @@ function subtitle(c) {
   }
   if (c.type === 'direct' && !c.saved) {
     if (c.peer?.is_bot) return t('bots.label');
-    if (c.peer?.online) return t('chat.online');
-    return c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden');
+    const pres = c.peer?.presence === 'busy' ? ` · ${t('pres.busy')}` : c.peer?.presence === 'away' ? ` · ${t('pres.away')}` : '';
+    if (c.peer?.online) return t('chat.online') + pres;
+    return (c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden')) + pres;
   }
   if (c.saved) return '';
   return `${c.members_count} ${c.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;

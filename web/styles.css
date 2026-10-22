@@ -1183,7 +1183,7 @@ a, .btn.link, .chat-head .sub.live, .pinbar b, .unread-div, .sender, .quote b, .
 .radio { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--muted); position: relative; }
 .radio.on { border-color: var(--brand); }
 .radio.on::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--brand); }
-.theme-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 10px 16px 4px; background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 0; padding-bottom: 14px; }
+.theme-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 10px; padding: 10px 16px 4px; background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 0; padding-bottom: 14px; }
 .theme-tile { border: 2px solid transparent; border-radius: 16px; background: none; padding: 0; font: inherit; color: var(--text); cursor: pointer; display: grid; gap: 6px; justify-items: center; }
 .tt-prev { display: grid; gap: 6px; align-content: center; width: 100%; height: 78px; border-radius: 14px; padding: 10px; background: #fff7d6; box-sizing: border-box; }
 .tt-prev i { display: block; height: 14px; border-radius: 7px; background: #fff; width: 70%; }
@@ -1515,3 +1515,23 @@ html[data-motion="lite"] *, html[data-motion="lite"] *::before, html[data-motion
 .qr-actions { justify-content: center; gap: 10px; }
 .compress-opt { gap: 10px; align-items: center; margin: 10px 0; cursor: pointer; }
 .keys-list kbd { font: inherit; font-size: .85rem; background: rgba(127,127,127,.18); padding: 2px 8px; border-radius: 6px; }
+
+/* ===== app lock ===== */
+html.locked body > *:not(.lock-screen) { visibility: hidden; }
+.lock-screen { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: radial-gradient(120% 80% at 50% 0%, #4a3c0c 0%, #14120a 70%); color: #fff; padding: 20px; }
+.lock-box { display: grid; justify-items: center; gap: 14px; width: min(320px, 100%); }
+.lock-ico { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: var(--brand); color: var(--brand-ink); }
+.lock-box h2 { margin: 0; font-size: 1.2rem; }
+.lock-dots { display: flex; gap: 14px; min-height: 18px; }
+.lock-dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .55); transition: background-color .15s, transform .15s; }
+.lock-dots i.on { background: #fff; transform: scale(1.1); }
+.lock-msg { min-height: 1.3em; color: #ff9b9b; font-size: .9rem; }
+.lock-pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 16px; justify-content: center; }
+.lock-key { width: 76px; height: 76px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .14); color: #fff; font-size: 1.7rem; font-weight: 600; display: grid; place-items: center; cursor: pointer; transition: background-color .15s, transform .1s; }
+.lock-key:hover { background: rgba(255, 255, 255, .26); }
+.lock-key:active { transform: scale(.92); background: rgba(255, 255, 255, .34); }
+.lock-key.alt { background: transparent; font-size: 1.4rem; }
+.lock-screen.shake .lock-dots { animation: lockshake .4s; }
+@keyframes lockshake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
+.lock-input { text-align: center; font-size: 1.6rem; letter-spacing: .4em; }
+.theme-tile.schedule .tt-prev { background: linear-gradient(180deg, #fff7d6 50%, #1c1d22 50%); }

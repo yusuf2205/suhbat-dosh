@@ -19,6 +19,7 @@ import { storageSection } from './viewer.js';
 import { DEFAULT_AUTO, autoPolicy, cancelDownload, listDownloads, netClass, onDownload, pauseDownload, resumeDownload, setAutoPolicy } from './downloads.js';
 import { cancel as cancelUpload, listUploads, onUpload, pause as pauseUpload, resume as resumeUpload } from './uploads.js';
 import { callSettingsSection } from './call.js';
+import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
 } from './push.js';
@@ -251,6 +252,7 @@ export function openSettings() {
         group(
           row('user', t('st.account'), { onclick: () => go(pages.account) }),
           row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
+          row('clock', t('pres.title'), { value: S.me.presence === 'busy' ? t('pres.busy') : S.me.presence === 'away' ? t('pres.away') : t('pres.online'), onclick: () => go(pages.presence) }),
           row('lock', t('st.privacy'), { onclick: () => go(pages.privacy) }),
           row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
           row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
@@ -357,6 +359,11 @@ export function openSettings() {
             nat?.openBatterySettings && !unrestricted ? row('battery', t('st.battery'), { hint: t('st.battery_hint'), onclick: () => nat.openBatterySettings() }) : null));
           return;
         }
+        // iPhone / iPad: notifications and incoming calls in the background only work for the app added to the Home Screen
+        if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches) {
+          bgBox.append(group(h('div', { class: 'srow static' }, h('span', { class: 'srow-ico' }, icon('bolt', 22)), h('span', { class: 'srow-label' }, t('st.bg'), h('small', null, t('st.bg_ios'))))));
+          return;
+        }
         if (!pushSupported()) { bgBox.append(group(h('div', { class: 'srow static' }, h('span', { class: 'srow-ico' }, icon('bolt', 22)), h('span', { class: 'srow-label' }, t('st.bg'), h('small', null, t('st.bg_unsupported')))))); return; }
         pushEnabled().then((on) => {
           clear(bgBox).append(group(switchRow(t('st.bg'), on, async (v, input) => {
@@ -395,6 +402,33 @@ export function openSettings() {
     },
   };
 
+  // ---- status (available / busy / away) and the auto-reply
+  pages.presence = {
+    title: () => t('pres.title'),
+    render() {
+      const cur = S.me.presence || '';
+      const save = async (patch) => {
+        try { S.me = (await api('PATCH', '/api/me', patch)).user; fire('me'); draw(); } catch (e) { fail(e); }
+      };
+      const choice = (value, labelKey, ico) => h('button', { class: 'srow', type: 'button', 'aria-pressed': String(cur === value), onclick: () => save({ presence: value }) },
+        h('span', { class: 'srow-ico' }, icon(ico, 22)), h('span', { class: 'srow-label' }, t(labelKey)),
+        cur === value ? h('span', { class: 'srow-value' }, '✓') : null);
+      const text = h('textarea', { class: 'input', rows: 3, maxLength: 300, placeholder: t('pres.auto_ph'), 'aria-label': t('pres.auto_text') });
+      text.value = S.me.auto_reply || '';
+      return {
+        nodes: [
+          group(choice('', 'pres.online', 'user'), choice('busy', 'pres.busy', 'bell'), choice('away', 'pres.away', 'clock')),
+          note(t('pres.hint')),
+          heading(t('pres.auto')),
+          group(switchRow(t('pres.auto_on'), S.me.auto_reply_on, (v) => save({ auto_reply_on: v }), t('pres.auto_hint'))),
+          group(h('div', { class: 'sfield' }, text,
+            h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '8px' } },
+              h('button', { class: 'btn', type: 'button', onclick: () => save({ auto_reply: text.value.trim() }).then(() => toast(t('pres.saved'))) }, t('settings.save'))))),
+        ],
+      };
+    },
+  };
+
   const privacyRow = (field, labelKey) => {
     const cur = S.me.privacy?.[field] || 'everyone';
     return row(null, t(labelKey), { value: t(`privacy.${cur}`), onclick: () => go({
@@ -418,6 +452,7 @@ export function openSettings() {
         nodes: [
           heading(t('st.security')),
           group(
+            row('lock', t('lock.title'), { value: lockEnabled() ? t('lock.on') : t('lock.off'), onclick: () => go(pages.applock) }),
             row('block', t('settings.blocked'), { value: blockN, onclick: () => go(pages.blocked) }),
             row('devices', t('settings.sessions'), { value: sessN, onclick: () => go(pages.sessions) }),
             row('mail', t('settings.email'), { value: S.me.email || t('settings.email_none'), onclick: () => go(pages.account) })),
@@ -427,6 +462,46 @@ export function openSettings() {
           heading(t('export.title')),
           group(row('download', t('export.all'), { onclick: () => { const a = h('a', { href: '/api/export', download: '' }); document.body.append(a); a.click(); a.remove(); } })),
           note(t('export.hint')),
+        ],
+      };
+    },
+  };
+
+  // ---- app lock (PIN / fingerprint)
+  pages.applock = {
+    title: () => t('lock.title'),
+    render() {
+      const on = lockEnabled();
+      const bioBox = h('div');
+      const times = [[0, 'lock.t0'], [60, 'lock.t60'], [300, 'lock.t300'], [900, 'lock.t900'], [3600, 'lock.t3600']];
+      if (on) {
+        bioAvailable().then((ok) => {
+          if (!ok) return;
+          clear(bioBox).append(group(switchRow(t('lock.bio'), bioOn(), async (v, input) => {
+            if (v) { const done = await enableBio(); if (!done) { input.checked = false; toast(t('lock.bio_fail')); } } else disableBio();
+          }, t('lock.bio_hint'))));
+        });
+      }
+      return {
+        nodes: [
+          group(switchRow(t('lock.enable'), on, async (v, input) => {
+            if (v) {
+              const ok = await createPin();
+              if (!ok) { input.checked = false; return; }
+            } else if (await confirmPin()) {
+              disableLock();
+            } else { input.checked = true; return; }
+            draw();
+          }, t('lock.hint'))),
+          ...(on ? [
+            heading(t('lock.after')),
+            group(...times.map(([sec, key]) => h('button', { class: 'srow', type: 'button', onclick: () => { setTimeoutSec(sec); draw(); } },
+              h('span', { class: 'srow-ico none' }), h('span', { class: 'srow-label' }, t(key)),
+              lockTimeout() === sec ? h('span', { class: 'srow-value' }, '\u2713') : null))),
+            bioBox,
+            group(row('lock', t('lock.now'), { onclick: () => { m.close(); showLock(); } })),
+            note(t('lock.note')),
+          ] : [note(t('lock.note'))]),
         ],
       };
     },
@@ -472,6 +547,12 @@ export function openSettings() {
     onclick: () => { S.prefs.theme = key; savePrefs(); fire('theme'); draw(); },
   }, h('span', { class: 'tt-prev' }, h('i'), h('i')), h('span', { class: 'tt-name' }, label));
 
+  const timeInput = (key, def) => {
+    const input = h('input', { class: 'input', type: 'time', value: S.prefs[key] || def, style: { width: 'auto' } });
+    input.addEventListener('change', () => { S.prefs[key] = input.value || def; savePrefs(); fire('theme'); });
+    return input;
+  };
+
   pages.chats = {
     title: () => t('st.chats'),
     render() {
@@ -482,7 +563,10 @@ export function openSettings() {
       return {
         nodes: [
           heading(t('st.themes')),
-          h('div', { class: 'theme-tiles' }, themeTile('auto', t('st.theme_auto')), themeTile('light', t('st.theme_light')), themeTile('dark', t('st.theme_dark'))),
+          h('div', { class: 'theme-tiles' }, themeTile('auto', t('st.theme_auto')), themeTile('light', t('st.theme_light')), themeTile('dark', t('st.theme_dark')), themeTile('schedule', t('st.theme_schedule'))),
+          ...(S.prefs.theme === 'schedule' ? [group(h('div', { class: 'sfield' }, h('div', { class: 'row between' },
+            h('label', null, t('st.theme_from'), ' ', timeInput('themeFrom', '21:00')),
+            h('label', null, t('st.theme_to'), ' ', timeInput('themeTo', '07:00')))))] : []),
           heading(t('settings.text_size')),
           group(h('div', { class: 'sfield' }, h('div', { class: 'row between' }, h('span', null, t('settings.text_size')), val), size)),
           group(row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() })),

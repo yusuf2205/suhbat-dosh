@@ -53,6 +53,22 @@ const preview = (m) => {
   return ({ image: '🖼 Фото', video: '🎬 Видео', voice: '🎤 Голосовое сообщение', audio: '🎵 Аудио', file: '📎 Файл', call: '📞 Звонок' })[m.kind] || 'Новое сообщение';
 };
 
+/** Web Push to every device of one user (used for incoming calls). Returns how many devices were tried. */
+export function pushToUser(userId, data, { ttl = 60, urgency = 'high' } = {}) {
+  const subs = q.all('SELECT * FROM push_subs WHERE user_id = ?', userId);
+  if (!subs.length) return 0;
+  vapid();
+  const payload = JSON.stringify(data);
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: ttl, urgency })
+      .catch((e) => {
+        if (e.statusCode === 404 || e.statusCode === 410) q.run('DELETE FROM push_subs WHERE id = ?', s.id);
+        else log('warn', 'push failed', { status: e.statusCode, err: String(e.message).slice(0, 80) });
+      });
+  }
+  return subs.length;
+}
+
 /** Called for every new message: push to members who are offline and have not muted the chat. */
 export function pushNewMessage(chat, row) {
   if (row.kind === 'call') return;
@@ -64,7 +80,7 @@ export function pushNewMessage(chat, row) {
     const m = q.get('SELECT muted, muted_until FROM members WHERE chat_id = ? AND user_id = ?', chat.id, uid);
     if (!m || m.muted || (m.muted_until || 0) > now()) continue;
     const u = getUser(uid);
-    if (!u || u.banned_at) continue;
+    if (!u || u.banned_at || u.presence === 'busy') continue; // "busy": no notifications
     for (const s of q.all('SELECT * FROM push_subs WHERE user_id = ?', uid)) {
       vapid();
       webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600, urgency: 'high' })

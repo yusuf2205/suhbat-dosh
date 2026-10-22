@@ -1,5 +1,5 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v53';
+const CACHE = 'suhbat-shell-v54';
 const SHELL = ['/', '/styles.css?v=7', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -41,6 +41,7 @@ self.addEventListener('push', (e) => {
     if (wins.some((w) => w.visibilityState === 'visible' && w.focused)) return;
     await self.registration.showNotification(d.title || 'Suhbat-dosh', {
       body: d.body || '', icon: '/icon.svg?v=2', badge: '/icon.svg?v=2', tag: d.tag || 'suhbat', renotify: true,
+      ...(d.call ? { requireInteraction: true, vibrate: [300, 150, 300, 150, 300] } : {}),
       data: { chat_id: d.chat_id, message_id: d.message_id },
     });
   })());

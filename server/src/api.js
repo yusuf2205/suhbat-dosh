@@ -449,6 +449,12 @@ api.patch('/me', (req, res) => {
   if (b.name !== undefined) put('name', str(b.name, 'name', { min: 1, max: LIMITS.NAME_MAX }));
   if (b.bio !== undefined) put('bio', str(b.bio, 'bio', { max: LIMITS.BIO_MAX }));
   if (b.status !== undefined) put('status', str(b.status, 'status', { max: LIMITS.STATUS_MAX }));
+  if (b.presence !== undefined) {
+    if (!['', 'busy', 'away'].includes(b.presence)) throw new HttpError(400, 'invalid_input');
+    put('presence', b.presence);
+  }
+  if (b.auto_reply !== undefined) put('auto_reply', str(b.auto_reply || '', 'auto_reply', { max: 300 }));
+  if (b.auto_reply_on !== undefined) put('auto_reply_on', b.auto_reply_on ? 1 : 0);
   if (b.birthday !== undefined) {
     const v = String(b.birthday || '').trim();
     if (!v) put('birthday', null);
@@ -992,7 +998,21 @@ function assertCanPost(chat, me, userId) {
 }
 
 /** Insert + fan out one message. Idempotent on (chat, sender, client_id). */
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false }) {
+/** The other person of a direct chat is away / has an auto-reply on: answer once per 12 hours, in their name. */
+function maybeAutoReply(chat, sender, kind) {
+  if (chat.type !== 'direct' || kind === 'call' || kind === 'secret' || sender.is_bot) return;
+  const peerId = directPeerId(chat.id, sender.id);
+  if (!peerId || peerId === sender.id) return;
+  const peer = getUser(peerId);
+  if (!peer || peer.is_bot || !peer.auto_reply_on || !peer.auto_reply) return;
+  if (isOnline(peerId) && peer.presence !== 'away' && peer.presence !== 'busy') return; // present and available: no need
+  const last = q.get('SELECT at FROM auto_replied WHERE user_id = ? AND peer_id = ?', peerId, sender.id);
+  if (last && now() - last.at < 12 * 3600_000) return;
+  q.run('INSERT INTO auto_replied (user_id, peer_id, at) VALUES (?,?,?) ON CONFLICT(user_id, peer_id) DO UPDATE SET at = excluded.at', peerId, sender.id, now());
+  postMessage({ chat, user: peer, text: `🤖 ${peer.auto_reply}`, auto: true, silent: false });
+}
+
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1029,6 +1049,7 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   try { handleFatherMessage(chat, getMessage(id)); } catch (e) { log('error', 'botfather', { err: e.message }); }
   if (!silent) { try { pushNewMessage(chat, getMessage(id)); } catch (e) { log('error', 'push', { err: e.message }); } }
   try { checkSpam(user, chat, text); } catch (e) { log('error', 'spam', { err: e.message }); }
+  if (!auto) { try { maybeAutoReply(chat, user, kind); } catch (e) { log('error', 'autoreply', { err: e.message }); } }
   return { message, duplicate: false };
 }
 
