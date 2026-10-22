@@ -2,7 +2,7 @@
 import { closeLayer, openLayer } from './backnav.js';
 import { LIMITS, PRIVACY_VALUES } from '/shared/contracts.js';
 import { motionLevel, setLiteMotion } from './motion.js';
-import { h, clear } from './dom.js';
+import { h, clear, formatBytes } from './dom.js';
 import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs } from './state.js';
 import { icon } from './icons.js';
@@ -20,6 +20,7 @@ import { DEFAULT_AUTO, autoPolicy, cancelDownload, listDownloads, netClass, onDo
 import { cancel as cancelUpload, listUploads, onUpload, pause as pauseUpload, resume as resumeUpload } from './uploads.js';
 import { callSettingsSection } from './call.js';
 import { openDrive } from './drive.js';
+import { openCalendar } from './events.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -245,6 +246,7 @@ export function openSettings() {
         group(
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
+          row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } }),
           row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
           row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
@@ -455,6 +457,7 @@ export function openSettings() {
           heading(t('st.security')),
           group(
             row('lock', t('lock.title'), { value: lockEnabled() ? t('lock.on') : t('lock.off'), onclick: () => go(pages.applock) }),
+            row('user', t('md.title'), { onclick: () => go(pages.mydata) }),
             row('block', t('settings.blocked'), { value: blockN, onclick: () => go(pages.blocked) }),
             row('devices', t('settings.sessions'), { value: sessN, onclick: () => go(pages.sessions) }),
             row('mail', t('settings.email'), { value: S.me.email || t('settings.email_none'), onclick: () => go(pages.account) })),
@@ -504,6 +507,58 @@ export function openSettings() {
             group(row('lock', t('lock.now'), { onclick: () => { m.close(); showLock(); } })),
             note(t('lock.note')),
           ] : [note(t('lock.note'))]),
+        ],
+      };
+    },
+  };
+
+  // ---- my data: what is stored, my security log, export, delete the account
+  pages.mydata = {
+    title: () => t('md.title'),
+    render() {
+      const sumBox = h('div');
+      const logBox = h('div');
+      api('GET', '/api/me/data').then((d) => {
+        clear(sumBox).append(group(
+          info(String(d.messages), t('md.messages')), info(String(d.chats), t('md.chats')),
+          info(`${d.files} \u00B7 ${formatBytes(d.files_bytes)}`, t('md.files')), info(String(d.drive), t('md.drive')),
+          info(String(d.links), t('md.links')), info(String(d.sessions), t('md.sessions')), info(String(d.push_devices), t('md.push'))));
+      }).catch(() => {});
+      api('GET', '/api/me/activity').then((r) => {
+        const names = { 'auth.login': 'md.a_login', 'auth.logout': 'md.a_logout', 'auth.login_failed': 'md.a_failed', 'auth.password_set': 'md.a_password', 'drive.share': 'md.a_share' };
+        clear(logBox).append(group(...(r.events.length ? r.events.slice(0, 25).map((e) => h('div', { class: 'srow static md-log' },
+          h('span', { class: 'srow-label' }, t(names[e.action] || 'md.a_other'), h('small', null, [new Date(e.ts).toLocaleString(), e.ip, (e.device || '').slice(0, 60)].filter(Boolean).join(' \u00B7 '))))) : [h('div', { class: 'srow static' }, t('md.no_events'))])));
+      }).catch(() => {});
+      const del = () => {
+        const word = h('input', { class: 'input', autocomplete: 'off', placeholder: t('md.type_delete'), 'aria-label': t('md.type_delete') });
+        const pw = S.me.has_password ? h('input', { class: 'input', type: 'password', autocomplete: 'current-password', placeholder: t('login.password'), 'aria-label': t('login.password') }) : null;
+        const err = h('div', { class: 'err', role: 'alert' });
+        const dlg = modal({
+          title: t('md.delete'),
+          body: [h('p', null, t('md.delete_text')), word, pw, err,
+            h('button', { class: 'btn danger', type: 'button', onclick: async (e) => {
+              if (!/^(удалить|o['‘’]?chirish|delete)$/i.test(word.value.trim())) { err.textContent = t('md.type_delete'); return; }
+              e.currentTarget.disabled = true;
+              try {
+                await api('DELETE', '/api/me', { confirm: 'DELETE', password: pw?.value || undefined });
+                dlg.close();
+                fire('logged-out');
+              } catch (x) { err.textContent = errText(x.code); e.currentTarget.disabled = false; }
+            } }, t('md.delete'))],
+        });
+      };
+      return {
+        nodes: [
+          heading(t('md.stored')), sumBox, note(t('md.stored_note')),
+          heading(t('export.title')),
+          group(row('download', t('export.all'), { onclick: () => { const a = h('a', { href: '/api/export', download: '' }); document.body.append(a); a.click(); a.remove(); } })),
+          note(t('export.hint')),
+          heading(t('md.security')),
+          group(row('devices', t('settings.sessions'), { onclick: () => go(pages.sessions) })),
+          logBox,
+          heading(t('md.danger')),
+          group(S.me.is_admin ? h('div', { class: 'srow static' }, t('md.admin_cannot')) : row('trash', t('md.delete'), { danger: true, onclick: del })),
+          note(t('md.delete_note')),
         ],
       };
     },

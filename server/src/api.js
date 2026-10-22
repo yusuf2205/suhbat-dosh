@@ -25,6 +25,7 @@ import { consumeInvite, gateRegistration, registrationMode } from './access.js';
 import { serviceMessage, wireNotify } from './notify.js';
 import { features, wireFeatures } from './features.js';
 import { drive, wireDrive } from './drive.js';
+import { mydata } from './mydata.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { assertQuota, checkSpam, safety } from './safety.js';
@@ -407,6 +408,7 @@ api.use('/admin', admin);
 api.use('/bots', botsRouter);
 api.use(features);
 api.use(drive);
+api.use(mydata);
 api.use(pushRouter);
 api.use(safety);
 
@@ -1075,7 +1077,7 @@ api.post('/chats/:id/messages', (req, res) => {
     if (isSecretChat(src.chat_id) || isSecretChat(chat.id)) throw new HttpError(403, 'secret_no_forward');
     const sender = src.sender_id ? getUser(src.sender_id)?.name : null;
     text = src.text;
-    kind = src.kind === 'poll' ? 'text' : src.kind;
+    kind = src.kind === 'poll' || src.kind === 'event' ? 'text' : src.kind;
     fileId = src.file_id;
     duration = src.duration;
     forwardFrom = src.forward_from || sender || '';

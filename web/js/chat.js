@@ -3,6 +3,7 @@ import { canCompress, compressImage } from './imgcompress.js';
 import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
 import { canCompressVideo, compressVideo } from './videocompress.js';
 import { accessBadge, accessMenu, saveToDrive } from './drive.js';
+import { eventNode, openEventCreate } from './events.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
@@ -450,6 +451,7 @@ function renderComposer() {
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
       { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m)) },
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
+      { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
         const r = await recordVideoNote();
@@ -980,7 +982,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1051,6 +1053,7 @@ function buildMessage(m, c) {
   else if (m.kind === 'secret' && !m.upload) bubble.append(secretNode(m, c));
   else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
+  if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
   else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));

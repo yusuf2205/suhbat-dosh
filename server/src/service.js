@@ -85,6 +85,17 @@ export function directPeerId(chatId, userId) {
 
 // ---------------- messages ----------------
 
+export function eventOut(row) {
+  const e = q.get('SELECT * FROM events WHERE message_id = ?', row.id);
+  if (!e) return null;
+  const rsvp = { yes: [], maybe: [], no: [] };
+  for (const r of q.all('SELECT user_id, status FROM event_rsvp WHERE event_id = ? ORDER BY rowid', e.id)) rsvp[r.status]?.push(r.user_id);
+  return {
+    id: e.id, title: e.title, description: e.description, location: e.location, start_at: e.start_at, end_at: e.end_at,
+    meeting: !!e.meeting, canceled: !!e.canceled, creator_id: e.creator_id, rsvp,
+  };
+}
+
 export function pollOut(row) {
   const p = q.get('SELECT * FROM polls WHERE message_id = ?', row.id);
   if (!p) return null;
@@ -141,6 +152,7 @@ export function messageOut(row) {
     waveform: row.waveform || null,
     markup: row.markup ? JSON.parse(row.markup) : null,
     poll: row.kind === 'poll' ? pollOut(row) : null,
+    event: row.kind === 'event' ? eventOut(row) : null,
     reactions,
     edited_at: row.edited_at,
     created_at: row.created_at,

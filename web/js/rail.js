@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 import { avatar, toast } from './ui.js';
 import { openSettings } from './dialogs.js';
 import { openDrive } from './drive.js';
+import { openCalendar } from './events.js';
 
 // Left navigation rail (desktop / tablet): Messages, Contacts, Calls, Saved, Archive, Settings.
 let el;
@@ -59,6 +60,7 @@ function render() {
       item('calls', 'phone', t('nav.calls'), { active: S.view === 'calls', onclick: () => setView('calls') }),
       item('saved', 'bookmark', t('nav.saved'), { active: !!savedActive, onclick: openSaved }),
       item('drive', 'folder', t('drive.title'), { onclick: openDrive }),
+      item('calendar', 'clock', t('ev.calendar'), { onclick: openCalendar }),
       item('archive', 'archive', t('nav.archive'), { active: S.view === 'archive', onclick: () => setView('archive') }),
       item('settings', 'settings', t('nav.settings'), { onclick: openSettings })),
     h('button', { class: 'rail-me', type: 'button', 'aria-label': S.me?.name || t('nav.settings'), onclick: openSettings },

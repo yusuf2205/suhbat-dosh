@@ -8,7 +8,7 @@ import {
 } from './util.js';
 import { emit } from './realtime.js';
 import {
-  chatOut, getMessage, getUser, memberIds, membership, messageOut, publicUser, requireMember,
+  chatOut, eventOut, getMessage, getUser, memberIds, membership, messageOut, publicUser, requireMember,
 } from './service.js';
 import { serviceMessage } from './notify.js';
 
@@ -228,6 +228,107 @@ features.post('/polls/:id/close', (req, res) => {
   if (m.sender_id !== req.user.id) throw new HttpError(403, 'forbidden');
   q.run('UPDATE polls SET closed = 1 WHERE id = ?', p.id);
   res.json({ message: pollMessageUpdate(p.message_id) });
+});
+
+// ------------------------------------------------------------------ meetings / calendar
+const eventMessageUpdate = (messageId) => {
+  const m = getMessage(messageId);
+  emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(m) });
+  return messageOut(m);
+};
+
+/** Reminders for people who said "yes" or "maybe": 15 minutes before the start. */
+function syncReminder(ev, userId) {
+  const ref = `event:${ev.id}:${userId}`;
+  q.run('DELETE FROM scheduled WHERE ref = ?', ref);
+  const r = q.get('SELECT status FROM event_rsvp WHERE event_id = ? AND user_id = ?', ev.id, userId);
+  const at = ev.start_at - 15 * 60_000;
+  if (ev.canceled || !r || r.status === 'no' || at <= now()) return;
+  q.run("INSERT INTO scheduled (user_id, chat_id, kind, text, send_at, created_at, ref) VALUES (?,?,'reminder',?,?,?,?)",
+    userId, ev.chat_id, `${ev.title} \u2014 ${ev.meeting ? 'встреча' : 'событие'} через 15 минут`, at, now(), ref);
+}
+
+features.post('/chats/:id/events', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const me = requireMember(id, req.user.id);
+  const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
+  if (chat.type === 'channel' && me.role === 'member') throw new HttpError(403, 'channel_readonly');
+  if (!rateLimit(`event:${req.user.id}`, 20, 60_000)) throw new HttpError(429, 'slow_down');
+  const title = str(req.body?.title, 'title', { min: 1, max: 120 });
+  const description = str(req.body?.description || '', 'description', { max: 500 });
+  const location = str(req.body?.location || '', 'location', { max: 120 });
+  const start = Number(req.body?.start_at);
+  if (!Number.isFinite(start) || start < now() - 60_000 || start > now() + 3 * 365 * 86400_000) throw new HttpError(400, 'invalid_time');
+  const minutes = Number(req.body?.duration_min ?? 60);
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 24 * 60) throw new HttpError(400, 'invalid_input');
+  const out = host.postMessage({ chat, user: req.user, text: title, kind: 'event' });
+  const r = q.run(
+    'INSERT INTO events (message_id, chat_id, creator_id, title, description, location, start_at, end_at, meeting, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    out.message.id, id, req.user.id, title, description, location, Math.round(start), Math.round(start) + minutes * 60_000, req.body?.meeting ? 1 : 0, now(),
+  );
+  const ev = q.get('SELECT * FROM events WHERE id = ?', Number(r.lastInsertRowid));
+  q.run("INSERT INTO event_rsvp (event_id, user_id, status) VALUES (?,?,'yes')", ev.id, req.user.id);
+  syncReminder(ev, req.user.id);
+  res.status(201).json({ message: eventMessageUpdate(out.message.id) });
+});
+
+features.post('/events/:id/rsvp', (req, res) => {
+  const ev = q.get('SELECT * FROM events WHERE id = ?', int(req.params.id, 'id'));
+  if (!ev) throw new HttpError(404, 'not_found');
+  requireMember(ev.chat_id, req.user.id);
+  if (ev.canceled) throw new HttpError(400, 'event_canceled');
+  const status = req.body?.status;
+  if (status === null) q.run('DELETE FROM event_rsvp WHERE event_id = ? AND user_id = ?', ev.id, req.user.id);
+  else if (['yes', 'maybe', 'no'].includes(status)) {
+    q.run('INSERT INTO event_rsvp (event_id, user_id, status) VALUES (?,?,?) ON CONFLICT(event_id, user_id) DO UPDATE SET status = excluded.status', ev.id, req.user.id, status);
+  } else throw new HttpError(400, 'invalid_input');
+  syncReminder(ev, req.user.id);
+  res.json({ message: eventMessageUpdate(ev.message_id) });
+});
+
+features.post('/events/:id/cancel', (req, res) => {
+  const ev = q.get('SELECT * FROM events WHERE id = ?', int(req.params.id, 'id'));
+  if (!ev) throw new HttpError(404, 'not_found');
+  const me = requireMember(ev.chat_id, req.user.id);
+  if (ev.creator_id !== req.user.id && me.role === 'member') throw new HttpError(403, 'forbidden');
+  q.run('UPDATE events SET canceled = 1 WHERE id = ?', ev.id);
+  q.run("DELETE FROM scheduled WHERE ref LIKE ?", `event:${ev.id}:%`);
+  res.json({ message: eventMessageUpdate(ev.message_id) });
+});
+
+// upcoming events from every chat of the user (the calendar)
+features.get('/events/upcoming', (req, res) => {
+  const rows = q.all(
+    `SELECT e.*, m.id AS mid FROM events e JOIN members mb ON mb.chat_id = e.chat_id AND mb.user_id = ? AND mb.banned = 0
+     JOIN messages m ON m.id = e.message_id
+     WHERE e.end_at >= ? AND e.canceled = 0 ORDER BY e.start_at LIMIT 100`, req.user.id, now() - 3600_000);
+  res.json({ events: rows.map((e) => {
+    const chat = chatOut(e.chat_id, req.user.id);
+    const mine = q.get('SELECT status FROM event_rsvp WHERE event_id = ? AND user_id = ?', e.id, req.user.id);
+    return {
+      id: e.id, message_id: e.message_id, chat_id: e.chat_id, chat_title: chat?.title || chat?.peer?.name || '', title: e.title,
+      location: e.location, start_at: e.start_at, end_at: e.end_at, meeting: !!e.meeting, mine: mine?.status || null,
+    };
+  }) });
+});
+
+// .ics file: opens in the phone / desktop calendar
+features.get('/events/:id/ics', (req, res) => {
+  const ev = q.get('SELECT * FROM events WHERE id = ?', int(req.params.id, 'id'));
+  if (!ev) throw new HttpError(404, 'not_found');
+  requireMember(ev.chat_id, req.user.id);
+  const fmt = (ts) => new Date(ts).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const esc = (v) => String(v || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Suhbat-dosh//RU', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+    `UID:event-${ev.id}@suhbat-dosh`, `DTSTAMP:${fmt(now())}`, `DTSTART:${fmt(ev.start_at)}`, `DTEND:${fmt(ev.end_at)}`,
+    `SUMMARY:${esc(ev.title)}`, ev.description ? `DESCRIPTION:${esc(ev.description)}` : '', ev.location ? `LOCATION:${esc(ev.location)}` : '',
+    ev.canceled ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    'BEGIN:VALARM', 'TRIGGER:-PT15M', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR',
+  ].filter(Boolean);
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="event-${ev.id}.ics"`);
+  res.send(lines.join('\r\n') + '\r\n');
 });
 
 // ------------------------------------------------------------------ search across every chat, with filters

@@ -60,3 +60,33 @@ test('quiz hides the right answer until you answer; one try; slot polls allow se
   const two = await call(b.cookie, 'POST', `/api/polls/${sl.data.message.poll.id}/vote`, { options: [0, 1] });
   assert.equal(two.status, 200);
 });
+
+test('events: create, RSVP, reminders, cancel, ics, calendar', async () => {
+  const a = await signup('alice_ev');
+  const b = await signup('boris_ev');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  const start = Date.now() + 2 * 3600_000;
+  const bad = await call(a.cookie, 'POST', `/api/chats/${chat.id}/events`, { title: 'X', start_at: Date.now() - 86400_000 });
+  assert.equal(bad.status, 400);
+  const mk = await call(a.cookie, 'POST', `/api/chats/${chat.id}/events`, { title: 'Планёрка', start_at: start, duration_min: 45, location: 'Офис', meeting: true });
+  assert.equal(mk.status, 201);
+  const ev = mk.data.message.event;
+  assert.equal(ev.title, 'Планёрка');
+  assert.deepEqual(ev.rsvp.yes, [a.data.user.id]);
+  const r = await call(b.cookie, 'POST', `/api/events/${ev.id}/rsvp`, { status: 'maybe' });
+  assert.deepEqual(r.data.message.event.rsvp.maybe, [b.data.user.id]);
+  assert.equal((await call(b.cookie, 'POST', `/api/events/${ev.id}/rsvp`, { status: 'dunno' })).status, 400);
+  const up = await call(b.cookie, 'GET', '/api/events/upcoming');
+  assert.equal(up.data.events.length, 1);
+  assert.equal(up.data.events[0].mine, 'maybe');
+  const ics = await fetch(`${BASE}/api/events/${ev.id}/ics`, { headers: { cookie: b.cookie } });
+  assert.equal(ics.status, 200);
+  const text = await ics.text();
+  assert.match(text, /BEGIN:VEVENT/);
+  assert.match(text, /SUMMARY:Планёрка/);
+  assert.equal((await call(b.cookie, 'POST', `/api/events/${ev.id}/cancel`)).status, 403); // only the author
+  assert.equal((await call(a.cookie, 'POST', `/api/events/${ev.id}/cancel`)).status, 200);
+  const up2 = await call(b.cookie, 'GET', '/api/events/upcoming');
+  assert.equal(up2.data.events.length, 0);
+  assert.equal((await call(b.cookie, 'POST', `/api/events/${ev.id}/rsvp`, { status: 'yes' })).status, 400);
+});

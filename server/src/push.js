@@ -46,6 +46,7 @@ pushRouter.post('/push/unsubscribe', (req, res) => {
 const preview = (m) => {
   if (m.kind === 'secret') return '🔒 Секретное сообщение';
   if (m.kind === 'poll') return `📊 ${m.text}`;
+  if (m.kind === 'event') return `📅 ${m.text}`;
   if (m.kind === 'location') return '📍 Геолокация';
   if (m.kind === 'sticker') return `${m.text || ''} Стикер`.trim();
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return '👤 Контакт'; } }

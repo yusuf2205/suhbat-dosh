@@ -98,3 +98,24 @@ test('drive: keep a file, share it with a password, download once', async () => 
   await call(b.cookie, 'DELETE', `/api/drive/${itemId}`);
   assert.equal((await call('', 'GET', `/api/s/${sh2.data.share.token}/meta`)).status, 404);
 });
+
+test('my data: summary, security log, deleting my own account', async () => {
+  const a = await signup('alice_md');
+  const b = await signup('boris_md');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  await call(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'привет', client_id: 'cid-md-0000001' });
+  const sum = await call(a.cookie, 'GET', '/api/me/data');
+  assert.equal(sum.data.messages, 1);
+  assert.ok(sum.data.sessions >= 1);
+  await call('', 'POST', '/api/auth/login', { login: 'alice_md', password: 'wrongwrong1' });
+  const log = await call(a.cookie, 'GET', '/api/me/activity');
+  assert.ok(log.data.events.some((e) => e.action === 'auth.login_failed'), JSON.stringify(log));
+  assert.equal((await call(a.cookie, 'DELETE', '/api/me', { confirm: 'no', password: 'longenough1' })).status, 400);
+  assert.equal((await call(a.cookie, 'DELETE', '/api/me', { confirm: 'DELETE', password: 'wrong-wrong' })).status, 403);
+  const del = await call(a.cookie, 'DELETE', '/api/me', { confirm: 'DELETE', password: 'longenough1' });
+  assert.equal(del.status, 200);
+  assert.equal((await call(a.cookie, 'GET', '/api/me')).status, 401);
+  assert.equal((await call('', 'POST', '/api/auth/login', { login: 'alice_md', password: 'longenough1' })).status, 401);
+  const chats = (await call(b.cookie, 'GET', '/api/chats')).data.chats;
+  assert.equal(chats.filter((c) => c.id === chat.id).length, 0);
+});
