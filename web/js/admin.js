@@ -542,7 +542,7 @@ function bridgePanel(data) {
   const draw = (users) => clear(body).append(...users.map((u) => h('tr', null,
     h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
     h('td', null, u.linked
-      ? [h('span', { class: 'pill ok' }, 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
+      ? [h('span', { class: u.live && !u.live.connected ? 'pill' : 'pill ok' }, u.live && !u.live.connected ? 'нет связи' : 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
           h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются')]
       : h('span', { class: 'muted' }, 'не подключён')),
     h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {

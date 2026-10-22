@@ -33,6 +33,8 @@ MOCK = os.environ.get("TGBRIDGE_MOCK") == "1"
 BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "150"))
 BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
 TELEGRAM_SERVICE = 777000
+HEAVY = asyncio.Semaphore(int(os.environ.get("BRIDGE_HEAVY_JOBS", "2")))   # history copies and light passes running at once
+RECENT_DAYS = 3        # the light pass looks only at chats with something new in the last days
 # media: photos and voice messages are copied; videos are prepared but OFF until BRIDGE_VIDEO=1
 MEDIA_MAX = int(os.environ.get("BRIDGE_MEDIA_MAX_MB", "25")) * 1024 * 1024
 VIDEO_ON = os.environ.get("BRIDGE_VIDEO") == "1"
@@ -103,6 +105,9 @@ class MockClient:
     async def log_out(self):
         self.authorized = False
 
+    def is_connected(self):
+        return True
+
 
 def telethon_client(session_str=""):
     from telethon import TelegramClient
@@ -145,6 +150,7 @@ class Acct:
         self.sent_edit = set()
         self.backfill = {"state": "idle", "done": 0, "total": 0}
         self.bf_task = None
+        self.last_sync = 0.0
         self.synced = False        # the first complete copy of the personal chats has finished
 
     @property
@@ -186,7 +192,7 @@ class Acct:
 
 
 ACCTS: dict = {}
-OUTBOX: deque = deque(maxlen=500)
+OUTBOX: deque = deque(maxlen=5000)
 
 
 def acct(uid) -> Acct:
@@ -370,7 +376,13 @@ async def copy_dialog(a: Acct, d, limit=None):
 
 async def run_backfill(a: Acct):
     """Copy the recent history of every personal chat once (quietly: no notifications, nothing unread)."""
-    a.backfill = {"state": "running", "done": 0, "total": 0}
+    a.backfill = {"state": "queued", "done": 0, "total": 0}
+    async with HEAVY:
+        a.backfill = {"state": "running", "done": 0, "total": 0}
+        await _run_backfill(a)
+
+
+async def _run_backfill(a: Acct):
     try:
         if MOCK:
             dialogs_ = [d for d in await a.client.dialogs() if d["type"] == "user"]
@@ -409,19 +421,25 @@ async def run_backfill(a: Acct):
 
 
 async def sync_recent(a: Acct):
-    """A light pass over the newest messages of every personal chat: nothing that a dropped connection missed stays missing."""
-    if not a.me or not a.auto_private or a.backfill["state"] == "running":
+    """A light pass over the newest messages of the chats that had activity lately: nothing a dropped connection missed stays missing."""
+    if not a.me or not a.auto_private or a.backfill["state"] in ("running", "queued"):
         return
     n = 0
-    async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
-        if d.is_user and private_ok(d.id, d.entity):
+    async with HEAVY:
+        recent = time.time() - RECENT_DAYS * 86400
+        async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+            if not (d.is_user and private_ok(d.id, d.entity)):
+                continue
+            if not (d.unread_count or (d.date and d.date.timestamp() > recent)):
+                continue
             try:
                 await copy_dialog(a, d, limit=40)
             except Exception as e:
                 log("recent sync skipped a chat:", repr(e)[:80])
             n += 1
             await asyncio.sleep(0.4)
-    log("recent sync done:", n)
+    a.last_sync = time.time()
+    log("recent sync done for", a.uid, "chats:", n)
 
 
 async def start_existing():
@@ -453,6 +471,7 @@ async def start_existing():
         me = await a.client.get_me()
         a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
         attach_handlers(a)
+        await asyncio.sleep(1.0)
         try:
             await a.client.catch_up()  # everything that arrived, was edited or deleted while this service was not running
         except Exception as e:
@@ -487,6 +506,12 @@ async def guard(request, handler):
 
 def who(request) -> Acct:
     return acct(request.query.get("u", ""))
+
+
+async def accounts(_r):
+    """For the administrator's panel: who is connected right now and how the first copy is going."""
+    return web.json_response({"accounts": {u: {"connected": bool(a.me and a.client and a.client.is_connected()), "synced": a.synced, "backfill": a.backfill["state"]}
+                                           for u, a in ACCTS.items() if a.me}})
 
 
 async def health(_r):
@@ -737,7 +762,7 @@ async def mock_media(r):
 def app():
     a = web.Application(middlewares=[guard], client_max_size=256 * 1024)
     a.add_routes([
-        web.get("/health", health),
+        web.get("/health", health), web.get("/accounts", accounts),
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
@@ -756,29 +781,32 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     log("bridge listening on", PORT, "(mock)" if MOCK else "")
     ticks = 0
+    cursor = 0
     while True:
         await asyncio.sleep(30)
         if OUTBOX:
             await flush_outbox()
         ticks += 1
-        if ticks % 30 == 0 and not MOCK:  # every 15 minutes
-            for a in list(ACCTS.values()):
-                if a.me and a.synced:
-                    try:
-                        await sync_recent(a)
-                    except Exception as e:
-                        log("recent sync failed:", type(e).__name__)
-        if ticks % 10 == 0 and not MOCK:
-            # a session may have been ended from the phone (Settings -> Devices): then forget everything about that account
-            for a in list(ACCTS.values()):
-                if not a.me:
+        if MOCK:
+            continue
+        # a few accounts per tick, so each is visited about every quarter of an hour however many there are
+        live = [a for a in ACCTS.values() if a.me]
+        if not live:
+            continue
+        per_tick = max(1, -(-len(live) // 30))
+        for _ in range(per_tick):
+            a = live[cursor % len(live)]
+            cursor += 1
+            try:
+                # a session may have been ended from the phone (Settings -> Devices): then forget everything about that account
+                if not await a.client.is_user_authorized():
+                    log("a session was ended on Telegram's side")
+                    await a.wipe()
                     continue
-                try:
-                    if not await a.client.is_user_authorized():
-                        log("a session was ended on Telegram's side")
-                        await a.wipe()
-                except Exception as e:
-                    log("session check:", type(e).__name__)
+                if a.synced and time.time() - a.last_sync > 14 * 60:
+                    await sync_recent(a)
+            except Exception as e:
+                log("account check:", type(e).__name__)
 
 
 if __name__ == "__main__":

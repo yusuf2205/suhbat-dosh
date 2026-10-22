@@ -58,6 +58,20 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
 
 Keep the `tgbridge-data` Docker volume out of any cloud copy of the NAS, and keep the disk itself encrypted if the device can be stolen.
 
+## Many accounts
+
+Every linked person is one permanent connection to Telegram inside the `tgbridge` container. What that costs, and what the bridge does about it:
+
+| Matter | How it is handled |
+| --- | --- |
+| Memory | About 150 MB for the service and 30-50 MB per account. The container is limited to 3 GB (`TGBRIDGE_MEM` in `.env`): fine for 50+ accounts. |
+| Load on Telegram | At most two history copies or light passes run at the same time, whatever the number of accounts; a restart reconnects accounts one by one, not all at once. |
+| Keeping in step | New messages come as events. Besides, each account is re-checked about every 15 minutes (a few accounts per half minute); the light pass looks only at chats with activity in the last 3 days. |
+| Telegram's limits | They apply per Telegram account (each person has their own) and per `api_id`. One `api_id` for a few dozen people is fine; a service with hundreds of accounts under one `api_id` risks being limited by Telegram. If that ever happens, register another application at my.telegram.org and give the bridge a second `api_id`. |
+| Who is connected | The administrator panel shows for every person whether the Telegram link is alive ("подключён" / "нет связи"). |
+| Ordinary people | Only their personal chats are copied. Groups and channels are for administrators, which also keeps the volume down. |
+| Disk | Only text, photos and voice (video is off). Photos and voice come for new messages; the old history is text only. Plan for disk space as for a messenger with that many active people. |
+
 ## Limits
 
 * **Copied:** text, photos and voice messages (up to 25 MB each). Photos and voice of the *old history* come only as a mark such as "[Photo]"

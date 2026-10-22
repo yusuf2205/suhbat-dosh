@@ -178,6 +178,10 @@ test('an ordinary person sees and answers the personal chats but cannot delete t
   assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { auto_private: false, chats: [] })).status, 403);
   assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, kind: 'user', title: 'x', remove: true }] })).status, 403);
   assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}/personal`, { auto_private: false })).status, 403);
+  // an ordinary person's bridge is for personal chats: groups and channels are for administrators
+  assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: false }] })).status, 403);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.groups_allowed, false);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge/dialogs')).data.dialogs.every((d) => d.type === 'user'), true);
   // the person may turn "answer from here" off for a chat
   const off = await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, kind: 'user', title: 'Дилшод', two_way: false }] });
   assert.equal(off.status, 200);
