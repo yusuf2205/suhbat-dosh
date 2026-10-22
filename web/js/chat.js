@@ -5,6 +5,8 @@ import { canCompressVideo, compressVideo } from './videocompress.js';
 import { accessBadge, accessMenu, saveToDrive } from './drive.js';
 import { eventNode, openEventCreate } from './events.js';
 import { miniNode, openMiniCreate } from './mini.js';
+import { openTaskCreate, openTasks, taskNode } from './tasks.js';
+import { openDigest } from './digest.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -41,6 +43,7 @@ const nodeCache = new Map(); // key -> { el, sig, status }
 let replyTo = null;
 let editing = null;
 let unreadFrom = 0;
+let openUnread = 0; // unread messages when the chat was opened: shows the "what did I miss" button
 let highlightId = null;
 let rec = null; // voice recorder state
 let lastTyping = 0; // last time a 'typing' ping was sent (reset after sending a message)
@@ -82,6 +85,7 @@ export async function openChat(id) {
   selected.clear();
   highlightId = null;
   unreadFrom = c.unread > 0 ? c.last_read_id : 0;
+  openUnread = c.secret ? 0 : c.unread;
   nodeCache.clear();
   buildView();
   fire('active');
@@ -226,6 +230,7 @@ function buildView() {
     pin: h('button', { class: 'pinbar', type: 'button', hidden: true }),
     list: h('div', { class: 'messages', role: 'log', 'aria-live': 'polite', 'aria-label': chatTitle(c) }),
     jump: h('button', { class: 'btn jump', type: 'button', hidden: true, onclick: jumpToLatest }, `↓ ${t('chat.jump_latest')}`),
+    dg: h('button', { class: 'digest-pill', type: 'button', hidden: true, onclick: () => { openUnread = 0; renderHeader(); openDigest(S.active); } }, `✨ ${t('digest.title')}`),
     ctx: h('div', { class: 'ctx', hidden: true }),
     composer: h('div', { class: 'composer' }),
     state: h('div', { class: 'cstate', hidden: true }),
@@ -238,7 +243,7 @@ function buildView() {
       h('button', { class: 'icon-btn call-start', type: 'button', 'aria-label': t('chat.call'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, false) : startCall(S.active, false)) }, icon('phone', 22)),
       h('button', { class: 'icon-btn call-start video', type: 'button', 'aria-label': t('chat.video'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, true) : startCall(S.active, true)) }, icon('video', 22)),
       (view.moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.more'), 'aria-haspopup': 'menu', onclick: () => chatMoreMenu(view.moreBtn) }, icon('more', 22)))),
-    view.pin, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.list, view.jump, view.wrap, fileInput,
+    view.pin, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.dg, view.list, view.jump, view.wrap, fileInput,
   );
   view.list.addEventListener('scroll', onScroll, { passive: true });
   const typingPing = () => {
@@ -328,6 +333,7 @@ export function renderHeader() {
     view.pin.hidden = true;
   }
   renderGroupCallBar(c);
+  if (view.dg) view.dg.hidden = openUnread < 8;
   renderComposer();
 }
 
@@ -455,6 +461,7 @@ function renderComposer() {
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
+      { label: t('task.new'), onClick: () => openTaskCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
         const r = await recordVideoNote();
@@ -503,6 +510,7 @@ function wireActionButton(b) {
     menuShown = true;
     popMenu(b, [
       { label: t('send.silent'), onClick: () => sendText({ silent: true }) },
+      ...(activeChat()?.type !== 'channel' && !activeChat()?.saved && !isSecret(activeChat()) ? [{ label: t('send.urgent'), onClick: () => sendText({ urgent: true }) }] : []),
       { label: t('when.schedule'), onClick: () => scheduleFromComposer(b) },
     ]);
   };
@@ -552,7 +560,7 @@ function cancelContext() {
 }
 
 // ---------------------------------------------------------------- sending
-async function sendText({ silent = false } = {}) {
+async function sendText({ silent = false, urgent = false } = {}) {
   const c = activeChat();
   const text = view.ta.value.trim();
   if (!text || !c?.can_post) return;
@@ -580,7 +588,7 @@ async function sendText({ silent = false } = {}) {
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
     reactions: {}, file: null, created_at: Date.now(),
   };
-  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined });
+  outbox.add({ chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -985,7 +993,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.urgent, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1057,7 +1065,9 @@ function buildMessage(m, c) {
   else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
+  if (m.kind === 'task' && m.task) bubble.append(taskNode(m));
   if (m.kind === 'miniapp' && m.mini) bubble.append(miniNode(m));
+  else if ((m.kind === 'poll' && m.poll) || (m.kind === 'event' && m.event) || (m.kind === 'task' && m.task)) { /* the card shows the text */ }
   else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));
@@ -1322,6 +1332,7 @@ function messageMenu(anchor, m) {
   }
   if (typeof m.id === 'number') {
     if (!mine) items.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push({ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) });
     items.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
@@ -1528,6 +1539,8 @@ function chatMoreMenu(anchor) {
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
     { label: t('sched.title'), onClick: () => openScheduled() },
+    ...(!isSecret(c) ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
+    { label: t('task.title'), onClick: () => openTasks() },
     ...(c.type === 'direct' || c.my_role !== 'member' ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
     { label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) },
     ...(c.type === 'group' ? [

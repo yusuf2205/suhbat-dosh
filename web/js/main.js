@@ -28,6 +28,8 @@ import { checkForUpdate, initUpdates } from './updates.js';
 import { clearAll as clearMediaCache } from './mediacache.js';
 import { snapClear, snapGet, snapSaveBoot } from './snap.js';
 import { showLock } from './applock.js';
+import './tasks.js';
+import { focusMutes } from './focus.js';
 import './nearby.js'; // receives "nearby" messages even when its screen is closed
 
 const root = document.getElementById('root');
@@ -156,6 +158,7 @@ function notify(chat, m) {
   const visibleHere = document.visibilityState === 'visible' && S.active === chat.id;
   if (visibleHere) return;
   if (isQuietNow()) return; // "do not disturb" hours
+  if (focusMutes(chat, m)) return; // focus mode
   if (S.prefs.sound && chat.sound !== 'none') playSound(chat.sound || 'default');
   if (S.prefs.desktop && window.suhbatShell?.notify && document.visibilityState !== 'visible') {
     window.suhbatShell.notify({ title: chatTitle(chat), body: m.text ? m.text.slice(0, 120) : t(`msg.${m.kind === 'text' ? 'file' : m.kind}`), chat_id: chat.id }).catch(() => {});

@@ -1678,3 +1678,52 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .nb-bar { display: block; height: 100%; width: 0; background: currentColor; transition: width .2s; }
 .nb-compose { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .nb-compose .input { flex: 1; resize: none; }
+
+/* ===== tasks, focus, digest ===== */
+.task { display: grid; gap: 6px; min-width: min(260px, 70vw); }
+.task-main { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.task-main input, .task-row input { width: 22px; height: 22px; flex: none; accent-color: var(--brand-ink, #2b2b2e); margin-top: 1px; }
+.task-title { font-weight: 700; overflow-wrap: anywhere; line-height: 1.35; }
+.task.done .task-title, .task-row.done b { text-decoration: line-through; opacity: .6; }
+.task-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-chip { font-size: .78rem; padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, .08); }
+.task-chip.me { background: rgba(0, 0, 0, .18); font-weight: 700; }
+.task-chip.bad { background: #d6453d; color: #fff; }
+.task-chip.ok { background: #2e9e57; color: #fff; }
+.task-quick, .task-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-list { display: grid; gap: 4px; }
+.task-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--line, rgba(128, 128, 128, .2)); }
+.task-row.overdue .task-row-main small { color: #d6453d; }
+.task-row-main { flex: 1; min-width: 0; display: grid; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
+.rail-badge.bad { background: #d6453d; color: #fff; }
+.focus { display: grid; gap: 12px; }
+.focus h3 { margin: 6px 0 0; font-size: .95rem; }
+.focus-hero { display: grid; justify-items: center; gap: 4px; padding: 16px; border-radius: 16px; background: var(--surface-2); text-align: center; }
+.focus-hero.on { background: #2b2b2e; color: #ffd23f; }
+.focus-hero.on .muted { color: rgba(255, 255, 255, .75); }
+.focus-moon { font-size: 2.2rem; }
+.focus-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.focus-row span { display: grid; gap: 2px; }
+.focus-row input { width: 22px; height: 22px; accent-color: var(--brand-ink, #2b2b2e); flex: none; }
+.focus-block { display: grid; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+.focus-times { display: flex; gap: 12px; }
+.focus-times label { display: grid; gap: 4px; flex: 1; font-size: .85rem; }
+.focus-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.focus-people { display: grid; gap: 2px; max-height: 220px; overflow: auto; }
+.focus-person { display: flex; align-items: center; gap: 10px; padding: 6px 4px; cursor: pointer; }
+.focus-person input { width: 20px; height: 20px; accent-color: var(--brand-ink, #2b2b2e); }
+.digest { display: grid; gap: 12px; }
+.digest-head { display: grid; gap: 2px; }
+.digest-ai { padding: 10px 12px; border-radius: 14px; background: var(--surface-2); white-space: pre-wrap; }
+.digest-ai p { margin: 4px 0 0; }
+.digest-sec h3 { margin: 0 0 4px; font-size: .9rem; color: var(--muted); }
+.digest-line { display: grid; gap: 1px; width: 100%; text-align: left; background: var(--surface-2); border: 0; color: inherit; font: inherit; padding: 8px 10px; border-radius: 12px; margin-bottom: 4px; cursor: pointer; }
+.digest-text { overflow-wrap: anywhere; }
+.digest-topics { display: flex; flex-wrap: wrap; gap: 6px; }
+.digest-foot { display: grid; gap: 6px; }
+.digest-chat { display: grid; text-align: left; width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line, rgba(128, 128, 128, .2)); color: inherit; font: inherit; padding: 10px 4px; cursor: pointer; }
+.digest-pill { justify-self: center; margin: 6px auto 0; padding: 6px 14px; border: 0; border-radius: 999px; background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 700; box-shadow: 0 2px 10px rgba(0, 0, 0, .18); cursor: pointer; z-index: 3; }
+.digest-pill[hidden] { display: none; }
+.rail-nav { overflow-y: auto; scrollbar-width: none; min-height: 0; }
+.rail-nav::-webkit-scrollbar { display: none; }
+@media (max-height: 940px) { .rail-item { padding: 8px 4px; } .rail-brand { padding-bottom: 8px; } }

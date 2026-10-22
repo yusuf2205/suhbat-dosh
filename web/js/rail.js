@@ -8,6 +8,8 @@ import { openSettings } from './dialogs.js';
 import { openDrive } from './drive.js';
 import { openCalendar } from './events.js';
 import { nearbyAvailable, openNearby } from './nearby.js';
+import { openTasks, refreshTaskCount } from './tasks.js';
+import { focusOn, openFocus } from './focus.js';
 
 // Left navigation rail (desktop / tablet): Messages, Contacts, Calls, Saved, Archive, Settings.
 let el;
@@ -35,6 +37,9 @@ export function mount(node) {
     on('active', render);
     on('me', render);
     on('chats', renderBadge);
+    on('tasks', render);
+    on('focus', render);
+    refreshTaskCount();
   }
   render();
 }
@@ -45,7 +50,8 @@ function item(id, ico, label, { onclick, active, soon } = {}) {
   const b = h('button', {
     class: `rail-item${active ? ' active' : ''}`, type: 'button', 'aria-label': label, 'aria-current': active ? 'page' : null,
     dataset: { id }, onclick,
-  }, h('span', { class: 'rail-ico' }, icon(ico, 24), id === 'messages' ? h('span', { class: 'rail-badge', hidden: true }) : null), h('span', { class: 'rail-label' }, label));
+  }, h('span', { class: 'rail-ico' }, icon(ico, 24), id === 'messages' ? h('span', { class: 'rail-badge', hidden: true }) : null,
+    id === 'tasks' && S.taskCount?.open ? h('span', { class: `rail-badge${S.taskCount.overdue ? ' bad' : ''}` }, S.taskCount.open > 99 ? '99+' : String(S.taskCount.open)) : null), h('span', { class: 'rail-label' }, label));
   if (soon) b.classList.add('soon');
   return b;
 }
@@ -62,6 +68,8 @@ function render() {
       item('saved', 'bookmark', t('nav.saved'), { active: !!savedActive, onclick: openSaved }),
       item('drive', 'folder', t('drive.title'), { onclick: openDrive }),
       item('calendar', 'clock', t('ev.calendar'), { onclick: openCalendar }),
+      item('tasks', 'tasks', t('task.title'), { onclick: openTasks }),
+      item('focus', 'moon', t('focus.title'), { onclick: openFocus, active: focusOn() }),
       nearbyAvailable() ? item('nearby', 'wifi', t('nb.title'), { onclick: openNearby }) : null,
       item('archive', 'archive', t('nav.archive'), { active: S.view === 'archive', onclick: () => setView('archive') }),
       item('settings', 'settings', t('nav.settings'), { onclick: openSettings })),

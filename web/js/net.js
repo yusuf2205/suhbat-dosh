@@ -137,7 +137,7 @@ export async function flushOutbox() {
     for (const item of outbox.all()) {
       try {
         const r = await api('POST', `/api/chats/${item.chat_id}/messages`, {
-          text: item.text, client_id: item.client_id, reply_to: item.reply_to ?? undefined, kind: item.kind ?? undefined, silent: item.silent || undefined,
+          text: item.text, client_id: item.client_id, reply_to: item.reply_to ?? undefined, kind: item.kind ?? undefined, silent: item.silent || undefined, urgent: item.urgent || undefined,
         });
         outbox.remove(item.client_id);
         fire('outbox:sent', { client_id: item.client_id, message: r.message });

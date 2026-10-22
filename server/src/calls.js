@@ -3,7 +3,7 @@ import { emit, isOnline } from './realtime.js';
 import { audit, directPeerId, getUser, isBlockedEitherWay, membership, publicUser } from './service.js';
 import { postMessage } from './api.js';
 import { now } from './util.js';
-import { pushToUser } from './push.js';
+import { focusMutes, pushToUser } from './push.js';
 
 // 1:1 audio/video calls. The server only relays WebRTC signalling (SDP + ICE) between the two
 // participants and keeps a history entry in the chat; media flows peer-to-peer (or via TURN).
@@ -52,6 +52,7 @@ function invite(userId, m) {
   if (calls.has(m.call_id)) return;
   if (busy.has(userId) || busy.has(peer)) return reject('busy');
   if (getUser(peer)?.presence === 'busy') return reject('busy'); // "busy" status: calls are declined politely
+  if (focusMutes(getUser(peer), { senderId: userId, call: true })) return reject('busy'); // focus mode: only chosen people can call
 
   const call = {
     id: m.call_id, chatId, caller: userId, callee: peer, video: !!m.video, startedAt: now(), answeredAt: 0, timer: null,

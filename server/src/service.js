@@ -3,6 +3,9 @@ import { q } from './db.js';
 import { thumbPath } from './files.js';
 import { isOnline } from './realtime.js';
 import { HttpError, now } from './util.js';
+import { normalizeFocus } from '../../shared/focus.js';
+
+const parseJson = (v) => { try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
 const directKey = (a, b) => (a < b ? `${a}:${b}` : `${b}:${a}`);
 export { directKey };
@@ -56,6 +59,7 @@ export function selfUser(u) {
     has_password: !!u.pw_hash,
     auto_reply: u.auto_reply || '',
     auto_reply_on: !!u.auto_reply_on,
+    focus: normalizeFocus(parseJson(u.focus)),
     privacy: { photo: u.privacy_photo, status: u.privacy_status, last_seen: u.privacy_last_seen, birthday: u.privacy_birthday },
     is_admin: !!u.is_admin,
     created_at: u.created_at,
@@ -91,6 +95,15 @@ export function transcriptOut(row) {
   let words = [];
   try { words = JSON.parse(t.words || '[]'); } catch { /* none */ }
   return { status: t.status, lang: t.lang, text: t.text || '', words, model: t.model, error: t.error };
+}
+
+export function taskOut(row) {
+  const k = q.get('SELECT * FROM tasks WHERE message_id = ?', row.id);
+  if (!k) return null;
+  return {
+    id: k.id, title: k.title, creator_id: k.creator_id, assignee_id: k.assignee_id, due_at: k.due_at,
+    done: !!k.done, done_at: k.done_at, done_by: k.done_by, source_id: k.source_id,
+  };
 }
 
 export function miniOut(row) {
@@ -170,6 +183,8 @@ export function messageOut(row) {
     poll: row.kind === 'poll' ? pollOut(row) : null,
     event: row.kind === 'event' ? eventOut(row) : null,
     mini: row.kind === 'miniapp' ? miniOut(row) : null,
+    task: row.kind === 'task' ? taskOut(row) : null,
+    ...(row.urgent ? { urgent: true } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
     edited_at: row.edited_at,

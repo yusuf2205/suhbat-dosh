@@ -189,6 +189,8 @@ export function previewText(m) {
   if (m.kind === 'poll') return `📊 ${m.text}`;
   if (m.kind === 'event') return `📅 ${m.text}`;
   if (m.kind === 'miniapp') return `🧩 ${m.text}`;
+  if (m.kind === 'task') return `✅ ${m.text}`;
+  if (m.kind === 'note') return `📝 ${m.text}`;
   if (m.kind === 'location') return `📍 ${t('msg.location')}`;
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return `👤 ${t('msg.contact')}`; } }
   if (m.text) return m.text;

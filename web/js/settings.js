@@ -22,6 +22,9 @@ import { callSettingsSection } from './call.js';
 import { openDrive } from './drive.js';
 import { openCalendar } from './events.js';
 import { openNearby } from './nearby.js';
+import { openTasks } from './tasks.js';
+import { focusSummary, openFocus } from './focus.js';
+import { openDigestAll } from './digest.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -248,6 +251,9 @@ export function openSettings() {
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
+          row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
+          row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
+          row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } }),
           row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } }),
           row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),

@@ -27,6 +27,9 @@ import { features, wireFeatures } from './features.js';
 import { drive, wireDrive } from './drive.js';
 import { mydata } from './mydata.js';
 import { mini, wireMini } from './miniapps.js';
+import { tasks, wireTasks } from './tasks.js';
+import { digest } from './digest.js';
+import { normalizeFocus } from '../../shared/focus.js';
 import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
@@ -413,6 +416,8 @@ api.use(features);
 api.use(drive);
 api.use(mydata);
 api.use(mini);
+api.use(tasks);
+api.use(digest);
 api.use(transcribe);
 api.use(pushRouter);
 api.use(safety);
@@ -462,6 +467,7 @@ api.patch('/me', (req, res) => {
     if (!['', 'busy', 'away'].includes(b.presence)) throw new HttpError(400, 'invalid_input');
     put('presence', b.presence);
   }
+  if (b.focus !== undefined) put('focus', JSON.stringify(normalizeFocus(b.focus)));
   if (b.auto_reply !== undefined) put('auto_reply', str(b.auto_reply || '', 'auto_reply', { max: 300 }));
   if (b.auto_reply_on !== undefined) put('auto_reply_on', b.auto_reply_on ? 1 : 0);
   if (b.birthday !== undefined) {
@@ -709,6 +715,7 @@ wireBots({ postMessage, pushChat });
 wireNotify({ postMessage, pushChat });
 wireFeatures({ postMessage });
 wireMini({ postMessage });
+wireTasks({ postMessage });
 
 api.get('/chats', (req, res) => res.json({ chats: listChats(req.user.id) }));
 
@@ -1022,7 +1029,7 @@ function maybeAutoReply(chat, sender, kind) {
   postMessage({ chat, user: peer, text: `🤖 ${peer.auto_reply}`, auto: true, silent: false });
 }
 
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false }) {
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1030,9 +1037,9 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
   const t = now();
   const r = q.run(
-    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, t,
+    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, t,
   );
   const id = Number(r.lastInsertRowid);
   q.run('UPDATE chats SET last_message_id = ?, last_message_at = ? WHERE id = ?', id, t, chat.id);
@@ -1083,7 +1090,7 @@ api.post('/chats/:id/messages', (req, res) => {
     if (isSecretChat(src.chat_id) || isSecretChat(chat.id)) throw new HttpError(403, 'secret_no_forward');
     const sender = src.sender_id ? getUser(src.sender_id)?.name : null;
     text = src.text;
-    kind = ['poll', 'event', 'miniapp'].includes(src.kind) ? 'text' : src.kind;
+    kind = ['poll', 'event', 'miniapp', 'task', 'note'].includes(src.kind) ? 'text' : src.kind;
     fileId = src.file_id;
     duration = src.duration;
     forwardFrom = src.forward_from || sender || '';
@@ -1114,7 +1121,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel' });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 

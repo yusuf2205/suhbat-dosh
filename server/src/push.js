@@ -7,6 +7,16 @@ import { getSetting, setSetting } from './access.js';
 import { HttpError, log, now, rateLimit } from './util.js';
 import { isOnline } from './realtime.js';
 import { getUser, memberIds } from './service.js';
+import { focusActive, focusAllows } from '../../shared/focus.js';
+
+export const focusOf = (u) => { try { return u.focus ? JSON.parse(u.focus) : null; } catch { return null; } };
+
+/** Does the focus mode of this user mute a notification from `senderId`? */
+export function focusMutes(u, ev) {
+  const f = focusOf(u);
+  if (!f || !focusActive(f)) return false;
+  return !focusAllows(f, ev);
+}
 
 let keys = null;
 function vapid() {
@@ -48,6 +58,8 @@ const preview = (m) => {
   if (m.kind === 'poll') return `📊 ${m.text}`;
   if (m.kind === 'event') return `📅 ${m.text}`;
   if (m.kind === 'miniapp') return `🧩 ${m.text}`;
+  if (m.kind === 'task') return `✅ ${m.text}`;
+  if (m.kind === 'note') return `📝 ${m.text}`;
   if (m.kind === 'location') return '📍 Геолокация';
   if (m.kind === 'sticker') return `${m.text || ''} Стикер`.trim();
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return '👤 Контакт'; } }
@@ -85,6 +97,8 @@ export function pushNewMessage(chat, row) {
     if (!m || m.muted || (m.muted_until || 0) > now()) continue;
     const u = getUser(uid);
     if (!u || u.banned_at || u.presence === 'busy') continue; // "busy": no notifications
+    const mention = !!u.username && new RegExp(`@${u.username}\\b`, 'i').test(row.text || '');
+    if (focusMutes(u, { senderId: row.sender_id, urgent: !!row.urgent, mention })) continue; // focus mode
     for (const s of q.all('SELECT * FROM push_subs WHERE user_id = ?', uid)) {
       vapid();
       webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600, urgency: 'high' })
