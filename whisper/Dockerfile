@@ -3,6 +3,8 @@ FROM python:3.12-slim
 # the default PyPI route from some home networks is very slow: a mirror is much faster there (override with --build-arg)
 ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 RUN pip install -i $PIP_INDEX --no-cache-dir faster-whisper==1.1.1
+# faster-whisper imports requests but newer huggingface-hub no longer brings it in
+RUN pip install -i $PIP_INDEX --no-cache-dir --only-binary=:all: requests "av==14.0.0"
 WORKDIR /app
 COPY server.py .
 ENV WHISPER_MODEL=large-v3 WHISPER_THREADS=5 HF_HOME=/models PYTHONUNBUFFERED=1
