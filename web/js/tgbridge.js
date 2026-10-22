@@ -41,7 +41,7 @@ export function openBridge() {
       h('h4', null, t('br.safe_title')),
       h('ul', { class: 'br-list' }, ['br.safe1', 'br.safe2', 'br.safe3', 'br.safe4', 'br.safe5'].map((k) => h('li', null, t(k)))),
       h('h4', null, t('br.risk_title')),
-      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4'].map((k) => h('li', null, t(k)))),
+      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4', ...(S.me?.is_admin ? [] : ['br.risk5'])].map((k) => h('li', null, t(k)))),
       h('label', { class: 'br-ack' }, ok, h('span', null, t('br.ack'))), go);
   }
 
@@ -115,7 +115,9 @@ export function openBridge() {
     win.setBody(
       h('div', { class: 'br-account' }, icon('telegram', 24), h('span', null, h('b', null, st.account.name || 'Telegram'), st.account.username ? h('small', { class: 'muted' }, ` @${st.account.username}`) : null), h('span', { class: 'att-badge ok' }, t('br.on'))),
       ...(sync ? [sync] : []),
-      h('label', { class: 'br-ack' }, auto, h('span', null, h('b', null, t('br.auto')), h('small', { class: 'muted' }, ` ${t('br.auto_hint')}`))),
+      st.personal_hidden
+        ? h('div', { class: 'br-ack' }, icon('lock', 18), h('span', null, h('b', null, t('br.personal_title')), h('small', { class: 'muted' }, ` ${t('br.personal_hidden', { n: st.personal_count })}`)))
+        : h('label', { class: 'br-ack' }, auto, h('span', null, h('b', null, t('br.auto')), h('small', { class: 'muted' }, ` ${t('br.auto_hint')}`))),
       h('h4', null, `${t('br.chats_title')} (${st.chats.length})`), find, list,
       h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: () => pick(st) }, t('br.add_groups')),
       h('p', { class: 'muted small' }, t('br.admin_note')),
@@ -136,8 +138,11 @@ export function openBridge() {
       return { d, on, two, el: h('div', { class: 'br-pick' }, h('label', { class: 'br-pick-main' }, on, h('span', null, h('b', null, d.title), h('small', { class: 'muted' }, ` ${t(`br.type_${d.type}`)}`))),
         h('label', { class: 'br-pick-two', title: t('br.two_hint') }, two, h('span', null, t('br.answer_here')))) };
     });
+    const find = h('input', { class: 'input', type: 'search', placeholder: t('br.search'), 'aria-label': t('br.search') });
+    find.addEventListener('input', () => { const term = find.value.trim().toLowerCase(); for (const x of rows) x.el.hidden = !!term && !x.d.title.toLowerCase().includes(term); });
     win.setBody(
       h('p', { class: 'muted' }, t('br.pick_hint')),
+      rows.length ? find : null,
       rows.length ? h('div', { class: 'br-picks' }, rows.map((x) => x.el)) : h('p', { class: 'muted' }, t('br.no_groups')),
       h('div', { class: 'row', style: { gap: '8px', marginTop: '10px' } },
         h('button', { class: 'btn secondary', type: 'button', style: { flex: 1 }, onclick: () => draw() }, t('common.cancel')),

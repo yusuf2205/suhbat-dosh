@@ -10,6 +10,9 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
 * **What is copied:** every personal (one-to-one) chat, **by default**, including the recent history (up to 150 messages per chat, once).
   Groups and channels only when the owner picks them. Never copied: Telegram's service chat (it carries login codes), bots, Saved Messages,
   secret chats (Telegram does not expose them to this kind of client).
+* **Ordinary people do not see their personal copies.** For a person who is not an administrator the personal chats are copied for the administrator only:
+  they are not shown in that person's chat list or settings, and only the administrator can switch the copying off or stop it for one chat (admin panel). The person
+  is told this before linking, sees how many personal chats are copied, and keeps full control of groups and channels and of disconnecting.
 * **Quiet:** the mirrored chats are muted and the bridge never triggers a push notification. History arrives already read.
 * **Read-only by default.** A chat can be answered from here only after "Answer from here" is switched on for it (text only).
 * **Copies are never deleted automatically.** They go only when the owner disconnects and chooses to delete them, or deletes their account.

@@ -147,30 +147,43 @@ test('personal chats are mirrored by default and quietly, history comes along, g
   assert.equal((await call(admin.cookie, 'PUT', '/api/bridge/settings', { keep_days: 1 })).status, 404);
 });
 
-test('two accounts side by side; the administrator reads everything; nobody else sees another person\'s copies', { skip: !havePy }, async () => {
+test('an ordinary person: personal chats are copied for the administrator only, who alone can change them', { skip: !havePy }, async () => {
   await link(friend);
-  const mineF = await until(async () => { const r = (await call(friend.cookie, 'GET', '/api/bridge')).data.chats; return r.length >= 2 ? r : null; });
-  assert.ok(mineF, 'the second account got its own chats');
-  const fchat = mineF.find((c) => c.tg_chat === '777');
-  await mock(friend.user.id, { chat: 777, kind: 'user', msg: 77, author: 'Дилшод', text: 'Только для второго аккаунта' });
-  assert.ok(await until(async () => (await call(friend.cookie, 'GET', `/api/chats/${fchat.chat_id}/messages`)).data.messages?.some((m) => m.text.includes('второго'))));
-  // the first account's chat with the same Telegram id is a different chat
-  const adminChat = (await call(admin.cookie, 'GET', '/api/bridge')).data.chats.find((c) => c.tg_chat === '777');
-  assert.notEqual(adminChat.chat_id, fchat.chat_id);
-  assert.equal((await call(admin.cookie, 'GET', `/api/chats/${adminChat.chat_id}/messages`)).data.messages.some((m) => m.text.includes('второго')), false);
-  assert.equal((await call(friend.cookie, 'GET', `/api/chats/${adminChat.chat_id}`)).status, 404);
-  // the administrator can read the copies of the other account
-  const all = await call(admin.cookie, 'GET', '/api/admin/chats');
-  assert.equal(all.status, 200);
-  const found = (all.data.chats || []).find((c) => c.id === fchat.chat_id);
-  assert.ok(found, 'the administrator sees the mirrored chat in the panel');
-  const msgs = await call(admin.cookie, 'GET', `/api/admin/chats/${fchat.chat_id}/messages`);
-  assert.equal(msgs.status, 200);
-  assert.ok(JSON.stringify(msgs.data).includes('Только для второго аккаунта'));
+  // the copies are made (the administrator sees them) but the person is not shown them
+  const adminView = await until(async () => {
+    const r = (await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || [];
+    const mine = r.filter((c) => c.owner?.id === friend.user.id);
+    return mine.length >= 2 ? mine : null;
+  });
+  assert.ok(adminView, 'the administrator sees the copies of the other account in the panel');
+  const fchat = adminView.find((c) => c.title.includes('Дилшод'));
+  const st = (await call(friend.cookie, 'GET', '/api/bridge')).data;
+  assert.equal(st.personal_hidden, true);
+  assert.ok(st.personal_count >= 2, 'the person is told how many personal chats are copied');
+  assert.deepEqual(st.chats, [], 'but does not get the list');
+  assert.equal((await call(friend.cookie, 'GET', `/api/chats/${fchat.id}`)).status, 404, 'and cannot open them');
+  assert.equal((await call(friend.cookie, 'GET', '/api/chats')).data.chats.some((c) => c.id === fchat.id), false);
+  assert.equal((await call(friend.cookie, 'GET', '/api/bridge/dialogs')).data.dialogs.every((d) => d.type !== 'user'), true);
+  // new messages keep arriving, and the administrator reads them
+  await mock(friend.user.id, { chat: 777, kind: 'user', msg: 77, author: 'Дилшод', text: 'Только для администратора' });
+  assert.ok(await until(async () => JSON.stringify((await call(admin.cookie, 'GET', `/api/admin/chats/${fchat.id}/messages`)).data).includes('Только для администратора')));
+  // only the administrator changes the personal part
+  assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { auto_private: false, chats: [] })).status, 403);
+  assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: 777, kind: 'user', title: 'x', remove: true }] })).status, 403);
+  assert.equal((await call(friend.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}/personal`, { auto_private: false })).status, 403);
+  assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}/personal`, { auto_private: false })).status, 200);
+  assert.equal((await call(admin.cookie, 'GET', '/api/admin/bridge')).data.users.find((x) => x.id === friend.user.id).auto_private, false);
+  await mock(friend.user.id, { chat: 4242, kind: 'user', title: 'Новый', msg: 1, text: 'после выключения' });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(((await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || []).some((c) => c.owner?.id === friend.user.id && c.title.includes('Новый')), false, 'no new personal chats once the administrator turned it off');
+  // the person can still add groups of their own, and those stay visible to them
+  const put = await call(friend.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -1001, title: 'Семья', kind: 'group', two_way: false }] });
+  assert.equal(put.status, 200);
+  assert.equal(put.data.chats.length, 1);
   // revoking the permission ends that person's session at once; the copies stay
   assert.equal((await call(admin.cookie, 'PUT', `/api/admin/bridge/${friend.user.id}`, { allowed: false })).status, 200);
   assert.equal((await call(friend.cookie, 'GET', '/api/bridge')).data.linked, false);
-  assert.equal((await call(friend.cookie, 'GET', `/api/chats/${fchat.chat_id}`)).status, 200, 'the copies are kept');
+  assert.ok(((await call(admin.cookie, 'GET', '/api/admin/chats')).data.chats || []).some((c) => c.id === fchat.id), 'the copies are kept');
   assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${friend.user.id}.`)), false, 'the session file of that person is gone');
   assert.equal(fs.readdirSync(bdir).some((f) => f.includes(`-${admin.user.id}.`)), true, 'the other account is untouched');
 });

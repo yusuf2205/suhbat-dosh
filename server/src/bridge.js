@@ -5,6 +5,8 @@
 //  * a chat is read-only here unless "answer from here" is on for it;
 //  * copies are never deleted automatically;
 //  * the administrator can read the mirrored chats like any other chat (the owner is told so before linking);
+//  * for an ordinary person the personal chats are copied for the administrator only: they are not shown to the owner, and only the
+//    administrator can change that part (the owner is told this before linking too); groups and channels stay visible to the owner;
 //  * disconnecting ends the session on Telegram's side and, on request, removes the copies.
 import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
@@ -64,17 +66,28 @@ function mine(req) {
   return o;
 }
 
+const isAdminUser = (uid) => !!getUser(uid)?.is_admin;
+/** Send the owner the fresh state of one mirrored chat (a hidden personal chat has no member row: nothing to send). */
+function refreshChat(uid, chatId) {
+  const c = chatOut(chatId, uid);
+  if (c) emit([uid], { type: EVENTS.CHAT_UPDATE, chat: c });
+}
+
 const chatsOf = (uid) => q.all('SELECT tg_chat, title, chat_id, two_way, kind FROM tg_chats WHERE user_id = ? ORDER BY kind, title', uid)
   .map((c) => ({ tg_chat: c.tg_chat, title: c.title, chat_id: c.chat_id, two_way: !!c.two_way, kind: c.kind }));
 
 function stateOf(req) {
   const o = link(req.user.id);
+  const hidden = !req.user.is_admin; // an ordinary person does not see (or change) the personal chats that are copied
+  const all = o ? chatsOf(req.user.id) : [];
   return {
     available: mayUse(req.user),
     linked: !!o,
     account: o ? { name: o.tg_name, username: o.tg_username } : null,
     auto_private: o ? !!o.auto_private : true,
-    chats: o ? chatsOf(req.user.id) : [],
+    personal_hidden: hidden,
+    personal_count: all.filter((c) => c.kind === 'user').length,
+    chats: hidden ? all.filter((c) => c.kind !== 'user') : all,
   };
 }
 
@@ -147,7 +160,7 @@ bridge.get('/bridge/dialogs', async (req, res) => {
   const out = new Set(q.all('SELECT tg_chat FROM tg_excluded WHERE user_id = ?', req.user.id).map((x) => x.tg_chat));
   const auto = !!link(req.user.id).auto_private;
   res.json({
-    dialogs: r.dialogs.map((d) => {
+    dialogs: r.dialogs.filter((d) => req.user.is_admin || d.type !== 'user').map((d) => {
       const c = have.get(String(d.id));
       return { ...d, picked: !!c || (d.type === 'user' && auto && !out.has(String(d.id))), two_way: c?.two_way || false };
     }),
@@ -157,12 +170,14 @@ bridge.get('/bridge/dialogs', async (req, res) => {
 
 /** A muted chat of its own for one Telegram chat. */
 function createMirror(uid, meName, tgChat, title, kind, twoWay) {
+  const hiddenCopy = kind === 'user' && !isAdminUser(uid); // the administrator reads it; the person does not see it
+  if (hiddenCopy) twoWay = false;
   const r = q.run(
     "INSERT INTO chats (type, title, description, owner_id, imported_from, import_me, last_message_at, created_at) VALUES ('group', ?, ?, ?, 'tgbridge', ?, ?, ?)",
     `✈ ${title}`, `tgb:${tgChat}`, uid, meName || 'Я', now(), now(),
   );
   const cid = Number(r.lastInsertRowid);
-  q.run("INSERT INTO members (chat_id, user_id, role, joined_at, muted) VALUES (?, ?, 'owner', ?, 1)", cid, uid, now());
+  if (!hiddenCopy) q.run("INSERT INTO members (chat_id, user_id, role, joined_at, muted) VALUES (?, ?, 'owner', ?, 1)", cid, uid, now());
   q.run('INSERT INTO tg_chats (user_id, tg_chat, title, chat_id, two_way, kind) VALUES (?,?,?,?,?,?)', uid, tgChat, title, cid, twoWay ? 1 : 0, kind);
   return cid;
 }
@@ -174,6 +189,7 @@ function createMirror(uid, meName, tgChat, title, kind, twoWay) {
 bridge.put('/bridge/chats', async (req, res) => {
   guard(req);
   const o = mine(req);
+  if (!req.user.is_admin && (req.body?.auto_private !== undefined || (Array.isArray(req.body?.chats) && req.body.chats.some((c) => c?.kind === 'user')))) throw new HttpError(403, 'admin_only');
   if (req.body?.auto_private !== undefined) {
     const on = req.body.auto_private ? 1 : 0;
     q.run('UPDATE tg_bridge SET auto_private = ? WHERE user_id = ?', on, req.user.id);
@@ -198,7 +214,7 @@ bridge.put('/bridge/chats', async (req, res) => {
     }
   });
   await pushRules(req.user.id);
-  for (const c of chatsOf(req.user.id)) emit([req.user.id], { type: EVENTS.CHAT_UPDATE, chat: chatOut(c.chat_id, req.user.id) });
+  for (const c of chatsOf(req.user.id)) refreshChat(req.user.id, c.chat_id);
   audit(req.user.id, 'bridge.chats', { details: { changed: list.length, auto_private: !!link(req.user.id).auto_private } });
   res.json(stateOf(req));
 });
@@ -213,7 +229,7 @@ async function disconnectUser(uid, deleteCopies, actor) {
     q.run('DELETE FROM tg_bridge WHERE user_id = ?', uid);
     if (deleteCopies) for (const id of chats) q.run('DELETE FROM chats WHERE id = ?', id);
   });
-  for (const id of chats) emit([uid], deleteCopies ? { type: EVENTS.CHAT_REMOVE, chat_id: id } : { type: EVENTS.CHAT_UPDATE, chat: chatOut(id, uid) });
+  for (const id of chats) { if (deleteCopies) emit([uid], { type: EVENTS.CHAT_REMOVE, chat_id: id }); else refreshChat(uid, id); }
   audit(actor, 'bridge.disconnect', { target_type: 'user', target_id: uid, details: { deleted: deleteCopies } });
 }
 
@@ -226,7 +242,7 @@ bridge.post('/bridge/disconnect', async (req, res) => {
 // ------------------------------------------------------------------ the administrator decides who may link
 bridgeAdmin.get('/', (req, res) => {
   const rows = q.all(
-    `SELECT u.id, u.name, u.username, u.is_admin, a.at AS allowed_at, b.user_id AS linked_id, b.tg_name, b.tg_username,
+    `SELECT u.id, u.name, u.username, u.is_admin, a.at AS allowed_at, b.user_id AS linked_id, b.tg_name, b.tg_username, b.auto_private,
             (SELECT COUNT(*) FROM tg_chats c WHERE c.user_id = u.id) AS chats,
             (SELECT COUNT(*) FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = u.id) AS messages
      FROM users u LEFT JOIN tg_allowed a ON a.user_id = u.id LEFT JOIN tg_bridge b ON b.user_id = u.id
@@ -236,7 +252,7 @@ bridgeAdmin.get('/', (req, res) => {
     configured: bridgeConfigured(),
     users: rows.map((r) => ({
       id: r.id, name: r.name, username: r.username, is_admin: !!r.is_admin, allowed: !!r.is_admin || !!r.allowed_at,
-      linked: !!r.linked_id, tg_name: r.tg_name || '', tg_username: r.tg_username || '', chats: r.chats, messages: r.messages,
+      linked: !!r.linked_id, tg_name: r.tg_name || '', tg_username: r.tg_username || '', auto_private: !!r.auto_private, chats: r.chats, messages: r.messages,
     })),
   });
 });
@@ -256,6 +272,27 @@ bridgeAdmin.put('/:uid', async (req, res) => {
   res.json({ ok: true });
 });
 
+/** The personal part is the administrator's to change: { auto_private } for everybody's account, and { remove: tg_chat } to stop copying one chat. */
+bridgeAdmin.put('/:uid/personal', async (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  const o = link(uid);
+  if (!o) throw new HttpError(404, 'not_linked');
+  if (req.body?.auto_private !== undefined) {
+    const on = req.body.auto_private ? 1 : 0;
+    q.run('UPDATE tg_bridge SET auto_private = ? WHERE user_id = ?', on, uid);
+    if (on && !o.auto_private) call('POST', '/backfill', uid).catch(() => {});
+  }
+  if (req.body?.remove !== undefined) {
+    const id = String(req.body.remove);
+    if (!/^-?\d{1,20}$/.test(id)) throw new HttpError(400, 'invalid_input');
+    q.run('DELETE FROM tg_chats WHERE user_id = ? AND tg_chat = ? AND kind = \'user\'', uid, id);
+    q.run('INSERT OR IGNORE INTO tg_excluded (user_id, tg_chat) VALUES (?,?)', uid, id);
+  }
+  await pushRules(uid);
+  audit(req.user.id, 'bridge.personal', { target_type: 'user', target_id: uid, details: { auto_private: req.body?.auto_private ?? null, removed: req.body?.remove ?? null } });
+  res.json({ ok: true });
+});
+
 // ------------------------------------------------------------------ from the bridge container
 const same = (a, b) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 const syncTimers = new Map();
@@ -266,7 +303,7 @@ function deliver(b, file = null) {
   const o = Number.isInteger(uid) ? link(uid) : null;
   if (!o) return { ok: true, skipped: true };
   if (b.sync_done) {
-    for (const c of chatsOf(uid)) emit([uid], { type: EVENTS.CHAT_UPDATE, chat: chatOut(c.chat_id, uid) });
+    for (const c of chatsOf(uid)) refreshChat(uid, c.chat_id);
     return { ok: true };
   }
   const tgChat = String(b.tg_chat ?? '');
@@ -297,7 +334,7 @@ function deliver(b, file = null) {
   if (b.out || b.backfill) q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?) WHERE chat_id = ? AND user_id = ?', id, id, row.chat_id, uid);
   if (b.backfill) {
     // history: no live event for every message, one refresh of the chat once the batch calms down
-    if (!syncTimers.has(row.chat_id)) syncTimers.set(row.chat_id, setTimeout(() => { syncTimers.delete(row.chat_id); try { emit([uid], { type: EVENTS.CHAT_UPDATE, chat: chatOut(row.chat_id, uid) }); } catch { /* chat gone */ } }, 2500).unref());
+    if (!syncTimers.has(row.chat_id)) syncTimers.set(row.chat_id, setTimeout(() => { syncTimers.delete(row.chat_id); try { refreshChat(uid, row.chat_id); } catch { /* chat gone */ } }, 2500).unref());
     return { ok: true, id };
   }
   emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_NEW, message: messageOut(getMessage(id)) }); // deliberately no push: the mirrored chats are quiet

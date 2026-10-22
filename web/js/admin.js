@@ -542,7 +542,8 @@ function bridgePanel(data) {
   const draw = (users) => clear(body).append(...users.map((u) => h('tr', null,
     h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
     h('td', null, u.linked
-      ? [h('span', { class: 'pill ok' }, 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages}`]
+      ? [h('span', { class: 'pill ok' }, 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
+          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются')]
       : h('span', { class: 'muted' }, 'не подключён')),
     h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : h('button', {
       class: `btn ${u.allowed ? 'danger' : 'secondary'}`, type: 'button',
@@ -554,7 +555,7 @@ function bridgePanel(data) {
   draw(data.users);
   return h('div', { class: 'panel' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'),
     h('p', { class: 'muted' }, data.configured
-      ? 'Кому разрешено подключить свой Телеграм к мессенджеру. Все личные чаты такого человека копируются сюда тихо, без уведомлений. Вы, как администратор, видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
+      ? 'Кому разрешено подключить свой Телеграм к мессенджеру. Все личные чаты такого человека копируются сюда тихо, без уведомлений; самому человеку они не показываются, и менять эту часть можете только вы. Вы видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
       : 'Мост не включён на сервере: нужны BRIDGE_TOKEN и контейнер tgbridge (см. docs/tgbridge.md).'),
     data.configured ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Пользователь', 'Телеграм', 'Доступ'].map((x) => h('th', null, x)))), body)) : null);
 }

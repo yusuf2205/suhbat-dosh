@@ -48,11 +48,11 @@ export function mount(node) {
 
 const unreadTotal = () => [...S.chats.values()].reduce((a, c) => a + (isMuted(c) || c.archived ? 0 : c.unread), 0);
 
-function item(id, ico, label, { onclick, active, soon } = {}) {
+function item(id, ico, label, { onclick, active, soon, dot } = {}) {
   const b = h('button', {
     class: `rail-item${active ? ' active' : ''}`, type: 'button', 'aria-label': label, 'aria-current': active ? 'page' : null,
     dataset: { id }, onclick,
-  }, h('span', { class: 'rail-ico' }, icon(ico, 24), id === 'messages' ? h('span', { class: 'rail-badge', hidden: true }) : null,
+  }, h('span', { class: 'rail-ico' }, icon(ico, 24), dot ? h('span', { class: 'rail-dot', 'aria-hidden': 'true' }) : null, id === 'messages' ? h('span', { class: 'rail-badge', hidden: true }) : null,
     id === 'tasks' && S.taskCount?.open ? h('span', { class: `rail-badge${S.taskCount.overdue ? ' bad' : ''}` }, S.taskCount.open > 99 ? '99+' : String(S.taskCount.open)) : null), h('span', { class: 'rail-label' }, label));
   if (soon) b.classList.add('soon');
   return b;
@@ -67,8 +67,8 @@ function tools() {
     { id: 'calendar', ico: 'clock', label: t('ev.calendar'), onclick: openCalendar },
     { id: 'tasks', ico: 'tasks', label: t('task.title'), onclick: openTasks },
     { id: 'selfnotes', ico: 'edit', label: t('sn.title'), onclick: openSelfNotes },
-    { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, active: roomsLive() > 0 },
-    { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, active: focusOn() },
+    { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, dot: roomsLive() > 0 },
+    { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, dot: focusOn() },
     ...(nearbyAvailable() ? [{ id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: openNearby }] : []),
     { id: 'archive', ico: 'archive', label: t('nav.archive'), onclick: () => setView('archive'), active: S.view === 'archive' },
     { id: 'settings', ico: 'settings', label: t('nav.settings'), onclick: openSettings },
@@ -115,9 +115,9 @@ function render() {
       item('calls', 'phone', t('nav.calls'), { active: S.view === 'calls', onclick: () => setView('calls') }),
       item('saved', 'bookmark', t('nav.saved'), { active: !!savedActive, onclick: openSaved }),
       pinned.length ? h('div', { class: 'rail-sep', role: 'separator' }) : null,
-      ...pinned.map((x) => item(x.id, x.ico, x.label, { onclick: x.onclick, active: x.active })),
+      ...pinned.map((x) => item(x.id, x.ico, x.label, { onclick: x.onclick, active: x.active, dot: x.dot })),
       h('div', { class: 'rail-sep', role: 'separator' }),
-      item('more', 'apps', t('nav.more'), { onclick: openMore, active: tools().some((x) => x.active && x.id !== 'archive' && !pins().includes(x.id)) })),
+      item('more', 'apps', t('nav.more'), { onclick: openMore, dot: tools().some((x) => x.dot && !pins().includes(x.id)) })),
     h('button', { class: 'rail-me', type: 'button', 'aria-label': S.me?.name || t('nav.settings'), onclick: openSettings },
       avatar({ ...S.me, online: true }, ''),
       h('span', { class: 'rail-me-text' }, h('b', null, S.me?.name || ''), h('small', null, S.me?.username ? `@${S.me.username}` : ''))),
