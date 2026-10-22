@@ -179,7 +179,7 @@ export async function showLogin(root, { onLoggedIn }) {
       h('div', { class: 'auth-tools' }, langSel, inShell ? null : h('a', { class: 'btn secondary dl-link', href: '/download' }, icon('download', 18), h('span', null, t('login.download')))));
   }
 
-  clear(root).append(h('div', { class: 'auth' }, card, h('a', { class: 'auth-admin', href: '/admin' }, t('login.admin'))));
+  clear(root).append(h('div', { class: 'auth' }, card));
   draw();
 }
 
