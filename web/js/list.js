@@ -20,6 +20,8 @@ let netEl;
 let searchInput;
 let titleEl;
 let greetEl;
+let heroEl;
+let compact = false;
 let tabsEl;
 let recentEl;
 let wired = false;
@@ -35,6 +37,28 @@ function inInbox(c) {
   if (!isMuted(c)) return true;
   const me = S.me?.username;
   return !!me && new RegExp(`@${me}\\b`, 'i').test(c.last_message?.text || '');
+}
+
+const isPhone = () => window.matchMedia('(max-width: 600px)').matches;
+
+/** The big header (greeting, search, stories) folds into a thin bar with the main buttons while the list is scrolled. */
+function setCompact(v) {
+  if (v === compact || !heroEl) return;
+  compact = v;
+  heroEl.classList.toggle('compact', v);
+}
+
+function onListScroll() {
+  if (!isPhone() || !listEl || !heroEl) return;
+  const top = listEl.scrollTop;
+  if (!compact) {
+    // fold only when the list is long enough to stay scrollable after the header has given its room back (no flicker)
+    const gain = heroEl.querySelector('.hero-inner')?.offsetHeight || 0;
+    const room = listEl.scrollHeight - listEl.clientHeight;
+    if (top > 48 && room > gain + 80) setCompact(true);
+  } else if (top <= 2) {
+    setCompact(false);
+  }
 }
 
 export function mount(sidebar) {
@@ -54,7 +78,8 @@ export function mount(sidebar) {
   composeBtn.onclick = () => composeMenu(composeBtn);
   const fab = h('button', { class: 'fab', type: 'button', 'aria-label': t('menu.new_chat'), 'aria-haspopup': 'menu', onclick: () => composeMenu(fab) }, icon('compose', 24));
   // phone layout: the search field is hidden until the magnifier is tapped (more room for chats, like Telegram)
-  const searchBtn = h('button', { class: 'icon-btn only-mobile', type: 'button', 'aria-label': t('search.chats'), onclick: () => { el.dataset.search = 'open'; searchInput.focus(); } }, icon('search', 24));
+  const searchBtn = h('button', { class: 'icon-btn only-mobile', type: 'button', 'aria-label': t('search.chats'), onclick: () => { el.dataset.search = 'open'; setCompact(false); listEl.scrollTo({ top: 0 }); searchInput.focus(); } }, icon('search', 24));
+  searchInput.addEventListener('focus', () => setCompact(false));
   searchInput.addEventListener('blur', () => { if (!searchInput.value && el) delete el.dataset.search; });
   searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchInput.value = ''; S.query = ''; searchInput.blur(); render(); } });
 
@@ -65,6 +90,7 @@ export function mount(sidebar) {
   netEl = h('div', { class: 'netbar', role: 'status', hidden: true });
   listEl = h('div', { class: 'chatlist', role: 'list' });
   listEl.addEventListener('keydown', listKeys);
+  listEl.addEventListener('scroll', onListScroll, { passive: true });
 
   const nav = h('nav', { class: 'bottomnav', 'aria-label': t('app.name') },
     navBtn('chat', t('nav.messages'), () => setView('chats'), 'chats'),
@@ -75,9 +101,9 @@ export function mount(sidebar) {
   greetEl = h('div', { class: 'greet' }, h('span', { class: 'greet-hi' }), h('b', { class: 'greet-main' }), h('span', { class: 'greet-sub' }));
   const searchBox = h('div', { class: 'search' }, icon('search', 18), searchInput);
   clear(el).append(
-    h('div', { class: 'hero' },
+    (heroEl = h('div', { class: 'hero' },
     h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), searchBtn, composeBtn),
-    greetEl, searchBox, storiesBar()),
+    h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, storiesBar())))),
     tabsEl, netEl, listEl, nav, fab,
   );
 
@@ -93,7 +119,7 @@ export function mount(sidebar) {
     on('net', renderNet);
     on('outbox', renderNet);
     on('active', render);
-    on('view', () => { searchInput.value = ''; S.query = ''; remote = { users: [], messages: [], loading: false, term: '' }; render(); });
+    on('view', () => { setCompact(false); searchInput.value = ''; S.query = ''; remote = { users: [], messages: [], loading: false, term: '' }; render(); });
     on('focus-search', () => { searchInput?.focus(); searchInput?.select(); });
   }
   renderNet();

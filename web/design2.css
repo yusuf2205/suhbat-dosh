@@ -209,3 +209,16 @@
   .app .chat-head .icon-btn.back:hover, .app .chat-head .icon-btn.back:active { color: #fff !important; }
   .app .chat-head .ripple, .app .chat-head .icon-btn .ripple { background: rgba(255, 255, 255, .25); }
 }
+
+/* the phone header folds away while the list is scrolled: the greeting, the search and the stories go, the logo, search and "new chat" stay */
+@media (max-width: 600px) {
+  .app .hero-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .32s cubic-bezier(.3, .8, .3, 1); }
+  .app .hero-inner { min-height: 0; overflow: hidden; }
+  .app .hero { transition: padding-bottom .32s ease, border-radius .32s ease, box-shadow .32s ease; }
+  .app .hero.compact .hero-body { grid-template-rows: 0fr; }
+  .app .hero.compact .hero-inner { visibility: hidden; transition: visibility 0s .32s; }
+  .app .hero.compact { padding-bottom: 8px; border-radius: 0 0 22px 22px; }
+  .app .hero.compact .side-head2 { padding-bottom: 2px; }
+  .app .hero.compact .side-head2 .only-mobile { display: inline-grid; }
+  @media (prefers-reduced-motion: reduce) { .app .hero-body, .app .hero { transition: none; } }
+}
