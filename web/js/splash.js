@@ -3,7 +3,7 @@
   var el = document.getElementById('splash');
   if (!el) return;
   var started = Date.now();
-  var MIN = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : 2300;
+  var MIN = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : 3000;
   var done = false;
   function hide() {
     if (done) return; done = true;

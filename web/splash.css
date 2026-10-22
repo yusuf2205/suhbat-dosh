@@ -1,4 +1,4 @@
-@font-face { font-family: "Lilita One"; src: url("/fonts/LilitaOne.ttf") format("truetype"); font-display: block; }
+@font-face { font-family: "Luckiest Guy"; src: url("/fonts/LuckiestGuy.ttf") format("truetype"); font-display: block; }
 /* Launch animation: the emblem pops in, blinks, then the name is wiped in next to a heavy shadow, and the screen fades into the app. */
 #splash {
   position: fixed; inset: 0; z-index: 9999; background: #fbc700;
@@ -13,17 +13,18 @@
 #splash .sp-dot:nth-child(2) { animation-delay: .62s; }
 #splash .sp-dot:nth-child(3) { animation-delay: .74s; }
 #splash .sp-word {
-  font: 400 clamp(38px, 12vw, 70px)/1 "Lilita One", "Arial Black", Impact, "Segoe UI", system-ui, sans-serif; letter-spacing: .02em; transform: rotate(-3deg);
-  color: #fff; -webkit-text-stroke: 3px #17171a; paint-order: stroke fill;
-  text-shadow: 3px 3px 0 #17171a, 5px 5px 0 #17171a, 7px 7px 0 #17171a;
-  padding: 0 12px 10px 4px; white-space: nowrap;
-  clip-path: inset(-10% 100% -10% 0); animation: sp-wipe .7s 1.1s cubic-bezier(.65, 0, .25, 1) both;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; transform: rotate(-4deg);
+  font: 400 clamp(46px, 15vw, 86px)/.95 "Luckiest Guy", "Arial Black", Impact, system-ui, sans-serif; letter-spacing: .03em;
+  color: #fff; -webkit-text-stroke: 4px #17171a; paint-order: stroke fill;
+  text-shadow: 3px 3px 0 #17171a, 5px 5px 0 #17171a, 7px 7px 0 #17171a, 9px 9px 0 #17171a;
 }
+#splash .sp-word span { display: block; padding: 4px 14px 12px 6px; white-space: nowrap; clip-path: inset(-10% 100% -10% 0); animation: sp-wipe .6s 1.1s cubic-bezier(.65, 0, .25, 1) both; }
+#splash .sp-word .sp-l2 { animation-delay: 1.4s; font-size: 1.15em; }
 @keyframes sp-pop { 0% { transform: scale(.15) rotate(-12deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
 @keyframes sp-lift { 0% { transform: translateY(0) scale(1); } 100% { transform: translateY(-4px) scale(.82); } }
 @keyframes sp-blink { 0%, 100% { transform: scaleY(1); } 45% { transform: scaleY(.1); } }
 @keyframes sp-dot { 0% { transform: scale(0); } 100% { transform: scale(1); } }
 @keyframes sp-wipe { 0% { clip-path: inset(-10% 100% -10% 0); } 100% { clip-path: inset(-10% -10% -10% -10%); } }
 @media (prefers-reduced-motion: reduce) {
-  #splash .sp-mark, #splash .sp-eye, #splash .sp-dot, #splash .sp-word { animation: none; clip-path: none; }
+  #splash .sp-mark, #splash .sp-eye, #splash .sp-dot, #splash .sp-word span { animation: none; clip-path: none; }
 }
