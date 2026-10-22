@@ -37,6 +37,7 @@ import { quick } from './quick.js';
 import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
+import { forum, wireForum } from './forum.js';
 import { directory, wireDirectory } from './directory.js';
 import { normalizeFocus } from '../../shared/focus.js';
 import { normalizeWork, workOpen } from '../../shared/work.js';
@@ -438,6 +439,7 @@ api.use(e2e);
 api.use(linkpreview);
 api.use(quick);
 api.use(extras);
+api.use(forum);
 api.use(translate);
 api.use(directory);
 api.use(transcribe);
@@ -740,6 +742,7 @@ wireBots({ postMessage, pushChat });
 wireNotify({ postMessage, pushChat });
 wireDirectory({ pushChat });
 wireExtras({ pushChat, e2eNeed });
+wireForum({ postMessage, pushChat });
 wireFeatures({ postMessage });
 wireMini({ postMessage });
 wireTasks({ postMessage });
@@ -997,19 +1000,35 @@ api.get('/chats/:id/messages', (req, res) => {
   let rows;
   let hasMore = false;
   const floor = Math.max(0, requireMember(id, req.user.id).cleared_before || 0); // "clear history" watermark
+  // a group with topics: one topic at a time (0 = General); comments under channel posts never appear in the feed
+  const forum = q.get('SELECT forum FROM chats WHERE id = ?', id).forum && req.query.topic !== undefined;
+  const tcond = forum ? ` AND COALESCE(topic_id, 0) = ${int(req.query.topic, 'topic', { min: 0 })} AND thread_of IS NULL` : ' AND thread_of IS NULL';
   if (after !== undefined) {
-    rows = q.all('SELECT * FROM messages WHERE chat_id = ? AND id > ? ORDER BY id ASC LIMIT ?', id, Math.max(after, floor), limit + 1);
+    rows = q.all(`SELECT * FROM messages WHERE chat_id = ? AND id > ?${tcond} ORDER BY id ASC LIMIT ?`, id, Math.max(after, floor), limit + 1);
     hasMore = rows.length > limit;
     rows = rows.slice(0, limit);
   } else {
     rows = q.all(
-      'SELECT * FROM messages WHERE chat_id = ? AND id < ? AND id > ? ORDER BY id DESC LIMIT ?', id, before ?? Number.MAX_SAFE_INTEGER, floor, limit + 1,
+      `SELECT * FROM messages WHERE chat_id = ? AND id < ? AND id > ?${tcond} ORDER BY id DESC LIMIT ?`, id, before ?? Number.MAX_SAFE_INTEGER, floor, limit + 1,
     );
     hasMore = rows.length > limit;
     rows = rows.slice(0, limit).reverse();
   }
   res.json({ messages: rows.map(messageOut), has_more: hasMore });
 });
+
+/** The topic a message goes to: the header x-topic (0 or none = General); a reply stays in the topic of the message it answers. */
+export function topicFor(req, chat, me, replyTo = null) {
+  if (!chat.forum) return null;
+  let t = Number(req.headers['x-topic'] ?? req.body?.topic_id ?? 0);
+  if (replyTo) { const r = q.get('SELECT topic_id FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id); if (r) t = r.topic_id || 0; }
+  if (!Number.isInteger(t) || t < 0) t = 0;
+  if (!t) return null;
+  const tp = q.get('SELECT * FROM topics WHERE id = ? AND chat_id = ?', t, chat.id);
+  if (!tp) throw new HttpError(404, 'topic_not_found');
+  if (tp.closed && !isAdmin(me)) throw new HttpError(403, 'topic_closed');
+  return t;
+}
 
 function assertCanPost(chat, me, userId) {
   if (chat.type === 'channel' && me.role === 'member') throw new HttpError(403, 'channel_readonly');
@@ -1050,7 +1069,7 @@ function maybeAutoReply(chat, sender, kind) {
   postMessage({ chat, user: peer, text: `🤖 ${text}`, auto: true, silent: false });
 }
 
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null }) {
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null, topicId = null, threadOf = null }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1058,17 +1077,29 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
   const t = now();
   const r = q.run(
-    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, once, live_until, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, t,
+    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, t,
   );
   const id = Number(r.lastInsertRowid);
+  if (threadOf) {
+    // a comment under a channel post: it lives in its thread, not in the feed, and nobody is pushed about it
+    const comment = messageOut(getMessage(id));
+    const everyone = memberIds(chat.id);
+    emit(everyone, { type: 'comment.new', chat_id: chat.id, post_id: threadOf, message: comment });
+    emit(everyone, { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(threadOf)) });
+    audit(user.id, 'comment.send', { chat_id: chat.id, target_type: 'message', target_id: id, details: { post: threadOf, length: text.length } });
+    return { message: comment, duplicate: false };
+  }
   q.run('UPDATE chats SET last_message_id = ?, last_message_at = ? WHERE id = ?', id, t, chat.id);
   q.run('UPDATE members SET hidden = 0 WHERE chat_id = ? AND hidden = 1', chat.id); // a deleted chat comes back with a new message
   q.run(
     'UPDATE members SET last_read_id = ?, last_delivered_id = ?, draft = ? WHERE chat_id = ? AND user_id = ?',
     id, id, '', chat.id, user.id,
   );
+  if (chat.forum) {
+    q.run('INSERT INTO topic_reads (chat_id, user_id, topic_id, last_read_id) VALUES (?,?,?,?) ON CONFLICT(chat_id, user_id, topic_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)', chat.id, user.id, topicId || 0, id);
+  }
   const message = messageOut(getMessage(id));
   audit(user.id, 'message.send', {
     chat_id: chat.id, target_type: 'message', target_id: id,
@@ -1147,7 +1178,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil, topicId: topicFor(req, chat, me, replyTo) });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 
@@ -1369,6 +1400,7 @@ api.post('/chats/:id/uploads', (req, res) => {
     uid, req.user.id, id, clientId, name, size, str(String(b.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX }), b.voice ? 1 : 0,
     int(b.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, b.once === true ? 1 : 0, now(), now(),
   );
+  q.run('UPDATE uploads SET topic_id = ? WHERE id = ?', topicFor(req, chat, requireMember(id, req.user.id), int(b.reply_to, 'reply_to', { optional: true }) ?? null), uid);
   fs.writeFileSync(partPath(uid), '');
   res.status(201).json({ ...uploadOut(q.get('SELECT * FROM uploads WHERE id = ?', uid)), chunk: 1024 * 1024 });
 });
@@ -1436,7 +1468,7 @@ api.post('/uploads/:id/complete', (req, res) => {
     chat, user: req.user, text: capt, kind, fileId: fid,
     duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? u.duration : null,
     replyTo: u.reply_to, clientId: u.client_id, waveform: kind === 'voice' ? u.waveform : null,
-    once: !!u.once && !secretChat && (kind === 'image' || kind === 'video'),
+    once: !!u.once && !secretChat && (kind === 'image' || kind === 'video'), topicId: u.topic_id || null,
   });
   q.run('DELETE FROM uploads WHERE id = ?', u.id);
   res.status(201).json(out);
@@ -1489,7 +1521,7 @@ api.post('/chats/:id/files', async (req, res) => {
   const out = postMessage({
     chat, user: req.user, text: capt, kind, fileId: fid, duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? duration : null,
     replyTo, clientId, waveform: kind === 'voice' ? wf : null,
-    once: req.query.once === '1' && !secretChat && (kind === 'image' || kind === 'video'),
+    once: req.query.once === '1' && !secretChat && (kind === 'image' || kind === 'video'), topicId: topicFor(req, chat, me, replyTo),
   });
   res.status(201).json(out);
 });

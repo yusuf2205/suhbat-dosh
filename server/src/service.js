@@ -106,6 +106,9 @@ export function isEncrypted(chatId) {
   return !!q.get('SELECT 1 AS x FROM secret_chats WHERE chat_id = ?', chatId) || !!q.get('SELECT 1 AS x FROM chats WHERE id = ? AND e2e = 1', chatId);
 }
 
+/** Posts of a channel with comments on carry the number of comments. */
+const commentsOn = (row) => !row.thread_of && !!q.get('SELECT 1 AS x FROM chats WHERE id = ? AND comments = 1', row.chat_id);
+
 export function noteOut(row) {
   const n = q.get('SELECT * FROM notes WHERE message_id = ?', row.id);
   if (!n) return null;
@@ -206,6 +209,8 @@ export function messageOut(row) {
     ...(row.urgent ? { urgent: true } : {}),
     ...(row.once ? { once: { views: q.all('SELECT user_id FROM once_views WHERE message_id = ?', row.id).map((r) => r.user_id) } } : {}),
     ...(row.live_until ? { live_until: row.live_until } : {}),
+    ...(row.topic_id ? { topic_id: row.topic_id } : {}),
+    ...(commentsOn(row) ? { comments: q.get('SELECT COUNT(*) AS n FROM messages WHERE thread_of = ?', row.id).n } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
@@ -233,10 +238,17 @@ export function chatOut(chatId, viewerId) {
   if (!c) return null;
   const m = membership(chatId, viewerId);
   if (!m) return null;
-  const unread = q.get(
-    'SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND id > ? AND (sender_id IS NULL OR sender_id != ?)',
-    chatId, Math.max(m.last_read_id, m.cleared_before || 0), viewerId,
-  ).n;
+  // a group with topics counts what is unread in every topic separately
+  const unread = c.forum
+    ? q.get(
+      `SELECT COUNT(*) AS n FROM messages x LEFT JOIN topic_reads tr ON tr.chat_id = x.chat_id AND tr.user_id = ? AND tr.topic_id = COALESCE(x.topic_id, 0)
+       WHERE x.chat_id = ? AND x.thread_of IS NULL AND x.id > ? AND x.id > COALESCE(tr.last_read_id, 0) AND (x.sender_id IS NULL OR x.sender_id != ?)`,
+      viewerId, chatId, m.cleared_before || 0, viewerId,
+    ).n
+    : q.get(
+      'SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND id > ? AND thread_of IS NULL AND (sender_id IS NULL OR sender_id != ?)',
+      chatId, Math.max(m.last_read_id, m.cleared_before || 0), viewerId,
+    ).n;
   const others = q.get(
     `SELECT COALESCE(MAX(last_read_id),0) AS r, COALESCE(MAX(last_delivered_id),0) AS d
      FROM members WHERE chat_id = ? AND user_id != ? AND banned = 0`,
@@ -281,6 +293,8 @@ export function chatOut(chatId, viewerId) {
     saved: c.type === 'direct' && /^(\d+):\1$/.test(c.direct_key || ''),
     secret: c.e2e ? { group: true, state: c.e2e_epoch > 0 ? 'ready' : 'pending', epoch: c.e2e_epoch, rotate: !!c.e2e_rotate, initiator_id: c.owner_id } : sc ? { state: sc.peer_pub ? 'ready' : 'pending', initiator_id: sc.initiator_id, peer_id: sc.peer_id, init_pub: sc.init_pub, peer_pub: sc.peer_pub } : null,
     ...(c.is_public ? { public: true } : {}),
+    ...(c.forum ? { forum: true } : {}),
+    ...(c.comments ? { comments: true } : {}),
     ...(c.imported_from ? { imported: c.imported_from, import_me: c.import_me || '' } : {}),
     can_post: canPost,
     draft: m.draft,
