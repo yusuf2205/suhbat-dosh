@@ -1032,9 +1032,9 @@ export function senderName(m) {
 function statusOf(m, c) {
   if (m.failed) return { text: '!', cls: 'failed', label: t('msg.failed') };
   if (m.pending) return { text: '🕓', cls: '', label: t('msg.pending') };
-  if (m.id <= c.others_read_id) return { text: '✓✓', cls: 'read', label: '' };
-  if (m.id <= c.others_delivered_id) return { text: '✓✓', cls: '', label: '' };
-  return { text: '✓', cls: '', label: '' };
+  if (m.id <= c.others_read_id) return { text: '✓✓', cls: 'read', label: t('msg.read') };
+  // like Telegram: one tick = sent (delivered or not yet), two ticks = read
+  return { text: '✓', cls: '', label: m.id <= c.others_delivered_id ? t('msg.delivered') : t('msg.sent') };
 }
 
 function renderMessages() {
