@@ -183,7 +183,7 @@ textarea.input { resize: vertical; min-height: 80px; }
 .more { position: absolute; top: 2px; right: 2px; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); opacity: 0; font-size: 16px; }
 .bubble:hover .more, .more:focus-visible { opacity: 1; background: var(--surface-2); }
 @media (hover: none) { .more { opacity: .55; } }
-.jump { position: absolute; right: 16px; bottom: 90px; z-index: 5; }
+.btn.jump { position: absolute; right: 16px; bottom: 90px; z-index: 5; width: auto; min-height: 38px; padding: 8px 16px; border-radius: 999px; box-shadow: 0 4px 14px rgba(0, 0, 0, .22); }
 
 .composer-wrap { background: var(--surface); border-top: 1px solid var(--line); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
 .ctx { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-left: 3px solid var(--brand); margin: 0 8px 6px; background: var(--surface-2); border-radius: 6px; font-size: .88rem; }

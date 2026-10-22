@@ -934,6 +934,7 @@ export function upsert(chatId, m) {
   if (cf?.forum && (m.topic_id || 0) !== (currentTopic(chatId) || 0)) { refreshTopics(chatId); return; }
   const b = bucket(chatId);
   const idx = b.list.findIndex((x) => x.id === m.id || (m.client_id && x.client_id === m.client_id));
+  const sentNow = idx < 0 || b.list[idx].pending; // my own message just sent; later updates (transcript, edit, reaction) must not move the view
   if (idx >= 0) {
     b.list[idx] = m;
   } else {
@@ -950,7 +951,7 @@ export function upsert(chatId, m) {
   if (S.active === chatId) {
     const atBottom = isNearBottom();
     renderMessages();
-    if (atBottom || m.sender_id === S.me.id) scrollBottom();
+    if (atBottom || (sentNow && m.sender_id === S.me.id)) scrollBottom();
     markRead();
   }
 }
