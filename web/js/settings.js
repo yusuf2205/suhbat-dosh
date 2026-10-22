@@ -19,6 +19,7 @@ import { storageSection } from './viewer.js';
 import { DEFAULT_AUTO, autoPolicy, cancelDownload, listDownloads, netClass, onDownload, pauseDownload, resumeDownload, setAutoPolicy } from './downloads.js';
 import { cancel as cancelUpload, listUploads, onUpload, pause as pauseUpload, resume as resumeUpload } from './uploads.js';
 import { callSettingsSection } from './call.js';
+import { openDrive } from './drive.js';
 import { bioAvailable, bioOn, confirmPin, createPin, disableBio, disableLock, enableBio, lockEnabled, lockTimeout, setTimeoutSec, showLock } from './applock.js';
 import {
   disablePush, enablePush, pushEnabled, pushSupported,
@@ -243,6 +244,7 @@ export function openSettings() {
             me.username ? h('span', { class: 'accent ellipsis' }, `@${me.username}`) : null)),
         group(
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
+          row('folder', t('drive.title'), { onclick: () => { m.close(); openDrive(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } }),
           row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
           row('camera', t('story.new'), { onclick: () => { composeStory(); } }),

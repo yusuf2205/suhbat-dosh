@@ -207,3 +207,13 @@ body.dl-body { overflow-x: hidden; }
 .file-row { background: var(--surface); }
 .file-row:first-of-type { background: color-mix(in srgb, var(--brand) 22%, var(--surface)); }
 .fr-main b { font-size: .95rem; }
+
+/* ===== share link page ===== */
+.share-page { max-width: 520px; }
+.share-card { background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); border-radius: 22px; padding: 28px 22px; display: grid; gap: 14px; justify-items: center; text-align: center; box-shadow: 0 14px 40px rgba(0, 0, 0, .08); }
+.share-file { display: grid; gap: 8px; justify-items: center; }
+.share-file h1 { font-size: 1.25rem; margin: 6px 0 0; overflow-wrap: anywhere; }
+.share-card .input { width: min(320px, 100%); text-align: center; }
+.share-card .btn.big { min-width: 200px; }
+.share-msg { margin: 0; min-height: 1.3em; color: var(--muted); }
+.share-gone h2 { font-size: 3rem; margin: 0; }

@@ -1568,3 +1568,27 @@ html.locked body > *:not(.lock-screen) { visibility: hidden; }
 .vn-msg { width: min(62vw, 240px); aspect-ratio: 1; border: 0; padding: 0; cursor: pointer; display: block; }
 .vn-dur { position: absolute; left: 10px; bottom: 10px; padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, .55); color: #fff; font-size: .78rem; }
 .vn-msg::after { content: ''; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .35); pointer-events: none; }
+
+/* ===== drive ===== */
+.modal.drive { width: min(760px, 96vw); }
+.drive-bar { display: flex; gap: 10px; margin-bottom: 10px; }
+.drive-bar .input { flex: 1; }
+.drive-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.drive-chips .chip[aria-pressed='true'] { background: var(--brand); color: var(--brand-ink); }
+.drive-info { margin: 4px 2px 8px; font-size: .85rem; }
+.drive-list { display: grid; gap: 6px; max-height: min(56vh, 520px); overflow: auto; }
+.drive-row { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 6px 8px; background: var(--surface); }
+.drive-row:hover { border-color: var(--brand); }
+.drive-main { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; color: inherit; text-decoration: none; padding: 4px; }
+.drive-text { display: grid; gap: 2px; min-width: 0; }
+.drive-text b { font-weight: 600; }
+.drive-empty { text-align: center; padding: 24px 8px; }
+.drive-note { font-size: .8rem; margin-top: 10px; }
+.share-box { display: grid; gap: 12px; }
+.share-row { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.share-row.dead { opacity: .55; }
+.share-meta { display: grid; gap: 4px; min-width: 0; }
+.access-badge { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+.access-badge.dead { color: #ef4444; }
+.file-with-badge { display: grid; }
+.filecard.expired { opacity: .7; cursor: default; }

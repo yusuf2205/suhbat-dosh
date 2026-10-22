@@ -2,6 +2,7 @@ import { snapGet, snapSet } from './snap.js';
 import { canCompress, compressImage } from './imgcompress.js';
 import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
 import { canCompressVideo, compressVideo } from './videocompress.js';
+import { accessBadge, accessMenu, saveToDrive } from './drive.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
@@ -1219,7 +1220,19 @@ function uploadCard(m) {
     h('span', { class: 'up-actions' }, act));
 }
 
+/** A file whose access was limited: after the end its recipients see only a note (the sender still has it). */
 function buildFile(m) {
+  const mine = m.sender_id === S.me.id;
+  if (m.access_until && m.access_until <= Date.now() && !mine) {
+    return h('div', { class: 'filecard expired' }, h('span', { class: 'ficon' }, icon('lock', 28)),
+      h('span', { class: 'fname' }, h('b', null, m.file.name), h('span', { class: 'muted' }, t('access.ended'))));
+  }
+  const node = buildFileInner(m);
+  const badge = accessBadge(m, mine);
+  return badge ? h('div', { class: 'file-with-badge' }, node, badge) : node;
+}
+
+function buildFileInner(m) {
   if (m.upload) return uploadCard(m);
   const f = m.file;
   const open = () => openViewer(m.chat_id, m.id);
@@ -1286,6 +1299,10 @@ function messageMenu(anchor, m) {
         toast(t('msg.bookmarked'));
       } catch (e) { toast(errText(e.code)); }
     } });
+  }
+  if (m.file && !isSecret(c) && typeof m.id === 'number') {
+    items.push({ label: t('drive.save'), onClick: () => saveToDrive(m.file.id) });
+    if (mine) items.push({ label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
   }
   if (m.file) {
     items.push({ label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });

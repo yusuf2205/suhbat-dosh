@@ -24,6 +24,7 @@ import { pushNewMessage, pushRouter } from './push.js';
 import { consumeInvite, gateRegistration, registrationMode } from './access.js';
 import { serviceMessage, wireNotify } from './notify.js';
 import { features, wireFeatures } from './features.js';
+import { drive, wireDrive } from './drive.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { assertQuota, checkSpam, safety } from './safety.js';
@@ -405,6 +406,7 @@ api.use(requireAuth);
 api.use('/admin', admin);
 api.use('/bots', botsRouter);
 api.use(features);
+api.use(drive);
 api.use(pushRouter);
 api.use(safety);
 
@@ -1458,14 +1460,17 @@ function sendFile(res, f, { download = false, pdfInline = false, thumb = false }
   });
 }
 
-function canAccessFile(userId, fid) {
+export function canAccessFile(userId, fid) {
   if (q.get('SELECT 1 AS x FROM stickers WHERE file_id = ? AND user_id = ?', fid, userId)) return true;
+  if (q.get('SELECT 1 AS x FROM drive_items WHERE file_id = ? AND user_id = ?', fid, userId)) return true; // kept in the person's own drive
+  // a message may limit how long its recipients can open the file (its sender keeps access)
   return !!q.get(
     `SELECT 1 AS x FROM messages m JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
-     WHERE m.file_id = ? LIMIT 1`,
-    userId, fid,
+     WHERE m.file_id = ? AND (m.access_until IS NULL OR m.access_until > ? OR m.sender_id = ?) LIMIT 1`,
+    userId, fid, now(), userId,
   );
 }
+wireDrive({ canAccessFile, sendFile: (res, f, o) => sendFile(res, f, o) });
 
 api.get('/files/:id', (req, res) => {
   const fid = str(req.params.id, 'id', { min: 8, max: 40 });

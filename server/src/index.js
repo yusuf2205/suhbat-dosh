@@ -7,6 +7,7 @@ import { config } from './config.js';
 import { db, migrate, q } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { api, authenticate, listDownloads } from './api.js';
+import { publicShare } from './drive.js';
 import { botApi } from './bots.js';
 import { counters, setWsCounter, startMonitors } from './ops.js';
 import { startScheduler } from './features.js';
@@ -97,6 +98,7 @@ app.use('/api', (req, res, next) => {
   next();
 });
 app.use('/api', express.json({ limit: '32kb' }));
+app.use('/api/s', publicShare); // share links work without an account
 app.use('/api', api);
 app.use('/api', (_req, _res, next) => next(new HttpError(404, 'not_found')));
 
@@ -124,6 +126,7 @@ const page = (name) => (_req, res) => sendVersioned(res, path.join(webDir, name)
 app.get(['/', '/index.html'], page('index.html'));
 app.get('/admin', page('admin.html'));
 app.get('/download', page('download.html'));
+app.get('/s/:token', page('share.html'));
 app.get('/sw.js', (_req, res) => sendVersioned(res, path.join(webDir, 'sw.js'), 'application/javascript; charset=utf-8', 'html'));
 const moduleRoute = (dir) => (req, res, next) => {
   const f = path.basename(req.params.f || '');

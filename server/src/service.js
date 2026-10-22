@@ -144,6 +144,7 @@ export function messageOut(row) {
     reactions,
     edited_at: row.edited_at,
     created_at: row.created_at,
+    access_until: row.access_until || null,
   };
 }
 
