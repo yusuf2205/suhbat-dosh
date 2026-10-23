@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
 import { db, q } from './db.js';
 import { HttpError, log, now } from './util.js';
@@ -101,6 +102,15 @@ export function createBackup(kind = 'manual') {
 export const mirrorStatus = { last: null };
 const webdavUrl = () => (process.env.BACKUP_WEBDAV_URL || '').replace(/\/+$/, '');
 
+/** The time in a snapshot's name (db-2026-10-15T12-45-22-auto.db, UTC), for disks that do not keep file times. */
+const stampOf = (name, fallback) => {
+  const m = /^db-(\d{4})-(\d\d)-(\d\d)T(\d\d)-(\d\d)-(\d\d)/.exec(name);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : fallback;
+};
+
+/** A plain byte copy: copyFile also tries to copy the permissions, which a Windows-formatted (NTFS/exFAT) USB disk refuses. */
+const copyPlain = (from, to) => pipeline(fs.createReadStream(from), fs.createWriteStream(to));
+
 /** An external disk that is not plugged in must not be "written" into the empty folder it leaves behind: a marker file proves it is there. */
 const offsiteMissing = () => !!process.env.BACKUP_MIRROR_MARKER && !fs.existsSync(process.env.BACKUP_MIRROR_MARKER);
 
@@ -123,11 +133,11 @@ async function mirrorBackup(src, name) {
       for (const b of listBackups()) {
         const to = path.join(dir, b.name);
         try { if (fs.statSync(to).size === b.size) continue; } catch { /* not there yet */ }
-        fs.copyFileSync(path.join(config.backupDir, b.name), to + '.part');
+        await copyPlain(path.join(config.backupDir, b.name), to + '.part');
         fs.renameSync(to + '.part', to);
-        fs.utimesSync(to, new Date(b.created_at), new Date(b.created_at));
+        try { fs.utimesSync(to, new Date(b.created_at), new Date(b.created_at)); } catch { /* the time is only used for the retention */ }
       }
-      const here = fs.readdirSync(dir).filter((n) => /^[\w.-]+\.db$/.test(n)).map((n) => ({ name: n, created_at: Math.round(fs.statSync(path.join(dir, n)).mtimeMs), kind: n.includes('-auto') ? 'auto' : n.startsWith('pre-restore') ? 'pre-restore' : 'manual' }));
+      const here = fs.readdirSync(dir).filter((n) => /^[\w.-]+\.db$/.test(n)).map((n) => ({ name: n, created_at: stampOf(n, Math.round(fs.statSync(path.join(dir, n)).mtimeMs)), kind: n.includes('-auto') ? 'auto' : n.startsWith('pre-restore') ? 'pre-restore' : 'manual' }));
       const keep = keepSet(here);
       for (const old of here) if (!keep.has(old.name)) fs.rmSync(path.join(dir, old.name), { force: true });
       out.dir = 'ok';
@@ -293,7 +303,7 @@ async function mirrorFiles() {
       const st = await fs.promises.stat(src);
       if (Date.now() - st.mtimeMs < 60_000) continue; // still being written
       try { if ((await fs.promises.stat(to)).size === st.size) continue; } catch { /* not mirrored yet */ }
-      await fs.promises.copyFile(src, to + '.part');
+      await copyPlain(src, to + '.part');
       await fs.promises.rename(to + '.part', to);
       copied += 1;
       bytes += st.size;
