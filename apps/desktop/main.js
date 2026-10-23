@@ -1,6 +1,6 @@
 // Suhbat-dosh desktop shell. The UI and all business logic live on the user's own server (same web client),
 // so there is nothing to duplicate here: this process only remembers the server address and hosts a window.
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, net, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, net, session, shell , systemPreferences } = require('electron');
 const os = require('node:os');
 const { autoUpdater } = require('electron-updater');
 const fs = require('node:fs');
@@ -306,6 +306,9 @@ if (!lock) {
   app.on('before-quit', () => { app.isQuitting = true; });
   app.whenReady().then(() => {
     // microphone (voice messages) and notifications are granted only to the configured server
+    const mine = (url) => { try { return new URL(url).origin === serverOrigin; } catch { return false; } };
+    session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => ['media', 'notifications', 'clipboard-sanitized-write'].includes(permission) && mine(origin));
+    if (process.platform === 'darwin') { try { systemPreferences.askForMediaAccess('microphone'); systemPreferences.askForMediaAccess('camera'); } catch { /* older macOS */ } }
     session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
       let ok = false;
       try { ok = ['media', 'notifications', 'clipboard-sanitized-write'].includes(permission) && new URL(wc.getURL()).origin === serverOrigin; } catch { /* file:// */ }

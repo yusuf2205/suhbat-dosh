@@ -1,6 +1,7 @@
 // Effects for the camera and the microphone in calls: blur of the background and a strong noise remover.
 // Both run on this device (a small segmentation model and the RNNoise filter), and are loaded only when somebody turns them on.
 // Every place that opens the camera or the microphone for a call goes through fxUserMedia().
+import { ensureMediaPermission } from './mediaaccess.js';
 import { S } from './state.js';
 import { t } from './i18n.js';
 import { toast } from './ui.js';
@@ -106,6 +107,7 @@ async function cleanTrack(source) {
 export async function fxUserMedia(constraints) {
   const wantNoise = !!S.prefs.strongNoise && !!constraints.audio;
   const c = wantNoise && typeof constraints.audio === 'object' ? { ...constraints, audio: { ...constraints.audio, noiseSuppression: false } } : constraints;
+  await ensureMediaPermission(!!c.video);
   const st = await navigator.mediaDevices.getUserMedia(c);
   const wantBlur = !!S.prefs.bgBlur && st.getVideoTracks().length > 0;
   if (!wantBlur && !(wantNoise && st.getAudioTracks().length)) return st;

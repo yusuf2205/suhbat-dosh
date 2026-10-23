@@ -30,8 +30,20 @@ public class MainActivity extends BridgeActivity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
+    static final int REQ_MEDIA = 7101;
+
+    private void mediaResult(boolean ok) {
+        runOnUiThread(() -> getBridge().getWebView().evaluateJavascript("(function(){try{window.__mediaPerm&&window.__mediaPerm(" + ok + ")}catch(e){}})()", null));
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_MEDIA) {
+            boolean ok = grantResults.length > 0;
+            for (int r : grantResults) if (r != PackageManager.PERMISSION_GRANTED) ok = false;
+            mediaResult(ok);
+            return;
+        }
         if (requestCode == NearbyBridge.REQ_PERM) { if (nearby != null) nearby.onPermissionResult(grantResults); return; }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
@@ -194,6 +206,26 @@ public class MainActivity extends BridgeActivity {
             runOnUiThread(() -> {
                 if (on) getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE, android.view.WindowManager.LayoutParams.FLAG_SECURE);
                 else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+            });
+        }
+
+        /** Voice and video messages: ask for the microphone (and the camera) now; the answer comes back to window.__mediaPerm(true|false). */
+        @JavascriptInterface
+        public void requestMedia(boolean video) {
+            runOnUiThread(() -> {
+                java.util.ArrayList<String> need = new java.util.ArrayList<>();
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.RECORD_AUDIO);
+                if (video && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.CAMERA);
+                if (need.isEmpty()) { mediaResult(true); return; }
+                ActivityCompat.requestPermissions(MainActivity.this, need.toArray(new String[0]), REQ_MEDIA);
+            });
+        }
+
+        /** The app's own page in the phone settings (Permissions), for a refusal that cannot be asked again. */
+        @JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { /* none */ }
             });
         }
 

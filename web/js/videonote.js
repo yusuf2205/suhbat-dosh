@@ -1,5 +1,6 @@
 // Round video messages ("circles"): record up to a minute from the camera, preview, send. They travel as ordinary
 // video files named circle.webm / circle.mp4 and are drawn as a circle in the chat.
+import { ensureMediaPermission, mediaErrorText, openAppSettings } from './mediaaccess.js';
 import { h, clear } from './dom.js';
 import { t } from './i18n.js';
 import { icon } from './icons.js';
@@ -57,13 +58,14 @@ export function recordVideoNote() {
 
     async function open() {
       stopStream();
+      if (!(await ensureMediaPermission(true))) { openAppSettings(); toast(mediaErrorText({ name: 'NotAllowedError' }, 'call.no_media'), 6000); end(null); return; }
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true },
           video: { facingMode: facing, width: { ideal: 480 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
         });
-      } catch {
-        toast(t('call.no_media'));
+      } catch (e) {
+        toast(mediaErrorText(e, 'call.no_media'), 6000);
         end(null);
         return;
       }
