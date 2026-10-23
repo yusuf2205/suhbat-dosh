@@ -163,6 +163,8 @@ export function pollOut(row) {
 
 
 
+const replyCount = (id) => q.get('SELECT COUNT(*) AS n FROM messages WHERE reply_to = ?', id).n;
+
 export function messageOut(row) {
   if (!row) return null;
   let file = null;
@@ -210,6 +212,7 @@ export function messageOut(row) {
     ...(row.once ? { once: { views: q.all('SELECT user_id FROM once_views WHERE message_id = ?', row.id).map((r) => r.user_id) } } : {}),
     ...(row.live_until ? { live_until: row.live_until } : {}),
     ...(row.topic_id ? { topic_id: row.topic_id } : {}),
+    ...(replyCount(row.id) ? { replies: replyCount(row.id) } : {}),
     ...(commentsOn(row) ? { comments: q.get('SELECT COUNT(*) AS n FROM messages WHERE thread_of = ?', row.id).n } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
     ...(row.tg_deleted ? { tg_deleted: true } : {}),

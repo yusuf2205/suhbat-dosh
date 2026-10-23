@@ -81,7 +81,9 @@ test('search ignores the case of Cyrillic letters too (messages, global search, 
   const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
   await call(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'Привет, Мир! Встреча в Ташкенте' });
   const inChat = await call(b.cookie, 'GET', `/api/search/messages?q=${encodeURIComponent('привет мир')}`);
-  assert.equal(inChat.data.messages.length, 0, 'two words in another order are not a phrase');
+  assert.equal(inChat.data.messages.length, 1, 'every word has to be there, wherever it stands (punctuation between them does not matter)');
+  assert.equal((await call(b.cookie, 'GET', `/api/search/messages?q=${encodeURIComponent('привет Ташкент')}`)).data.messages.length, 1);
+  assert.equal((await call(b.cookie, 'GET', `/api/search/messages?q=${encodeURIComponent('привет Самарканд')}`)).data.messages.length, 0, 'a missing word means no match');
   assert.equal((await call(b.cookie, 'GET', `/api/search/messages?q=${encodeURIComponent('ПРИВЕТ')}`)).data.messages.length, 1);
   assert.equal((await call(b.cookie, 'GET', `/api/search/global?q=${encodeURIComponent('ташкенте')}`)).data.results.length, 1);
   const p = await call(b.cookie, 'GET', `/api/users/search?q=${encodeURIComponent('ALICE')}`);

@@ -26,3 +26,4 @@ tgbridge-data/
 .env.bridge
 
 __pycache__/
+backups-offsite/

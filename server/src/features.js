@@ -6,11 +6,12 @@ import { EVENTS, LIMITS } from '../../shared/contracts.js';
 import {
   HttpError, escapeLike, int, log, now, rateLimit, str,
 } from './util.js';
-import { emit } from './realtime.js';
+import { emit, isOnline } from './realtime.js';
 import {
-  chatOut, eventOut, getMessage, getUser, memberIds, membership, messageOut, publicUser, requireMember,
+  chatOut, directPeerId, eventOut, getMessage, getUser, memberIds, membership, messageOut, publicUser, requireMember,
 } from './service.js';
 import { serviceMessage } from './notify.js';
+import { searchMessages } from './search.js';
 
 let host = { postMessage: null };
 export function wireFeatures(h) { host = h; }
@@ -18,8 +19,19 @@ export function wireFeatures(h) { host = h; }
 export const features = express.Router();
 
 // ------------------------------------------------------------------ folders
+const RULE_INCLUDE = ['direct', 'groups', 'channels', 'bots', 'telegram'];
+const RULE_EXCLUDE = ['muted', 'read', 'archived'];
+function cleanRules(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const o = typeof v === 'string' ? (() => { try { return JSON.parse(v); } catch { return null; } })() : v;
+  if (!o || typeof o !== 'object') throw new HttpError(400, 'invalid_input');
+  const include = [...new Set((Array.isArray(o.include) ? o.include : []).filter((x) => RULE_INCLUDE.includes(x)))];
+  const exclude = [...new Set((Array.isArray(o.exclude) ? o.exclude : []).filter((x) => RULE_EXCLUDE.includes(x)))];
+  return include.length || exclude.length ? JSON.stringify({ include, exclude }) : '';
+}
+const rulesOf = (f) => { try { return f.rules ? JSON.parse(f.rules) : null; } catch { return null; } };
 const folderOut = (f) => ({
-  id: f.id, name: f.name, emoji: f.emoji, position: f.position,
+  id: f.id, name: f.name, emoji: f.emoji, position: f.position, rules: rulesOf(f),
   chat_ids: q.all('SELECT chat_id FROM folder_chats WHERE folder_id = ?', f.id).map((r) => r.chat_id),
 });
 const foldersOf = (uid) => q.all('SELECT * FROM folders WHERE user_id = ? ORDER BY position, id', uid).map(folderOut);
@@ -42,12 +54,21 @@ features.post('/folders', (req, res) => {
   const name = str(req.body?.name, 'name', { min: 1, max: 24 });
   const emoji = str(String(req.body?.emoji ?? ''), 'emoji', { max: 8 });
   const ids = cleanChatIds(req.user.id, req.body?.chat_ids);
+  const rules = cleanRules(req.body?.rules);
   const pos = q.get('SELECT COALESCE(MAX(position), 0) + 1 AS n FROM folders WHERE user_id = ?', req.user.id).n;
-  const r = q.run('INSERT INTO folders (user_id, name, emoji, position, created_at) VALUES (?,?,?,?,?)', req.user.id, name, emoji, pos, now());
+  const r = q.run('INSERT INTO folders (user_id, name, emoji, position, rules, created_at) VALUES (?,?,?,?,?,?)', req.user.id, name, emoji, pos, rules, now());
   const fid = Number(r.lastInsertRowid);
   for (const c of ids) q.run('INSERT OR IGNORE INTO folder_chats (folder_id, chat_id) VALUES (?,?)', fid, c);
   pushFolders(req.user.id);
   res.status(201).json({ folders: foldersOf(req.user.id) });
+});
+
+/** The order of the tabs: { ids: [folder ids, first to last] }. */
+features.put('/folders/order', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger).slice(0, 40) : [];
+  tx(() => ids.forEach((id, i) => q.run('UPDATE folders SET position = ? WHERE id = ? AND user_id = ?', i + 1, id, req.user.id)));
+  pushFolders(req.user.id);
+  res.json({ folders: foldersOf(req.user.id) });
 });
 
 features.patch('/folders/:id', (req, res) => {
@@ -56,6 +77,7 @@ features.patch('/folders/:id', (req, res) => {
   const b = req.body || {};
   if (b.name !== undefined) q.run('UPDATE folders SET name = ? WHERE id = ?', str(b.name, 'name', { min: 1, max: 24 }), f.id);
   if (b.emoji !== undefined) q.run('UPDATE folders SET emoji = ? WHERE id = ?', str(String(b.emoji), 'emoji', { max: 8 }), f.id);
+  if (b.rules !== undefined) q.run('UPDATE folders SET rules = ? WHERE id = ?', cleanRules(b.rules), f.id);
   if (b.chat_ids !== undefined) {
     const ids = cleanChatIds(req.user.id, b.chat_ids);
     tx(() => {
@@ -100,7 +122,8 @@ features.post('/chats/:id/sound', (req, res) => {
 });
 
 // ------------------------------------------------------------------ scheduled messages and reminders
-const schedOut = (s) => ({ id: s.id, kind: s.kind, chat_id: s.chat_id, text: s.text, reply_to: s.reply_to, send_at: s.send_at, created_at: s.created_at });
+const schedOut = (s) => ({ id: s.id, kind: s.kind, chat_id: s.chat_id, text: s.text, reply_to: s.reply_to, send_at: s.send_at, created_at: s.created_at, silent: !!s.silent, when_online: !!s.when_online });
+const scheduledOf = (uid) => q.all('SELECT * FROM scheduled WHERE user_id = ? ORDER BY send_at', uid).map(schedOut);
 const MAX_AHEAD = 366 * 86400_000;
 
 function parseWhen(v) {
@@ -120,7 +143,9 @@ features.post('/chats/:id/schedule', (req, res) => {
   const text = str(req.body?.text, 'text', { min: 1, max: LIMITS.TEXT_MAX });
   const at = parseWhen(req.body?.send_at);
   const reply = int(req.body?.reply_to, 'reply_to', { optional: true }) ?? null;
-  q.run("INSERT INTO scheduled (user_id, chat_id, kind, text, reply_to, send_at, created_at) VALUES (?,?,'message',?,?,?,?)", req.user.id, id, text, reply, at, now());
+  const silent = req.body?.silent === true ? 1 : 0;
+  const whenOnline = req.body?.when_online === true && q.get('SELECT type FROM chats WHERE id = ?', id)?.type === 'direct' ? 1 : 0;
+  q.run("INSERT INTO scheduled (user_id, chat_id, kind, text, reply_to, send_at, silent, when_online, created_at) VALUES (?,?,'message',?,?,?,?,?,?)", req.user.id, id, text, reply, at, silent, whenOnline, now());
   res.status(201).json({ scheduled: q.all('SELECT * FROM scheduled WHERE user_id = ? ORDER BY send_at', req.user.id).map(schedOut) });
 });
 
@@ -134,6 +159,20 @@ features.post('/reminders', (req, res) => {
   res.status(201).json({ scheduled: q.all('SELECT * FROM scheduled WHERE user_id = ? ORDER BY send_at', req.user.id).map(schedOut) });
 });
 
+/** Change the text, the time or the flags of a message that has not been sent yet. */
+features.patch('/scheduled/:id', (req, res) => {
+  const s = q.get('SELECT * FROM scheduled WHERE id = ? AND user_id = ?', int(req.params.id, 'id'), req.user.id);
+  if (!s) throw new HttpError(404, 'not_found');
+  const b = req.body || {};
+  if (b.text !== undefined) q.run('UPDATE scheduled SET text = ? WHERE id = ?', str(b.text, 'text', { min: 1, max: s.kind === 'reminder' ? 500 : LIMITS.TEXT_MAX }), s.id);
+  if (b.send_at !== undefined) q.run('UPDATE scheduled SET send_at = ? WHERE id = ?', parseWhen(b.send_at), s.id);
+  if (s.kind === 'message') {
+    if (b.silent !== undefined) q.run('UPDATE scheduled SET silent = ? WHERE id = ?', b.silent ? 1 : 0, s.id);
+    if (b.when_online !== undefined) q.run('UPDATE scheduled SET when_online = ? WHERE id = ?', b.when_online && q.get('SELECT type FROM chats WHERE id = ?', s.chat_id)?.type === 'direct' ? 1 : 0, s.id);
+  }
+  res.json({ scheduled: scheduledOf(req.user.id) });
+});
+
 features.delete('/scheduled/:id', (req, res) => {
   q.run('DELETE FROM scheduled WHERE id = ? AND user_id = ?', int(req.params.id, 'id'), req.user.id);
   res.json({ scheduled: q.all('SELECT * FROM scheduled WHERE user_id = ? ORDER BY send_at', req.user.id).map(schedOut) });
@@ -142,6 +181,11 @@ features.delete('/scheduled/:id', (req, res) => {
 function runDue() {
   const due = q.all('SELECT * FROM scheduled WHERE send_at <= ? ORDER BY send_at LIMIT 50', now());
   for (const s of due) {
+    // "when they are online": wait for the other person (but not longer than a day past the chosen time)
+    if (s.when_online && s.kind === 'message' && s.send_at + 86400_000 > now()) {
+      const peer = directPeerId(s.chat_id, s.user_id);
+      if (peer && peer !== s.user_id && !isOnline(peer)) continue;
+    }
     q.run('DELETE FROM scheduled WHERE id = ?', s.id);
     try {
       const user = getUser(s.user_id);
@@ -151,7 +195,7 @@ function runDue() {
       } else if (membership(s.chat_id, s.user_id)) {
         const chat = q.get('SELECT * FROM chats WHERE id = ?', s.chat_id);
         const replyTo = s.reply_to && q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', s.reply_to, s.chat_id) ? s.reply_to : null;
-        host.postMessage({ chat, user, text: s.text, replyTo });
+        host.postMessage({ chat, user, text: s.text, replyTo, silent: !!s.silent });
       }
     } catch (e) { log('error', 'scheduled send failed', { id: s.id, err: e.message }); }
   }
@@ -333,31 +377,18 @@ features.get('/events/:id/ics', (req, res) => {
 
 // ------------------------------------------------------------------ search across every chat, with filters
 features.get('/search/global', (req, res) => {
-  if (!rateLimit(`gsearch:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'too_many_requests');
+  if (!rateLimit(`gsearch:${req.user.id}`, 60, 60_000)) throw new HttpError(429, 'too_many_requests');
   const term = str(String(req.query.q ?? ''), 'q', { max: 100 });
   const from = int(req.query.from_user, 'from_user', { optional: true });
   const type = ['text', 'image', 'video', 'voice', 'audio', 'file', 'link', 'poll'].includes(req.query.type) ? req.query.type : null;
   const since = int(req.query.since, 'since', { min: 0, optional: true });
   const until = int(req.query.until, 'until', { min: 0, optional: true });
+  const before = int(req.query.before, 'before', { min: 1, optional: true });
   const chatType = ['direct', 'group', 'channel'].includes(req.query.chat_type) ? req.query.chat_type : null;
   if (term.length < 2 && !from && !type && !since && !until) throw new HttpError(400, 'invalid_input', 'query too short');
-  const where = ['m.id > MAX(mb.cleared_before, 0)'];
-  const params = [req.user.id];
-  if (term.length >= 2) { where.push("lc(m.text) LIKE ? ESCAPE '\\'"); params.push(`%${escapeLike(term.toLowerCase())}%`); }
-  if (from) { where.push('m.sender_id = ?'); params.push(from); }
-  if (since !== undefined) { where.push('m.created_at >= ?'); params.push(since); }
-  if (until !== undefined) { where.push('m.created_at <= ?'); params.push(until); }
-  if (chatType) { where.push('c.type = ?'); params.push(chatType); }
-  if (type === 'link') where.push("m.kind = 'text' AND (m.text LIKE '%http://%' OR m.text LIKE '%https://%')");
-  else if (type === 'text') where.push("m.kind = 'text'");
-  else if (type) { where.push('m.kind = ?'); params.push(type); }
-  const rows = db.prepare(
-    `SELECT m.*, c.type AS chat_type, c.title AS chat_title FROM messages m
-     JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
-     JOIN chats c ON c.id = m.chat_id
-     WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT 60`,
-  ).all(...params);
+  const rows = searchMessages(req.user.id, { term, from, type, since, until, before, chatType, limit: 60 });
   res.json({
+    more: rows.length === 60,
     results: rows.map((r) => {
       let chatTitle = r.chat_title;
       if (r.chat_type === 'direct') {

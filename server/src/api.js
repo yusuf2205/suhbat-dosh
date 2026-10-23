@@ -24,6 +24,7 @@ import { pushNewMessage, pushRouter } from './push.js';
 import { consumeInvite, gateRegistration, registrationMode, getSetting } from './access.js';
 import { serviceMessage, wireNotify } from './notify.js';
 import { features, wireFeatures } from './features.js';
+import { searchMessages } from './search.js';
 import { drive, wireDrive } from './drive.js';
 import { mydata } from './mydata.js';
 import { mini, wireMini } from './miniapps.js';
@@ -1204,6 +1205,21 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   return { message, duplicate: false };
 }
 
+/** A message with everything that was written in answer to it, and to those answers: the thread, oldest first. */
+api.get('/messages/:id/thread', (req, res) => {
+  const root = getMessage(int(req.params.id, 'id'));
+  if (!root) throw new HttpError(404, 'not_found');
+  const me = requireMember(root.chat_id, req.user.id);
+  const rows = q.all(
+    `WITH RECURSIVE t(id) AS (
+       SELECT id FROM messages WHERE reply_to = ?1
+       UNION SELECT m.id FROM messages m JOIN t ON m.reply_to = t.id)
+     SELECT m.* FROM messages m JOIN t ON t.id = m.id WHERE m.chat_id = ?2 AND m.id > ?3 ORDER BY m.id LIMIT 300`,
+    root.id, root.chat_id, me.cleared_before || 0,
+  );
+  res.json({ root: messageOut(root), replies: rows.map(messageOut) });
+});
+
 api.post('/chats/:id/messages', (req, res) => {
   const id = int(req.params.id, 'id');
   const me = requireMember(id, req.user.id);
@@ -1794,13 +1810,10 @@ api.post('/messages/:id/reactions', (req, res) => {
 });
 
 api.get('/search/messages', (req, res) => {
-  if (!rateLimit(`msearch:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'too_many_requests');
+  if (!rateLimit(`msearch:${req.user.id}`, 60, 60_000)) throw new HttpError(429, 'too_many_requests');
   const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 100 });
   const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
-  const params = [req.user.id, `%${escapeLike(term.toLowerCase())}%`];
-  let sql = `SELECT m.* FROM messages m JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
-             WHERE lc(m.text) LIKE ? ESCAPE '\\'`;
-  if (chatId !== undefined) { sql += ' AND m.chat_id = ?'; params.push(chatId); }
-  sql += ' ORDER BY m.id DESC LIMIT 40';
-  res.json({ messages: db.prepare(sql).all(...params).map(messageOut) });
+  const before = int(req.query.before, 'before', { min: 1, optional: true });
+  const rows = searchMessages(req.user.id, { term, chatId, before, limit: 40 });
+  res.json({ messages: rows.map(messageOut), more: rows.length === 40 });
 });

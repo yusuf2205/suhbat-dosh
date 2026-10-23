@@ -206,6 +206,37 @@ export function previewText(m) {
   return map[m.kind] || '';
 }
 
+/**
+ * What a search result shows: the part of the text (or of the speech-to-text, or the file name) where the words were found, with
+ * the words marked. Falls back to the usual one-line preview.
+ */
+export function matchLine(m, term) {
+  const words = String(term || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return previewText(m);
+  for (const src of [m?.kind === 'secret' ? '' : m?.text, m?.transcript?.text, m?.file?.name]) {
+    if (!src) continue;
+    const low = src.toLowerCase();
+    const hit = words.map((w) => low.indexOf(w)).filter((i) => i >= 0).sort((x, y) => x - y)[0];
+    if (hit === undefined) continue;
+    const from = Math.max(0, hit - 40);
+    const part = src.slice(from, from + 140);
+    const out = [from > 0 ? '\u2026' : ''];
+    let rest = part;
+    while (rest) {
+      const lowRest = rest.toLowerCase();
+      let best = -1; let len = 0;
+      for (const w of words) { const i = lowRest.indexOf(w); if (i >= 0 && (best < 0 || i < best)) { best = i; len = w.length; } }
+      if (best < 0) { out.push(rest); break; }
+      if (best) out.push(rest.slice(0, best));
+      out.push(h('mark', null, rest.slice(best, best + len)));
+      rest = rest.slice(best + len);
+    }
+    if (from + 140 < src.length) out.push('\u2026');
+    return h('span', { class: m.kind === 'voice' || m.kind === 'audio' || m.kind === 'video' ? 'hit-voice' : '' }, m.kind === 'voice' ? '\u{1f3a4} ' : '', ...out);
+  }
+  return previewText(m);
+}
+
 export function lightbox(src) {
   const m = modal({ title: '', className: 'lightbox', body: h('img', { src, alt: '' }) });
   return m;

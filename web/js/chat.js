@@ -17,6 +17,7 @@ import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf } fro
 import { openReaders } from './readers.js';
 import { applyChatTheme, openChatTheme } from './chattheme.js';
 import { commentsButton } from './comments.js';
+import { openReactors, openThread, repliesLabel } from './thread.js';
 import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
@@ -563,6 +564,7 @@ function wireActionButton(b) {
       { label: t('send.silent'), onClick: () => sendText({ silent: true }) },
       ...(activeChat()?.type !== 'channel' && !activeChat()?.saved && !isSecret(activeChat()) ? [{ label: t('send.urgent'), onClick: () => sendText({ urgent: true }) }] : []),
       { label: t('when.schedule'), onClick: () => scheduleFromComposer(b) },
+      { label: t('when.schedule_silent'), onClick: () => scheduleFromComposer(b, { silent: true }) },
     ]);
   };
   b.addEventListener('contextmenu', (e) => { e.preventDefault(); showSendMenu(); });
@@ -940,6 +942,11 @@ export function upsert(chatId, m) {
   const b = bucket(chatId);
   const idx = b.list.findIndex((x) => x.id === m.id || (m.client_id && x.client_id === m.client_id));
   const sentNow = idx < 0 || b.list[idx].pending; // my own message just sent; later updates (transcript, edit, reaction) must not move the view
+  if (idx < 0 && m.reply_to?.id) {
+    // a new answer: the message it answers shows one more reply
+    const at = b.list.findIndex((x) => x.id === m.reply_to.id);
+    if (at >= 0) b.list[at] = { ...b.list[at], replies: (b.list[at].replies || 0) + 1 };
+  }
   if (idx >= 0) {
     b.list[idx] = m;
   } else {
@@ -1065,7 +1072,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1160,7 +1167,11 @@ function buildMessage(m, c) {
         type: 'button', class: `react ${ids.includes(S.me.id) ? 'mine' : ''}`, disabled: !!m.pending,
         'aria-label': `${emoji} ${ids.length}`,
         onclick: () => api('POST', `/api/messages/${m.id}/reactions`, { emoji }).catch((e) => toast(errText(e.code))),
+        oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); openReactors(m); },
       }, `${emoji} ${ids.length}`))));
+  }
+  if (m.replies > 0 && typeof m.id === 'number' && !m.pending) {
+    bubble.append(h('button', { class: 'thread-chip', type: 'button', onclick: () => openThread(m, c) }, `\u21a9 ${repliesLabel(m.replies)}`));
   }
   const status = mine ? h('span', { class: 'tick' }) : null;
   if (m.tg_deleted) bubble.append(h('div', { class: 'tg-gone' }, `\u{1F5D1} ${t('br.deleted_in_tg')}`));
@@ -1200,13 +1211,13 @@ function buildMessage(m, c) {
 }
 
 /** "Send later": the typed text goes out at the chosen time. */
-function scheduleFromComposer(anchor) {
+function scheduleFromComposer(anchor, { silent = false } = {}) {
   const c = activeChat();
   const text = view?.ta.value.trim();
   if (!c || !text) return;
-  pickTime(anchor, async (ts) => {
+  pickTime(anchor, async (ts, flags = {}) => {
     try {
-      await scheduleText(c.id, text, replyTo?.id, ts);
+      await scheduleText(c.id, text, replyTo?.id, ts, { silent, ...flags });
       view.ta.value = '';
       replyTo = null;
       saveDraft();
@@ -1214,7 +1225,7 @@ function scheduleFromComposer(anchor) {
       autoGrow();
       syncComposerButtons();
     } catch (e) { toast(errText(e.code)); }
-  });
+  }, { online: c.type === 'direct' && !c.saved && !c.imported });
 }
 
 /** Bot commands: the button next to the emoji opens the list the bot published. */
@@ -1392,6 +1403,8 @@ function messageMenu(anchor, m) {
   if (c.can_post) {
     items.push({ label: t('msg.reply'), onClick: () => { replyTo = m; editing = null; renderComposer(); view.ta.focus(); } });
   }
+  if (m.replies > 0 && typeof m.id === 'number') items.push({ label: `${t('msg.thread')} (${m.replies})`, onClick: () => openThread(m, c) });
+  if (Object.keys(m.reactions || {}).length) items.push({ label: t('react.who'), onClick: () => openReactors(m) });
   if (m.text) items.push({ label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
   if (m.text && m.kind === 'text') items.push({ label: t('msg.translate'), onClick: () => translateMessage(m) });
   items.push({ label: t('msg.forward'), onClick: () => openForward(m) });
@@ -1625,7 +1638,7 @@ function chatMoreMenu(anchor) {
       : { label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
-    { label: t('sched.title'), onClick: () => openScheduled() },
+    { label: t('sched.title'), onClick: () => openScheduled(c.id) },
     { label: t('theme.title'), onClick: () => openChatTheme(c) },
     ...(!isSecret(c) ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
     { label: t('task.title'), onClick: () => openTasks() },

@@ -5,7 +5,7 @@ import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs, chatTitle, isMuted } from './state.js';
 import { icon } from './icons.js';
 import { api } from './net.js';
-import { avatar, confirmDialog, fmtLastSeen, modal, popMenu, previewText, toast } from './ui.js';
+import { avatar, confirmDialog, fmtLastSeen, matchLine, modal, popMenu, previewText, toast } from './ui.js';
 import { openFolders, quietSettings } from './extras.js';
 import { updatesSection } from './updates.js';
 import { openMediaPanel, storageSection } from './viewer.js';
@@ -276,19 +276,26 @@ export function openChatSearch(chatId) {
   const results = h('div', { role: 'list' });
   const input = h('input', { class: 'input', type: 'search', placeholder: t('chat.search_ph'), 'aria-label': t('chat.search_ph') });
   const m = modal({ title: t('chat.search'), body: [input, results] });
+  let seq = 0;
+  const page = async (term, before) => {
+    const mine = ++seq;
+    const r = await api('GET', `/api/search/messages?q=${encodeURIComponent(term)}&chat_id=${chatId}${before ? `&before=${before}` : ''}`);
+    if (mine !== seq) return;
+    results.querySelector('.more')?.remove();
+    if (!r.messages.length && !before) results.append(h('div', { class: 'empty' }, t('list.nothing')));
+    for (const msg of r.messages) {
+      results.append(h('button', { class: 'list-item clickable', type: 'button', role: 'listitem', onclick: () => { m.close(); fire('jump', { chatId, msgId: msg.id }); } },
+        h('span', { class: 'grow' }, h('span', { class: 'muted' }, `${S.users.get(msg.sender_id)?.name ?? msg.import_author ?? ''} \u00b7 ${new Date(msg.created_at).toLocaleString()}`), h('br'), matchLine(msg, term))));
+    }
+    if (r.more) results.append(h('button', { class: 'btn secondary more', type: 'button', onclick: () => page(term, r.messages.at(-1).id).catch(fail) }, t('search.more')));
+  };
   input.addEventListener('input', debounce(async () => {
     const term = input.value.trim();
     clear(results);
     if (term.length < 2) return;
-    try {
-      const r = await api('GET', `/api/search/messages?q=${encodeURIComponent(term)}&chat_id=${chatId}`);
-      if (!r.messages.length) results.append(h('div', { class: 'empty' }, t('list.nothing')));
-      for (const msg of r.messages) {
-        results.append(h('button', { class: 'list-item clickable', type: 'button', role: 'listitem', onclick: () => { m.close(); fire('jump', { chatId, msgId: msg.id }); } },
-          h('span', { class: 'grow' }, h('span', { class: 'muted' }, `${S.users.get(msg.sender_id)?.name ?? ''} · ${new Date(msg.created_at).toLocaleString()}`), h('br'), previewText(msg))));
-      }
-    } catch (e) { fail(e); }
-  }, 300));
+    try { await page(term, 0); } catch (e) { fail(e); }
+  }, 250));
+  input.focus();
 }
 
 export function openForward(msgOrList) {

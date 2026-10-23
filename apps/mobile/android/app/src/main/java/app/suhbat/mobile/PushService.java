@@ -22,10 +22,13 @@ import android.net.wifi.WifiManager;
 import android.webkit.CookieManager;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.Person;
+import androidx.core.app.RemoteInput;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +56,16 @@ public class PushService extends Service {
     /** True while the app UI is on screen: then it shows messages itself. */
     static volatile boolean appVisible = false;
 
+    static volatile PushService instance;
+
+    /** One line of a conversation shown in its notification. */
+    private static class Line {
+        String who; String text; long at; long id; boolean mine;
+    }
+
+    private final Map<Long, ArrayList<Line>> history = new HashMap<>();
+    private final Map<Long, String> names = new HashMap<>();
+
     private final Handler main = new Handler(Looper.getMainLooper());
     private OkHttpClient client;
     private WebSocket ws;
@@ -68,6 +81,7 @@ public class PushService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         client = new OkHttpClient.Builder()
                 .pingInterval(25, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -123,6 +137,7 @@ public class PushService extends Service {
     @Override
     public void onDestroy() {
         stopped = true;
+        if (instance == this) instance = null;
         main.removeCallbacksAndMessages(null);
         try { if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); } catch (Exception ignored) { /* ignore */ }
         try { if (wifiLock != null && wifiLock.isHeld()) wifiLock.release(); } catch (Exception ignored) { /* ignore */ }
@@ -203,6 +218,10 @@ public class PushService extends Service {
                 case "message.new":
                     onMessage(ev.optJSONObject("message"), cookie, origin);
                     break;
+                case "read":
+                    // read on another device (or in the app): the notification of that chat is no longer needed
+                    if (ev.optLong("user_id") == myId) forget(ev.optLong("chat_id"));
+                    break;
                 case "call.incoming":
                     onCall(ev);
                     break;
@@ -268,19 +287,121 @@ public class PushService extends Service {
         } else if (body.length() > 160) {
             body = body.substring(0, 160);
         }
+        boolean group = chat != null && !"direct".equals(chat.optString("type"));
+        Line l = new Line();
+        l.text = body;
+        l.at = m.optLong("created_at", System.currentTimeMillis());
+        l.id = m.optLong("id");
+        l.who = group ? senderName(m.optLong("sender_id"), m.optString("import_author", ""), cookie, origin) : title;
+        synchronized (history) {
+            ArrayList<Line> h = history.get(chatId);
+            if (h == null) { h = new ArrayList<>(); history.put(chatId, h); }
+            h.add(l);
+            while (h.size() > 8) h.remove(0);
+        }
+        showChat(chatId, group, title, true);
+    }
+
+    private String senderName(long id, String importAuthor, String cookie, String origin) {
+        if (!importAuthor.isEmpty()) return importAuthor;
+        String known = names.get(id);
+        if (known != null) return known;
+        try {
+            Request r = new Request.Builder().url(origin + "/api/users/" + id).header("Cookie", cookie).build();
+            try (Response resp = client.newCall(r).execute()) {
+                if (resp.isSuccessful() && resp.body() != null) {
+                    String name = new JSONObject(resp.body().string()).getJSONObject("user").optString("name", "");
+                    if (!name.isEmpty()) { names.put(id, name); return name; }
+                }
+            }
+        } catch (Exception ignored) { /* the name is cosmetic */ }
+        return "";
+    }
+
+    /** The notification of one chat: the last lines as a conversation, with "Reply" (typed right in the shade) and "Mark as read". */
+    private void showChat(long chatId, boolean group, String title, boolean alert) {
+        ArrayList<Line> h;
+        synchronized (history) {
+            ArrayList<Line> src = history.get(chatId);
+            h = src == null ? new ArrayList<>() : new ArrayList<>(src);
+        }
+        if (h.isEmpty()) return;
+        Person me = new Person.Builder().setName("Вы").build();
+        NotificationCompat.MessagingStyle style = new NotificationCompat.MessagingStyle(me);
+        if (group) { style.setConversationTitle(title); style.setGroupConversation(true); }
+        long lastId = 0;
+        for (Line l : h) {
+            style.addMessage(l.text, l.at, l.mine ? me : new Person.Builder().setName(l.who == null || l.who.isEmpty() ? title : l.who).build());
+            lastId = Math.max(lastId, l.id);
+        }
+        int mutable = Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0;
+        int immutable = Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0;
+        int code = (int) (chatId % 100000);
+        Intent replyIntent = new Intent(this, NotifyActionReceiver.class).setAction(NotifyActionReceiver.ACT_REPLY).putExtra("chat_id", chatId).putExtra("last_id", lastId);
+        Intent readIntent = new Intent(this, NotifyActionReceiver.class).setAction(NotifyActionReceiver.ACT_READ).putExtra("chat_id", chatId).putExtra("last_id", lastId);
+        Intent gone = new Intent(this, NotifyActionReceiver.class).setAction(NotifyActionReceiver.ACT_DISMISS).putExtra("chat_id", chatId);
+        NotificationCompat.Action reply = new NotificationCompat.Action.Builder(R.drawable.ic_stat, "Ответить",
+                PendingIntent.getBroadcast(this, 100000 + code, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT | mutable))
+                .addRemoteInput(new RemoteInput.Builder(NotifyActionReceiver.KEY_REPLY).setLabel("Ответить").build())
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).setShowsUserInterface(false).build();
+        NotificationCompat.Action read = new NotificationCompat.Action.Builder(R.drawable.ic_stat, "Прочитано",
+                PendingIntent.getBroadcast(this, 200000 + code, readIntent, PendingIntent.FLAG_UPDATE_CURRENT | immutable))
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ).setShowsUserInterface(false).build();
         Notification n = new NotificationCompat.Builder(this, CH_MESSAGES)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setContentText(h.get(h.size() - 1).text)
+                .setStyle(style)
+                .setNumber(h.size())
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setDefaults(alert ? NotificationCompat.DEFAULT_ALL : 0)
+                .setOnlyAlertOnce(!alert)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(openApp((int) chatId))
+                .setDeleteIntent(PendingIntent.getBroadcast(this, 300000 + code, gone, PendingIntent.FLAG_UPDATE_CURRENT | immutable))
+                .addAction(reply)
+                .addAction(read)
                 .build();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify((int) (2000 + (chatId % 100000)), n);
+    }
+
+    /** The chat is read (here or elsewhere) or the notification was swiped away: forget the lines and remove it. */
+    static void forget(long chatId) {
+        final PushService s = instance;
+        if (s == null) return;
+        synchronized (s.history) { s.history.remove(chatId); }
+        s.main.post(() -> ((NotificationManager) s.getSystemService(NOTIFICATION_SERVICE)).cancel((int) (2000 + (chatId % 100000))));
+    }
+
+    /** After a button of the notification was used: show my answer in the conversation, or say it was not sent. */
+    static void afterAction(Context ctx, long chatId, boolean wasReply, String text, boolean ok) {
+        final PushService s = instance;
+        if (s == null) {
+            ((NotificationManager) ctx.getSystemService(NOTIFICATION_SERVICE)).cancel((int) (2000 + (chatId % 100000)));
+            return;
+        }
+        if (!wasReply) { if (ok) forget(chatId); return; }
+        Line l = new Line();
+        l.mine = true;
+        l.at = System.currentTimeMillis();
+        l.text = ok ? text : "\u26a0 Не отправлено: " + text;
+        synchronized (s.history) {
+            ArrayList<Line> h = s.history.get(chatId);
+            if (h == null) { h = new ArrayList<>(); s.history.put(chatId, h); }
+            h.add(l);
+            while (h.size() > 8) h.remove(0);
+        }
+        JSONObject chat = s.chats.get(chatId);
+        final boolean group = chat != null && !"direct".equals(chat.optString("type"));
+        String title = "Suhbat-dosh";
+        if (chat != null) {
+            JSONObject peer = chat.optJSONObject("peer");
+            title = !group && peer != null ? peer.optString("name", title) : chat.optString("title", title);
+        }
+        final String t = title;
+        s.main.post(() -> s.showChat(chatId, group, t, false));
     }
 
     private void onCall(JSONObject ev) {

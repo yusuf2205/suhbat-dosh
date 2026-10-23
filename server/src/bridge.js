@@ -313,6 +313,51 @@ bridgeAdmin.put('/:uid/personal', async (req, res) => {
   res.json({ ok: true });
 });
 
+/** What is mirrored for one person: every chat with its size, and how many were taken off the list. */
+bridgeAdmin.get('/:uid/chats', (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  if (!getUser(uid)) throw new HttpError(404, 'not_found');
+  const chats = q.all(
+    `SELECT c.tg_chat, c.title, c.kind, c.two_way, c.chat_id,
+            (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.chat_id) AS messages,
+            (SELECT MAX(m.created_at) FROM messages m WHERE m.chat_id = c.chat_id) AS last_at
+     FROM tg_chats c WHERE c.user_id = ? ORDER BY last_at DESC LIMIT 600`, uid);
+  res.json({
+    chats: chats.map((c) => ({ tg_chat: c.tg_chat, chat_id: c.chat_id, title: c.title, kind: c.kind, two_way: !!c.two_way, messages: c.messages, last_at: c.last_at })),
+    excluded: q.get('SELECT COUNT(*) AS n FROM tg_excluded WHERE user_id = ?', uid).n,
+  });
+});
+
+/** One mirrored chat: { two_way } lets the person answer from here (or not), { copy: false } stops copying it (what was copied stays). */
+bridgeAdmin.put('/:uid/chats/:tg', async (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  const tg = String(req.params.tg);
+  const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tg);
+  if (!row) throw new HttpError(404, 'not_found');
+  if (req.body?.copy === false) {
+    q.run('DELETE FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tg);
+    if (row.kind === 'user') q.run('INSERT OR IGNORE INTO tg_excluded (user_id, tg_chat) VALUES (?,?)', uid, tg);
+  } else if (req.body?.two_way !== undefined) {
+    q.run('UPDATE tg_chats SET two_way = ? WHERE user_id = ? AND tg_chat = ?', req.body.two_way ? 1 : 0, uid, tg);
+    emit([uid], { type: EVENTS.CHAT_UPDATE, chat: chatOut(row.chat_id, uid) });
+  }
+  await pushRules(uid);
+  audit(req.user.id, 'bridge.chat', { target_type: 'user', target_id: uid, chat_id: row.chat_id, details: { copy: req.body?.copy ?? null, two_way: req.body?.two_way ?? null } });
+  res.json({ ok: true });
+});
+
+/** Put the personal chats that were taken off the list back (they are copied again from now on). */
+bridgeAdmin.post('/:uid/restore', async (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  const o = link(uid);
+  if (!o) throw new HttpError(404, 'not_linked');
+  q.run('DELETE FROM tg_excluded WHERE user_id = ?', uid);
+  await pushRules(uid);
+  call('POST', '/backfill', uid).catch(() => {});
+  audit(req.user.id, 'bridge.restore', { target_type: 'user', target_id: uid });
+  res.json({ ok: true });
+});
+
 // ------------------------------------------------------------------ from the bridge container
 const same = (a, b) => { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 const syncTimers = new Map();

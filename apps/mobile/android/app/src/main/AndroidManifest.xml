@@ -31,6 +31,10 @@
             android:foregroundServiceType="remoteMessaging" />
 
         <receiver
+            android:name=".NotifyActionReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".InstallReceiver"
             android:exported="false" />
 

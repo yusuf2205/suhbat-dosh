@@ -101,6 +101,9 @@ export function createBackup(kind = 'manual') {
 export const mirrorStatus = { last: null };
 const webdavUrl = () => (process.env.BACKUP_WEBDAV_URL || '').replace(/\/+$/, '');
 
+/** An external disk that is not plugged in must not be "written" into the empty folder it leaves behind: a marker file proves it is there. */
+const offsiteMissing = () => !!process.env.BACKUP_MIRROR_MARKER && !fs.existsSync(process.env.BACKUP_MIRROR_MARKER);
+
 export function mirrorConfig() {
   const dir = process.env.BACKUP_MIRROR_DIR || '';
   const url = webdavUrl();
@@ -112,12 +115,21 @@ async function mirrorBackup(src, name) {
   const url = webdavUrl();
   if (!dir && !url) return;
   const out = { at: now(), name, dir: null, webdav: null };
-  if (dir) {
+  if (dir && offsiteMissing()) out.dir = 'внешний диск не подключён';
+  else if (dir) {
     try {
       fs.mkdirSync(dir, { recursive: true });
-      fs.copyFileSync(src, path.join(dir, name));
-      const all = fs.readdirSync(dir).filter((n) => /^[\w.-]+\.db$/.test(n)).sort();
-      for (const old of all.slice(0, Math.max(0, all.length - 30))) fs.rmSync(path.join(dir, old), { force: true });
+      // the new snapshot and every older one the second place does not have yet (the first run after it was set up)
+      for (const b of listBackups()) {
+        const to = path.join(dir, b.name);
+        try { if (fs.statSync(to).size === b.size) continue; } catch { /* not there yet */ }
+        fs.copyFileSync(path.join(config.backupDir, b.name), to + '.part');
+        fs.renameSync(to + '.part', to);
+        fs.utimesSync(to, new Date(b.created_at), new Date(b.created_at));
+      }
+      const here = fs.readdirSync(dir).filter((n) => /^[\w.-]+\.db$/.test(n)).map((n) => ({ name: n, created_at: Math.round(fs.statSync(path.join(dir, n)).mtimeMs), kind: n.includes('-auto') ? 'auto' : n.startsWith('pre-restore') ? 'pre-restore' : 'manual' }));
+      const keep = keepSet(here);
+      for (const old of here) if (!keep.has(old.name)) fs.rmSync(path.join(dir, old.name), { force: true });
       out.dir = 'ok';
     } catch (e) { out.dir = String(e.message).slice(0, 120); }
   }
@@ -145,9 +157,35 @@ export function listBackups() {
   } catch { return []; }
 }
 
+/**
+ * Which snapshots to keep: the newest ten, the newest of each of the last 14 days, of each of the last 8 weeks and of each
+ * of the last 12 months; the ones made by hand for 90 days, the ones taken before a restore for 30 days.
+ */
+export function keepSet(list, at = now()) {
+  const keep = new Set();
+  const sorted = [...list].sort((a, b) => b.created_at - a.created_at);
+  sorted.slice(0, 10).forEach((b) => keep.add(b.name));
+  const seen = { d: new Set(), w: new Set(), m: new Set() };
+  const DAY = 86400_000;
+  for (const b of sorted) {
+    const age = at - b.created_at;
+    const d = new Date(b.created_at);
+    const day = Math.floor(b.created_at / DAY);
+    const week = Math.floor((day + 3) / 7); // weeks start on Monday (1970-01-01 was a Thursday)
+    const month = d.getUTCFullYear() * 12 + d.getUTCMonth();
+    if (age <= 14 * DAY && !seen.d.has(day)) { seen.d.add(day); keep.add(b.name); }
+    if (age <= 56 * DAY && !seen.w.has(week)) { seen.w.add(week); keep.add(b.name); }
+    if (age <= 366 * DAY && !seen.m.has(month)) { seen.m.add(month); keep.add(b.name); }
+    if (b.kind === 'manual' && age <= 90 * DAY) keep.add(b.name);
+    if (b.kind === 'pre-restore' && age <= 30 * DAY) keep.add(b.name);
+  }
+  return keep;
+}
+
 function prune() {
   const all = listBackups();
-  for (const old of all.slice(40)) fs.rmSync(path.join(config.backupDir, old.name), { force: true });
+  const keep = keepSet(all);
+  for (const old of all) if (!keep.has(old.name)) fs.rmSync(path.join(config.backupDir, old.name), { force: true });
 }
 
 const safeName = (n) => {
@@ -164,6 +202,57 @@ export function scheduleRestore(n) {
   fs.writeFileSync(path.join(config.dataDir, 'restore.pending'), name);
   setTimeout(() => process.exit(0), 800).unref();
   return name;
+}
+
+// ------------------------------------------------------------------ is the copy usable?
+export const verifyStatus = { last: null };
+const COUNT_TABLES = ['users', 'chats', 'messages', 'files'];
+
+/**
+ * Opens a snapshot on its own and checks it the way a restore would need it: the database is intact, the tables are there,
+ * it holds roughly what the live one holds, and the uploaded files it refers to are in the second place too.
+ */
+export function verifyBackup(name) {
+  const file = backupPath(name);
+  const out = { at: now(), name, ok: false, integrity: null, counts: {}, live: {}, newest_message_at: null, files_missing: null, problems: [] };
+  const t = new DatabaseSync(file, { readOnly: true });
+  try {
+    out.integrity = Object.values(t.prepare('PRAGMA integrity_check').get())[0];
+    if (out.integrity !== 'ok') out.problems.push('база повреждена');
+    for (const tb of COUNT_TABLES) {
+      try {
+        out.counts[tb] = t.prepare(`SELECT COUNT(*) AS n FROM ${tb}`).get().n;
+        out.live[tb] = q.get(`SELECT COUNT(*) AS n FROM ${tb}`).n;
+      } catch { out.problems.push(`нет таблицы ${tb}`); }
+    }
+    try { out.newest_message_at = t.prepare('SELECT MAX(created_at) AS t FROM messages').get().t || null; } catch { /* no table */ }
+    // a snapshot that is much smaller than the live data is not a copy of it
+    for (const tb of ['users', 'messages']) if (out.live[tb] > 50 && out.counts[tb] < out.live[tb] * 0.5) out.problems.push(`в копии мало записей: ${tb}`);
+    const dest = process.env.BACKUP_FILES_DIR || path.join(config.backupDir, 'files');
+    try {
+      const have = new Set(fs.readdirSync(dest));
+      out.files_missing = t.prepare('SELECT id FROM files').all().filter((r) => fs.existsSync(path.join(config.filesDir, r.id)) && !have.has(r.id)).length;
+      if (out.files_missing > 0) out.problems.push(`файлов нет в копии: ${out.files_missing}`);
+    } catch { out.files_missing = null; }
+  } catch (e) {
+    out.problems.push(String(e.message).slice(0, 120));
+  } finally { t.close(); }
+  out.ok = out.problems.length === 0;
+  verifyStatus.last = out;
+  return out;
+}
+
+let lastVerifyAlert = 0;
+function autoVerify() {
+  const newest = listBackups()[0];
+  if (!newest) return;
+  try {
+    const r = verifyBackup(newest.name);
+    if (!r.ok && now() - lastVerifyAlert > 12 * 3600_000) {
+      lastVerifyAlert = now();
+      notifyAdmins(`⚠️ Проверка резервной копии не прошла (${newest.name}): ${r.problems.join('; ')}`);
+    }
+  } catch (e) { log('error', 'backup verify failed', { err: e.message }); }
 }
 
 // ------------------------------------------------------------------ monitors
@@ -195,6 +284,7 @@ async function mirrorFiles() {
   let copied = 0;
   let bytes = 0;
   try {
+    if (process.env.BACKUP_FILES_DIR && offsiteMissing()) throw new Error('внешний диск не подключён');
     await fs.promises.mkdir(dest, { recursive: true });
     for (const ent of await fs.promises.readdir(config.filesDir, { withFileTypes: true })) {
       if (!ent.isFile()) continue;
@@ -223,7 +313,7 @@ function autoBackup() {
     if (!newest || now() - newest.created_at > 6 * 3600_000) {
       const b = createBackup('auto');
       log('info', 'auto backup', { name: b.name, size: b.size });
-    }
+    } else mirrorBackup(path.join(config.backupDir, newest.name), newest.name); // nothing new: still bring the second place up to date
   } catch (e) { log('error', 'auto backup failed', { err: e.message }); }
 }
 
@@ -232,4 +322,6 @@ export function startMonitors() {
   setInterval(check, 60_000).unref();
   setTimeout(autoBackup, 30_000).unref();
   setInterval(autoBackup, 3600_000).unref();
+  setTimeout(autoVerify, 5 * 60_000).unref();
+  setInterval(autoVerify, 24 * 3600_000).unref();
 }

@@ -56,7 +56,8 @@ const LABELS = {
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
   'admin.settings': 'изменил настройки сервера', 'admin.invite_create': 'создал приглашение', 'admin.broadcast': 'сделал рассылку',
   'admin.backup_create': 'создал резервную копию', 'admin.backup_restore': 'восстановил из резервной копии', 'admin.backup_delete': 'удалил резервную копию',
-  'admin.backup_download': 'скачал резервную копию',
+  'admin.backup_download': 'скачал резервную копию', 'admin.backup_verify': 'проверил резервную копию',
+  'bridge.chat': 'изменил чат моста (админ)', 'bridge.restore': 'вернул исключённые чаты в мост (админ)',
   'admin.view_file': 'открыл файл (админ)', 'admin.grant': 'выдано право администратора', 'admin.revoke': 'отозвано право администратора',
 };
 const FIELD = { name: 'имя', bio: 'о себе', status: 'статус', username: 'username', privacy_photo: 'приватность фото', privacy_status: 'приватность статуса', privacy_last_seen: 'приватность «был(а)»' };
@@ -271,6 +272,9 @@ function attentionPanels(o) {
   if (diskPct < 15) add('bad', 'disk', `Мало места: свободно ${diskPct}%`, `${fmtBytes(a.disk_free)} из ${fmtBytes(a.disk_total)}`, () => setTab('server'));
   if (!a.last_backup_at) add('bad', 'disk', 'Резервных копий нет', 'Сделайте первую копию', () => setTab('server'));
   else if (Date.now() - a.last_backup_at > 2 * 86400_000) add('warn', 'disk', 'Давно не было резервной копии', ago(a.last_backup_at), () => setTab('server'));
+  if (a.last_backup_at && !a.offsite) add('warn', 'disk', 'Копии лежат на том же диске', 'Если диск выйдет из строя, пропадёт всё. Задайте внешнюю папку или облако', () => setTab('server'));
+  else if (a.offsite_ok === false) add('bad', 'disk', 'Копия не дошла до внешнего хранилища', 'Подробности на вкладке «Сервер»', () => setTab('server'));
+  if (a.backup_verify && !a.backup_verify.ok) add('bad', 'disk', 'Проверка резервной копии не прошла', (a.backup_verify.problems || []).join('; '), () => setTab('server'));
   if (a.failed_logins_24h >= 10) add('warn', 'lock', `Неудачных входов за сутки: ${a.failed_logins_24h}`, 'Возможен подбор пароля', () => { state.preset = { action: 'auth.login_failed' }; setTab('journal'); });
   if (a.banned) add('info', 'block', `Заблокировано аккаунтов: ${a.banned}`, null, () => setTab('users'));
   if (o.registration === 'open') add('info', 'users', 'Регистрация открыта для всех', 'Можно ограничить по приглашениям', () => setTab('access'));
@@ -563,11 +567,35 @@ async function viewJournal() {
 /** Who may link a Telegram account to their messenger; the copies are readable in "Чаты и переписка". */
 function bridgePanel(data) {
   const body = h('tbody');
-  const draw = (users) => clear(body).append(...users.map((u) => h('tr', null,
+  const KIND = { user: 'личный', group: 'группа', channel: 'канал' };
+  const toggleChats = async (u, sub) => {
+    if (!sub.hidden) { sub.hidden = true; return; }
+    sub.hidden = false;
+    const cell = sub.firstChild;
+    const load = async () => {
+      clear(cell).append(h('span', { class: 'muted' }, 'Загрузка…'));
+      const r = await get(`/api/admin/bridge/${u.id}/chats`);
+      const rows = r.chats.map((c) => h('tr', null,
+        h('td', null, c.title || '—'), h('td', null, h('span', { class: 'pill' }, KIND[c.kind] || c.kind)),
+        h('td', null, String(c.messages)), h('td', { class: 'ev-time' }, c.last_at ? fmtDT(c.last_at) : '—'),
+        h('td', null,
+          h('button', { class: 'btn secondary', type: 'button', title: 'Может ли человек отвечать в этом чате из приложения', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { two_way: !c.two_way }); load(); } catch (e) { alert(errMsg(e)); } } }, c.two_way ? 'Отвечает из приложения' : 'Только читает'), ' ',
+          h('button', { class: 'btn danger', type: 'button', title: 'Перестать копировать этот чат (то, что скопировано, останется)', onclick: async () => {
+            if (!confirm(`Перестать копировать «${c.title}»? Уже скопированное останется.`)) return;
+            try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { copy: false }); load(); } catch (e) { alert(errMsg(e)); }
+          } }, 'Не копировать'))));
+      clear(cell).append(
+        r.chats.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Вид', 'Сообщений', 'Последнее', ''].map((x) => h('th', null, x)))), h('tbody', null, rows))) : h('p', { class: 'muted' }, 'Чатов нет.'),
+        r.excluded ? h('p', null, `Снято с копирования личных чатов: ${r.excluded} `, h('button', { class: 'btn secondary', type: 'button', onclick: async () => { try { await send('POST', `/api/admin/bridge/${u.id}/restore`, {}); load(); } catch (e) { alert(errMsg(e)); } } }, 'Вернуть все')) : null);
+    };
+    try { await load(); } catch (e) { clear(cell).append(h('span', { class: 'err' }, errMsg(e))); }
+  };
+  const draw = (users) => clear(body).append(...users.flatMap((u) => { const sub = h('tr', { class: 'br-sub', hidden: true }, h('td', { colSpan: 3 })); const main = h('tr', null,
     h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
     h('td', null, u.linked
       ? [h('span', { class: u.live && !u.live.connected ? 'pill' : 'pill ok' }, u.live && !u.live.connected ? 'нет связи' : 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
-          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются')]
+          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются'), ' ',
+          h('button', { class: 'btn secondary', type: 'button', onclick: () => toggleChats(u, sub) }, 'Чаты')]
       : h('span', { class: 'muted' }, 'не подключён')),
     h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {
       class: `btn ${u.allowed ? 'secondary' : 'danger'}`, type: 'button',
@@ -581,7 +609,7 @@ function bridgePanel(data) {
         if (!confirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`)) return;
         try { await send('DELETE', `/api/admin/bridge/${u.id}`); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
       },
-    }, 'Удалить')] : '']))));
+    }, 'Удалить')] : ''])); return [main, sub]; }));
   draw(data.users);
   return h('div', { class: 'panel' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'),
     h('p', { class: 'muted' }, data.configured
@@ -723,7 +751,7 @@ function mirrorLine(m) {
 }
 
 async function viewServer() {
-  const [sys, bk] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups')]);
+  const [sys, bk, st] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups'), get('/api/admin/storage').catch(() => null)]);
   const n = sys.now;
   const fmtUp = (s) => (s >= 86400 ? `${Math.floor(s / 86400)} д ${Math.floor((s % 86400) / 3600)} ч` : `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`);
   const used = n.disk_total ? Math.round(((n.disk_total - n.disk_free) / n.disk_total) * 100) : 0;
@@ -741,6 +769,10 @@ async function viewServer() {
     h('td', null, fmtBytes(b.size)), h('td', { class: 'ev-time' }, fmtDT(b.created_at)),
     h('td', null,
       h('a', { class: 'btn secondary', href: `/api/admin/backups/${encodeURIComponent(b.name)}` }, 'Скачать'), ' ',
+      h('button', { class: 'btn secondary', type: 'button', title: 'Открыть копию отдельно и проверить: цела ли база, есть ли в ней данные и файлы', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { const v = (await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/verify`, {})).verify; alert(v.ok ? `Копия в порядке.\nПользователей: ${v.counts.users}, чатов: ${v.counts.chats}, сообщений: ${v.counts.messages}, файлов: ${v.counts.files}.${v.files_missing === 0 ? '\nВсе файлы есть во внешней копии.' : ''}` : `Проблемы:\n${v.problems.join('\n')}`); viewServer().then(applyDynamicStyles); } catch (err) { alert(errMsg(err)); }
+      } }, 'Проверить'), ' ',
       h('button', { class: 'btn secondary', type: 'button', onclick: async () => {
         if (!confirm(`Восстановить базу из «${b.name}»? Сервер перезапустится, изменения после этой копии будут потеряны (перед этим создаётся ещё одна копия).`)) return;
         try { await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/restore`, { confirm: true }); alert('Перезапуск… обновите страницу через несколько секунд.'); } catch (e) { alert(errMsg(e)); }
@@ -769,12 +801,30 @@ async function viewServer() {
     ['Копия файлов пользователей', fm ? mark(!fm.error, false) : mark(false, true), fm ? (fm.error ? fm.error : `проверка ${ago(Date.now() - fm.at)}, добавлено: ${fm.copied} (${fmtBytes(fm.bytes)})`) : 'ещё не запускалась (первый запуск через минуту после старта)'],
     ['Место на диске', mark(used < 85, used < 93), `свободно ${fmtBytes(n.disk_free)} из ${fmtBytes(n.disk_total)}`],
     ['Звонки (TURN)', mark(!!(n.turn && n.turn.configured), false), n.turn && n.turn.configured ? 'подключён' : 'не настроен: видеозвонки через мобильные сети могут не соединяться'],
+    ['Копия на другом диске', bk.mirror.configured ? mark(!bk.mirror.last || ((bk.mirror.last.dir || 'ok') === 'ok' && (bk.mirror.last.webdav || 'ok') === 'ok'), false) : mark(false, true), bk.mirror.configured ? mirrorLine(bk.mirror) : 'не настроена: копии лежат на том же диске, что и данные'],
+    ['Проверка копии', bk.verify ? mark(bk.verify.ok, false) : mark(false, true), bk.verify ? `${bk.verify.name}, ${ago(Date.now() - bk.verify.at)}${bk.verify.ok ? ': цела' : `: ${bk.verify.problems.join('; ')}`}` : 'ещё не делалась (автоматически раз в сутки)'],
     ['Работа без перезапуска', mark(true, false), fmtUp(n.uptime)],
   ];
   const healthPanel = h('div', { class: 'panel' }, h('h2', null, icon('shield', 18), 'Состояние сервера'),
     h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('tbody', null,
       ...healthRows.map(([name, pill, text]) => h('tr', null, h('td', null, name), h('td', null, pill), h('td', { class: 'muted' }, text)))))));
-  setView(healthPanel, kpis, turnPanel,
+  const storagePanel = st ? h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Куда уходит место'),
+    h('p', { class: 'muted' }, `Файлов: ${st.total.files}, ${fmtBytes(st.total.bytes)}${st.bridge.files ? `; из них из Телеграма: ${st.bridge.files} (${fmtBytes(st.bridge.bytes)})` : ''}. Только размеры, содержимое не открывается.`),
+    h('div', { class: 'grid2' },
+      h('div', null, h('h3', null, 'По видам'),
+        ...[['image', 'Фото'], ['video', 'Видео'], ['audio', 'Голос и аудио'], ['file', 'Файлы']].map(([k, label]) => {
+          const x = st.kinds[k] || { files: 0, bytes: 0 };
+          return h('div', { class: 'mtr wide' }, h('span', null, `${label} · ${x.files}`), h('i', null, h('u', { dataset: { w: String(st.total.bytes ? Math.max(x.bytes ? 2 : 0, Math.round((x.bytes / st.total.bytes) * 100)) : 0) } })), h('b', null, fmtBytes(x.bytes)));
+        })),
+      h('div', null, h('h3', null, 'По людям'),
+        ...st.users.slice(0, 8).map((u) => {
+          const top = st.users[0].bytes || 1;
+          return h('div', { class: 'mtr wide' }, h('span', { class: 'ellipsis' }, `${u.name} · ${u.messages} сообщ.`), h('i', null, h('u', { dataset: { w: String(Math.max(u.bytes ? 2 : 0, Math.round((u.bytes / top) * 100))) } })), h('b', null, `${fmtBytes(u.bytes)}${u.quota ? ` / ${fmtBytes(u.quota)}` : ''}`));
+        }))),
+    h('h3', null, 'Самые тяжёлые чаты'),
+    h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Сообщений', 'Файлов', 'Размер'].map((x) => h('th', null, x)))),
+      h('tbody', null, ...st.chats.map((c) => h('tr', null, h('td', null, c.title || `чат ${c.id}`, c.bridge ? [' ', h('span', { class: 'pill' }, 'Телеграм')] : ''), h('td', null, String(c.messages)), h('td', null, String(c.files)), h('td', null, fmtBytes(c.bytes)))))))) : null;
+  setView(healthPanel, kpis, turnPanel, storagePanel,
     h('div', { class: 'grid2' },
       h('div', { class: 'panel' }, h('h2', null, 'Процессор, % (последние сутки)'), spark(S.map((x) => x.cpu), { max: 100, unit: '%' })),
       h('div', { class: 'panel' }, h('h2', null, 'Память, %'), spark(S.map((x) => x.mem), { max: 100, unit: '%', color: '#3b82f6' }))),
@@ -782,7 +832,7 @@ async function viewServer() {
       h('div', { class: 'panel' }, h('h2', null, 'Запросов в минуту'), spark(S.map((x) => x.req), { color: '#22c55e' })),
       h('div', { class: 'panel' }, h('h2', null, 'Подключений в реальном времени'), spark(S.map((x) => x.ws), { color: '#a855f7' }))),
     h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Резервные копии базы'),
-      h('p', { class: 'muted' }, 'Копия базы (пользователи, чаты, сообщения) делается автоматически каждые 6 часов и хранится в папке backups на NAS; последние 40 сохраняются. Загруженные файлы копируются в backups/files: копируются только новые, ничего не удаляется.'),
+      h('p', { class: 'muted' }, 'Копия базы (пользователи, чаты, сообщения) делается автоматически каждые 6 часов. Хранятся: десять последних, по одной на каждый из последних 14 дней, 8 недель и 12 месяцев, а сделанные вручную — 90 дней. Загруженные файлы копируются отдельно: копируются только новые, ничего не удаляется. Раз в сутки свежая копия сама проверяется.'),
       h('div', { class: 'toolbar' }, make),
       h('p', { class: 'muted' }, mirrorLine(bk.mirror)),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },

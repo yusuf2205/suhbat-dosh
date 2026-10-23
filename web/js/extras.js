@@ -3,7 +3,7 @@ import { h, clear, debounce } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S, chatTitle, fire, savePrefs } from './state.js';
 import { api } from './net.js';
-import { avatar, confirmDialog, fmtDay, fmtTime, modal, popMenu, previewText, toast } from './ui.js';
+import { avatar, confirmDialog, fmtDay, fmtTime, matchLine, modal, popMenu, previewText, toast } from './ui.js';
 import { getLang } from './i18n.js';
 import { icon } from './icons.js';
 
@@ -98,8 +98,11 @@ export function openFolders() {
     clear(box);
     const list = S.folders || [];
     box.append(
-      ...(list.length ? list.map((f) => h('div', { class: 'list-item' },
-        h('span', { class: 'grow' }, h('b', null, `${f.emoji ? `${f.emoji} ` : ''}${f.name}`), h('span', { class: 'muted' }, ` · ${f.chat_ids.length}`)),
+      ...(list.length ? list.map((f, i) => h('div', { class: 'list-item' },
+        h('span', { class: 'folder-move' },
+          h('button', { class: 'icon-btn sm', type: 'button', disabled: i === 0, 'aria-label': t('folders.up'), onclick: () => moveFolder(i, -1) }, '↑'),
+          h('button', { class: 'icon-btn sm', type: 'button', disabled: i === list.length - 1, 'aria-label': t('folders.down'), onclick: () => moveFolder(i, 1) }, '↓')),
+        h('span', { class: 'grow' }, h('b', null, `${f.emoji ? `${f.emoji} ` : ''}${f.name}`), h('span', { class: 'muted' }, ` · ${f.chat_ids.length}${f.rules?.include?.length ? ` + ${t('folders.auto')}` : ''}`)),
         h('button', { class: 'btn secondary', type: 'button', onclick: () => edit(f) }, t('bots.edit')),
         h('button', { class: 'btn link', type: 'button', onclick: async () => {
           if (!(await confirmDialog(t('folders.delete_confirm'), { okLabel: t('common.delete'), danger: true }))) return;
@@ -108,8 +111,22 @@ export function openFolders() {
         : [h('p', { class: 'muted' }, t('folders.none'))]),
       h('button', { class: 'btn', type: 'button', onclick: () => edit(null) }, `+ ${t('folders.new')}`));
   };
+  const moveFolder = async (i, d) => {
+    const ids = (S.folders || []).map((f) => f.id);
+    [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
+    try { setFolders((await api('PUT', '/api/folders/order', { ids })).folders); draw(); } catch (e) { toast(errText(e.code)); }
+  };
   const edit = (f) => {
     const name = h('input', { class: 'input', value: f?.name || '', maxLength: 24, placeholder: t('folders.name'), 'aria-label': t('folders.name') });
+    const rules = { include: new Set(f?.rules?.include || []), exclude: new Set(f?.rules?.exclude || []) };
+    const ruleBox = (side, key) => {
+      const cb = h('input', { type: 'checkbox', checked: rules[side].has(key), onchange: () => (cb.checked ? rules[side].add(key) : rules[side].delete(key)) });
+      return h('label', { class: 'row rule' }, cb, h('span', null, t(`folders.${side === 'include' ? 'in' : 'out'}.${key}`)));
+    };
+    const ruleBlock = h('div', { class: 'folder-rules' },
+      h('p', { class: 'muted' }, t('folders.rules_hint')),
+      h('b', null, t('folders.include')), ...['direct', 'groups', 'channels', 'bots', 'telegram'].map((k) => ruleBox('include', k)),
+      h('b', null, t('folders.exclude')), ...['muted', 'read', 'archived'].map((k) => ruleBox('exclude', k)));
     const emoji = h('input', { class: 'input', value: f?.emoji || '', maxLength: 4, placeholder: '📁', 'aria-label': 'emoji' });
     const chosen = new Set(f?.chat_ids || []);
     const chats = [...S.chats.values()].filter((c) => !c.saved).sort((a, b) => chatTitle(a).localeCompare(chatTitle(b)));
@@ -119,11 +136,11 @@ export function openFolders() {
     });
     const err = h('div', { class: 'err', role: 'alert' });
     clear(box).append(
-      h('div', { class: 'row' }, emoji, name), h('div', { class: 'folder-chats' }, boxes), err,
+      h('div', { class: 'row' }, emoji, name), ruleBlock, h('b', null, t('folders.pick')), h('div', { class: 'folder-chats' }, boxes), err,
       h('div', { class: 'row' },
         h('button', { class: 'btn', type: 'button', onclick: async () => {
           try {
-            const body = { name: name.value.trim(), emoji: emoji.value.trim(), chat_ids: [...chosen] };
+            const body = { name: name.value.trim(), emoji: emoji.value.trim(), chat_ids: [...chosen], rules: { include: [...rules.include], exclude: [...rules.exclude] } };
             const r = f ? await api('PATCH', `/api/folders/${f.id}`, body) : await api('POST', '/api/folders', body);
             setFolders(r.folders);
             draw();
@@ -143,12 +160,13 @@ export function localInput(ts) {
 }
 
 /** Quick presets + a date/time picker. onPick(timestamp). */
-export function pickTime(anchor, onPick) {
+export function pickTime(anchor, onPick, { online = false } = {}) {
   const now = Date.now();
   const tomorrow9 = new Date();
   tomorrow9.setDate(tomorrow9.getDate() + 1);
   tomorrow9.setHours(9, 0, 0, 0);
   popMenu(anchor, [
+    ...(online ? [{ label: t('when.online'), onClick: () => onPick(now + 5_000, { when_online: true }) }] : []),
     { label: t('when.20m'), onClick: () => onPick(now + 20 * 60_000) },
     { label: t('when.1h'), onClick: () => onPick(now + 3600_000) },
     { label: t('when.3h'), onClick: () => onPick(now + 3 * 3600_000) },
@@ -171,9 +189,9 @@ export function whenLabel(ts) {
   return `${fmtDay(ts)}, ${fmtTime(ts)}${d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : ''}`;
 }
 
-export async function scheduleText(chatId, text, replyTo, ts) {
-  await api('POST', `/api/chats/${chatId}/schedule`, { text, send_at: ts, ...(replyTo ? { reply_to: replyTo } : {}) });
-  toast(`${t('when.scheduled')} ${whenLabel(ts)}`);
+export async function scheduleText(chatId, text, replyTo, ts, flags = {}) {
+  await api('POST', `/api/chats/${chatId}/schedule`, { text, send_at: ts, ...(replyTo ? { reply_to: replyTo } : {}), ...(flags.silent ? { silent: true } : {}), ...(flags.when_online ? { when_online: true } : {}) });
+  toast(flags.when_online ? t('when.scheduled_online') : `${t('when.scheduled')} ${whenLabel(ts)}${flags.silent ? ` \u00b7 ${t('sched.silent')}` : ''}`);
 }
 
 export async function remind(text, chatId, ts) {
@@ -181,18 +199,42 @@ export async function remind(text, chatId, ts) {
   toast(`${t('when.reminder_set')} ${whenLabel(ts)}`);
 }
 
-export async function openScheduled() {
+/** The list of messages and reminders waiting to be sent; `chatId` shows only one chat's. A row opens for editing. */
+export async function openScheduled(chatId = null) {
   const box = h('div');
   const m = modal({ title: t('sched.title'), body: [box] });
-  const draw = (list) => {
+  let only = chatId;
+  const draw = (all) => {
+    const list = only ? all.filter((s) => s.chat_id === only) : all;
     clear(box).append(...(list.length ? list.map((s) => {
       const c = s.chat_id ? S.chats.get(s.chat_id) : null;
       return h('div', { class: 'list-item sched-item' },
-        h('span', { class: 'grow' },
-          h('b', { class: 'ellipsis', style: { display: 'block' } }, `${s.kind === 'reminder' ? '⏰ ' : ''}${s.text}`),
-          h('span', { class: 'muted' }, `${whenLabel(s.send_at)}${c ? ` · ${chatTitle(c)}` : ''}`)),
+        h('button', { class: 'sched-main grow', type: 'button', onclick: () => edit(s, all) },
+          h('b', { class: 'ellipsis', style: { display: 'block' } }, `${s.kind === 'reminder' ? '\u23f0 ' : ''}${s.text}`),
+          h('span', { class: 'muted' }, `${s.when_online ? t('when.online') : whenLabel(s.send_at)}${c ? ` \u00b7 ${chatTitle(c)}` : ''}${s.silent ? ` \u00b7 \u{1f515} ${t('sched.silent')}` : ''}`)),
         h('button', { class: 'btn link', type: 'button', onclick: async () => { draw((await api('DELETE', `/api/scheduled/${s.id}`)).scheduled); } }, t('chat.cancel')));
-    }) : [h('p', { class: 'muted' }, t('sched.none'))]));
+    }) : [h('p', { class: 'muted' }, t('sched.none'))]), only && list.length < all.length ? h('button', { class: 'btn link', type: 'button', onclick: () => { only = null; draw(all); } }, t('sched.all', { n: all.length })) : null);
+  };
+  const edit = (s, all) => {
+    const text = h('textarea', { class: 'input', rows: 4, maxLength: 4000, 'aria-label': t('sched.text') }, s.text);
+    const when = h('input', { class: 'input', type: 'datetime-local', value: localInput(s.send_at), min: localInput(Date.now() + 60_000), 'aria-label': t('sched.time') });
+    const silent = h('input', { type: 'checkbox', id: 'sc-silent', checked: !!s.silent });
+    const online = h('input', { type: 'checkbox', id: 'sc-online', checked: !!s.when_online });
+    const direct = s.kind === 'message' && S.chats.get(s.chat_id)?.type === 'direct';
+    const err = h('div', { class: 'err', role: 'alert' });
+    clear(box).append(text, when,
+      s.kind === 'message' ? h('label', { class: 'row', for: 'sc-silent' }, silent, h('span', null, t('sched.silent'))) : null,
+      direct ? h('label', { class: 'row', for: 'sc-online' }, online, h('span', null, t('when.online'))) : null, err,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', type: 'button', onclick: async () => {
+          const ts = new Date(when.value).getTime();
+          if (!Number.isFinite(ts) || ts < Date.now() + 5000) { err.textContent = t('when.past'); return; }
+          try {
+            const r = await api('PATCH', `/api/scheduled/${s.id}`, { text: text.value.trim(), send_at: ts, ...(s.kind === 'message' ? { silent: silent.checked, when_online: online.checked } : {}) });
+            draw(r.scheduled);
+          } catch (e) { err.textContent = errText(e.code); }
+        } }, t('settings.save')),
+        h('button', { class: 'btn secondary', type: 'button', onclick: () => draw(all) }, t('chat.cancel'))));
   };
   try { draw((await api('GET', '/api/scheduled')).scheduled); } catch (e) { toast(errText(e.code)); m.close(); }
 }
@@ -372,14 +414,25 @@ export function openGlobalSearch() {
           h('span', { class: 'ci-last' }, previewText(x.message))))) : [h('p', { class: 'muted' }, t('list.nothing'))]));
         return;
       }
-      const r = await api('GET', `/api/search/global?${params}`);
-      clear(out).append(...(r.results.length ? r.results.map((x) => h('button', {
-        class: 'ci', type: 'button',
-        onclick: () => { m.close(); fire('open-chat', x.message.chat_id); setTimeout(() => fire('jump', { chatId: x.message.chat_id, msgId: x.message.id }), 80); },
-      }, h('span', { class: 'ci-main' },
-        h('span', { class: 'ci-top' }, h('span', { class: 'ci-title ellipsis' }, `${x.chat_title}${x.sender_name && x.chat_type !== 'direct' ? ` · ${x.sender_name}` : ''}`),
-          h('span', { class: 'ci-time' }, `${fmtDay(x.message.created_at)} ${fmtTime(x.message.created_at)}`)),
-        h('span', { class: 'ci-last ellipsis' }, previewText(x.message))))) : [h('p', { class: 'muted' }, t('list.nothing'))]));
+      const draw = (r, append) => {
+        if (!append) clear(out);
+        out.querySelector('.more')?.remove();
+        if (!r.results.length && !append) { out.append(h('p', { class: 'muted' }, t('list.nothing'))); return; }
+        out.append(...r.results.map((x) => h('button', {
+          class: 'ci', type: 'button',
+          onclick: () => { m.close(); fire('open-chat', x.message.chat_id); setTimeout(() => fire('jump', { chatId: x.message.chat_id, msgId: x.message.id }), 80); },
+        }, h('span', { class: 'ci-main' },
+          h('span', { class: 'ci-top' }, h('span', { class: 'ci-title ellipsis' }, `${x.chat_title}${x.sender_name && x.chat_type !== 'direct' ? ` \u00b7 ${x.sender_name}` : ''}`),
+            h('span', { class: 'ci-time' }, `${fmtDay(x.message.created_at)} ${fmtTime(x.message.created_at)}`)),
+          h('span', { class: 'ci-last ellipsis' }, matchLine(x.message, term))))));
+        if (r.more) {
+          const last = r.results.at(-1).message.id;
+          out.append(h('button', { class: 'btn secondary more', type: 'button', onclick: async () => {
+            try { draw(await api('GET', `/api/search/global?${params}&before=${last}`), true); } catch (e) { toast(errText(e.code)); }
+          } }, t('search.more')));
+        }
+      };
+      draw(await api('GET', `/api/search/global?${params}`), false);
     } catch (e) { clear(out).append(h('p', { class: 'err' }, errText(e.code))); }
   }, 350);
   for (const el of [q, from, type, where, since, until]) el.addEventListener(el === q ? 'input' : 'change', run);

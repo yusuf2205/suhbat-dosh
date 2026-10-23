@@ -103,3 +103,7 @@
 .abub-edits { font-size: .8rem; color: var(--muted); }
 .abub-edits summary { cursor: pointer; }
 @media (max-width: 700px) { .abub { max-width: 90%; } }
+
+.mtr.wide { grid-template-columns: 150px 1fr 120px; }
+.mtr.wide b { text-align: right; font-size: .82rem; white-space: nowrap; }
+.br-sub > td { background: var(--surface-2); padding: 10px 14px; }

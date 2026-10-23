@@ -1,6 +1,6 @@
 {
   "name": "suhbat-mobile",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "private": true,
   "description": "Suhbat-dosh Android/iOS shell (Capacitor)",
   "scripts": {

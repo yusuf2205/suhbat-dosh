@@ -19,6 +19,7 @@ services:
       - ./data:/data          # SQLite database + uploaded files (the only state)
       - ./backups:/backups    # output of `npm run backup`
       - ./downloads:/downloads:ro   # installers offered on /download
+      - ${BACKUP_OFFSITE:-./backups-offsite}:/offsite   # a second disk for the copies (see BACKUP_MIRROR_DIR in .env.example)
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

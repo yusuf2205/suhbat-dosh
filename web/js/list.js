@@ -3,7 +3,7 @@ import { h, clear, debounce, hscroll } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S, chatTitle, fire, isMuted, on } from './state.js';
 import { api, outbox } from './net.js';
-import { avatar, callLabel, confirmDialog, fmtListTime, popMenu, previewText, toast } from './ui.js';
+import { avatar, callLabel, confirmDialog, fmtListTime, matchLine, popMenu, previewText, toast } from './ui.js';
 import { startCall } from './call.js';
 import { icon } from './icons.js';
 import { openInfo, openNewChat, openNewGroup, openSettings } from './dialogs.js';
@@ -178,9 +178,26 @@ function drawTabs() {
   tabsEl.dataset.sel = '';
 }
 
-function passesFilter(c) {
-  if (S.filter.startsWith('f:')) return !!S.folders?.find((x) => `f:${x.id}` === S.filter)?.chat_ids.includes(c.id);
-  switch (S.filter) {
+const RULE_TEST = {
+  direct: (c) => c.type === 'direct' && !c.saved && !c.peer?.is_bot,
+  groups: (c) => c.type === 'group',
+  channels: (c) => c.type === 'channel',
+  bots: (c) => c.type === 'direct' && !!c.peer?.is_bot,
+  telegram: (c) => !!c.imported,
+};
+const RULE_SKIP = { muted: (c) => isMuted(c), read: (c) => c.unread <= 0, archived: (c) => !!c.archived };
+
+/** A folder holds the chats picked by hand, and the chats that fit its rules (unless the rules leave them out). */
+export function inFolder(f, c) {
+  if (f.chat_ids.includes(c.id)) return true;
+  const r = f.rules;
+  if (!r?.include?.length) return false;
+  return r.include.some((k) => RULE_TEST[k]?.(c)) && !(r.exclude || []).some((k) => RULE_SKIP[k]?.(c));
+}
+
+function passesFilter(c, filter = S.filter) {
+  if (filter.startsWith('f:')) { const f = S.folders?.find((x) => `f:${x.id}` === filter); return !!f && inFolder(f, c); }
+  switch (filter) {
     case 'unread': return c.unread > 0;
     case 'inbox': return inInbox(c);
     case 'direct': return c.type === 'direct';
@@ -300,6 +317,11 @@ export function render() {
   tabsEl.querySelectorAll('.tab').forEach((b) => {
     const on = b.dataset.f === S.filter;
     b.setAttribute('aria-selected', String(on));
+    // chats with something new in this folder (not muted, not archived), shown on the tabs you are not looking at
+    let badge = b.querySelector('.tab-n');
+    const n = on || b.dataset.f === 'all' ? 0 : [...S.chats.values()].filter((c) => !c.archived && !isMuted(c) && c.unread > 0 && passesFilter(c, b.dataset.f)).length;
+    if (n && !badge) b.append(badge = h('span', { class: 'tab-n' }));
+    if (badge) { badge.textContent = n > 99 ? '99+' : String(n); badge.hidden = !n; }
     if (on && tabsEl.dataset.sel !== S.filter) {
       tabsEl.dataset.sel = S.filter;
       b.scrollIntoView({ inline: 'nearest', block: 'nearest' });
@@ -343,7 +365,7 @@ export function render() {
   }
 
   const wantArchived = view === 'archive';
-  const chats = [...S.chats.values()].filter((c) => !c.saved && !!c.archived === wantArchived).filter(passesFilter)
+  const chats = [...S.chats.values()].filter((c) => !c.saved && !!c.archived === wantArchived).filter((c) => passesFilter(c))
     .filter((c) => !q || chatTitle(c).toLowerCase().includes(q))
     .sort((a, b) => ((b.pinned_at ? 1 : 0) - (a.pinned_at ? 1 : 0))
       || ((b.pinned_at || 0) - (a.pinned_at || 0))
@@ -363,7 +385,7 @@ export function render() {
         const c = S.chats.get(m.chat_id);
         if (!c) continue;
         listEl.append(h('button', { class: 'ci', type: 'button', role: 'listitem', onclick: () => fire('jump', { chatId: c.id, msgId: m.id }) },
-          avatar(entityOf(c)), h('span', { class: 'ci-main' }, h('span', { class: 'ci-title ellipsis' }, chatTitle(c)), h('span', { class: 'ci-last ellipsis' }, previewText(m)))));
+          avatar(entityOf(c)), h('span', { class: 'ci-main' }, h('span', { class: 'ci-title ellipsis' }, chatTitle(c)), h('span', { class: 'ci-last ellipsis' }, matchLine(m, S.query)))));
       }
     }
     if (!chats.length && !remote.users.length && !remote.messages.length && !remote.loading) listEl.append(h('div', { class: 'empty' }, t('list.nothing')));

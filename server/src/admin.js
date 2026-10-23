@@ -15,7 +15,7 @@ import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
 import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
 import { embedderReady } from './semantic.js';
-import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot } from './ops.js';
+import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
 export const admin = express.Router();
@@ -66,6 +66,8 @@ admin.get('/overview', (_req, res) => {
         failed_logins_24h: q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'auth.login_failed' AND ts > ?", day).n,
         disk_free: sys.disk_free, disk_total: sys.disk_total, db_bytes: sys.db_bytes,
         last_backup_at: last ? last.created_at : null,
+        offsite: mirrorConfig().configured, offsite_ok: mirrorConfig().configured && mirrorStatus.last ? (!mirrorStatus.last.dir || mirrorStatus.last.dir === 'ok') && (!mirrorStatus.last.webdav || mirrorStatus.last.webdav === 'ok') : null,
+        backup_verify: verifyStatus.last ? { ok: verifyStatus.last.ok, at: verifyStatus.last.at, problems: verifyStatus.last.problems } : null,
         uptime: sys.uptime, cpu: sys.cpu, mem: sys.mem,
         services: {
           calls: !!sys.turn?.configured, speech: transcriberReady(), translate: translatorReady(), search: embedderReady(),
@@ -385,7 +387,36 @@ admin.post('/broadcast', (req, res) => {
 // ------------------------------------------------------------------ server health & backups
 admin.get('/system', (_req, res) => res.json(systemSnapshot()));
 
-admin.get('/backups', (_req, res) => res.json({ backups: listBackups(), mirror: { ...mirrorConfig(), last: mirrorStatus.last }, files_mirror: filesMirror.last }));
+admin.get('/backups', (_req, res) => res.json({ backups: listBackups(), mirror: { ...mirrorConfig(), last: mirrorStatus.last }, files_mirror: filesMirror.last, verify: verifyStatus.last }));
+
+admin.post('/backups/:name/verify', (req, res) => {
+  const r = verifyBackup(req.params.name);
+  audit(req.user.id, 'admin.backup_verify', { ip: req.ip, details: { name: r.name, ok: r.ok } });
+  res.json({ verify: r });
+});
+
+// Where the disk goes: by person, by kind of file, by chat. Counts and sizes only, no content.
+admin.get('/storage', (_req, res) => {
+  const kindOf = (mime) => (mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file');
+  const kinds = {};
+  for (const r of q.all('SELECT mime, COUNT(*) n, COALESCE(SUM(size),0) b FROM files GROUP BY mime')) {
+    const k = kindOf(r.mime || '');
+    kinds[k] ||= { files: 0, bytes: 0 };
+    kinds[k].files += r.n; kinds[k].bytes += r.b;
+  }
+  const users = q.all(
+    `SELECT u.id, u.name, u.username, COUNT(f.id) files, COALESCE(SUM(f.size),0) bytes,
+            (SELECT COUNT(*) FROM messages m WHERE m.sender_id = u.id) messages
+     FROM users u LEFT JOIN files f ON f.owner_id = u.id AND f.chat_id IS NOT NULL
+     GROUP BY u.id HAVING bytes > 0 OR messages > 0 ORDER BY bytes DESC, messages DESC LIMIT 12`).map((r) => ({ ...r, quota: quotaFor(getUser(r.id)) }));
+  const chats = q.all(
+    `SELECT c.id, c.type, c.title, c.imported_from, COUNT(f.id) files, COALESCE(SUM(f.size),0) bytes,
+            (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) messages
+     FROM chats c LEFT JOIN files f ON f.chat_id = c.id GROUP BY c.id ORDER BY bytes DESC, messages DESC LIMIT 10`)
+    .map((r) => ({ id: r.id, type: r.type, title: r.title || '', bridge: r.imported_from === 'tgbridge', files: r.files, bytes: r.bytes, messages: r.messages }));
+  const bridge = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f JOIN chats c ON c.id = f.chat_id WHERE c.imported_from = 'tgbridge'`);
+  res.json({ kinds, users, chats, bridge, total: q.get('SELECT COUNT(*) files, COALESCE(SUM(size),0) bytes FROM files') });
+});
 
 admin.post('/backups', (req, res) => {
   const b = createBackup('manual');
