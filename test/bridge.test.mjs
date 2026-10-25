@@ -254,3 +254,41 @@ test('disconnect: the bridge forgets the account, the mirrored chats can be remo
   assert.deepEqual(fs.readdirSync(bdir).filter((f) => f.includes(`-${admin.user.id}.`)), [], 'no session or list is left');
   assert.equal((await mock(admin.user.id, { chat: 777, kind: 'user', msg: 90, text: 'после отключения' })).forwarded, false);
 });
+
+test('the chat takes the other side\'s name, @username, phone and profile photo from Telegram', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002050', 'Профиль');
+  await link(u);
+  assert.equal((await mock(u.user.id, { chat: 4242, kind: 'user', title: 'Старое имя', msg: 1, author: 'Старое имя', text: 'Привет' })).forwarded, true);
+  const find = async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.imported === 'tgbridge' && c.title.includes('Старое') || c.title === '✈ Новое имя');
+  assert.ok(await until(find), 'the chat was created');
+  const tgPost = (url, body, headers = {}) => fetch(`${BASE}${url}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, ...headers }, body });
+  const profile = (extra) => tgPost('/api/bridge/in', JSON.stringify({ owner: u.user.id, tg_chat: '4242', kind: 'user', profile: true, title: 'Новое имя', username: '@dilshod', phone: '+998 90 123-45-67', photo_id: '', ...extra }), { 'content-type': 'application/json' }).then((r) => r.json());
+  assert.equal((await profile({})).changed, true);
+  let chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Новое имя');
+  assert.ok(chat, 'the name followed');
+  assert.deepEqual(chat.tg, { username: 'dilshod', phone: '998901234567' });
+  assert.equal(chat.avatar, null);
+  assert.equal((await profile({})).changed, false, 'nothing new, nothing changed');
+
+  // the photo: a 1x1 PNG
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const up = await tgPost(`/api/bridge/photo?owner=${u.user.id}&tg_chat=4242&photo_id=777`, png, { 'content-type': 'application/octet-stream' });
+  assert.equal(up.status, 200);
+  chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Новое имя');
+  assert.match(chat.avatar, /^\/api\/files\//);
+  const img = await fetch(BASE + chat.avatar, { headers: { cookie: u.cookie } });
+  assert.equal(img.status, 200);
+  assert.match(img.headers.get('content-type'), /image\/png/);
+  const other = await phoneUser('+998900002051', 'Чужой');
+  assert.equal((await fetch(BASE + chat.avatar, { headers: { cookie: other.cookie } })).status, 404, 'only the members see it');
+  assert.equal((await tgPost(`/api/bridge/photo?owner=${u.user.id}&tg_chat=4242&photo_id=778`, Buffer.from('not an image'), { 'content-type': 'application/octet-stream' })).status, 415);
+
+  // a rule push tells the bridge which photo the server holds, so it is not sent again after every restart
+  assert.equal((await call(u.cookie, 'GET', '/api/bridge')).status, 200);
+
+  // the photo was removed in Telegram
+  assert.equal((await profile({ photo_id: '' })).changed, true);
+  chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Новое имя');
+  assert.equal(chat.avatar, null);
+  assert.equal((await tgPost(`/api/bridge/in`, JSON.stringify({ owner: u.user.id, tg_chat: '999999', profile: true, title: 'x' }), { 'content-type': 'application/json' }).then((r) => r.json())).skipped, true, 'an unknown chat is ignored');
+});

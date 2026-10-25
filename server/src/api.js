@@ -1670,6 +1670,8 @@ export function canAccessFile(userId, fid) {
   if (q.get('SELECT 1 AS x FROM stickers WHERE file_id = ? AND user_id = ?', fid, userId)) return true;
   if (q.get('SELECT 1 AS x FROM sticker_set_items WHERE file_id = ?', fid)) return true; // pictures of sticker and emoji sets are for everybody
   if (q.get('SELECT 1 AS x FROM drive_items WHERE file_id = ? AND user_id = ?', fid, userId)) return true; // kept in the person's own drive
+  // the picture of a mirrored chat is for the members of that chat
+  if (q.get('SELECT 1 AS x FROM chats c JOIN members mb ON mb.chat_id = c.id AND mb.user_id = ? AND mb.banned = 0 WHERE c.avatar_file = ?', userId, fid)) return true;
   // a message may limit how long its recipients can open the file (its sender keeps access)
   return !!q.get(
     `SELECT 1 AS x FROM messages m JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0

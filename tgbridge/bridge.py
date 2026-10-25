@@ -151,6 +151,7 @@ class Acct:
         self.backfill = {"state": "idle", "done": 0, "total": 0}
         self.bf_task = None
         self.last_sync = 0.0
+        self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.synced = False        # the first complete copy of the personal chats has finished
 
     @property
@@ -291,6 +292,40 @@ async def upload_media(a: Acct, msg, kind: str, meta: dict) -> bool:
     return await post_media(a, kind, data, {**meta, "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""})
 
 
+PROFILE_EVERY = 6 * 3600
+
+
+async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False):
+    """The name, @username, phone and profile photo of the other side of a chat, so the copy looks like the contact in Telegram.
+    Sent at most every few hours per chat; the photo only when Telegram's photo id differs from the one the server already holds."""
+    if MOCK or entity is None or not a.me:
+        return False
+    if not force and time.time() - a.prof_at.get(key, 0) < PROFILE_EVERY:
+        return False
+    a.prof_at[key] = time.time()
+    try:
+        photo = getattr(entity, "photo", None)
+        photo_id = str(getattr(photo, "photo_id", "") or "")
+        await to_server({
+            "owner": a.uid, "tg_chat": key, "kind": kind, "profile": True, "title": display_name(entity) or "",
+            "username": getattr(entity, "username", "") or "", "phone": getattr(entity, "phone", "") or "", "photo_id": photo_id,
+        })
+        if photo_id and a.chats.get(key, {}).get("photo") != photo_id:
+            data = await a.client.download_profile_photo(entity, file=bytes)
+            if data:
+                params = {"owner": a.uid, "tg_chat": key, "photo_id": photo_id}
+                async with _http().post(f"{SERVER}/api/bridge/photo", params=params, data=data, timeout=ClientTimeout(total=60),
+                                        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"}) as r:
+                    if r.status < 300 and key in a.chats:
+                        a.chats[key]["photo"] = photo_id
+        return True
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log("profile sync skipped:", type(e).__name__)
+        return False
+
+
 async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
     if not data:
         return False
@@ -379,6 +414,8 @@ def attach_handlers(a: Acct):
                 chat = await event.get_chat()
             sender = await event.get_sender()
             mk = media_kind(event.message)
+            if time.time() - a.prof_at.get(key, 0) >= PROFILE_EVERY:
+                asyncio.create_task(delayed_profile(a, event, key, kind))   # after the message: the server creates the chat from it
             async with chat_lock(a.uid, key):
               if mk and await upload_media(a, event.message, mk, {
                 "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
@@ -394,6 +431,14 @@ def attach_handlers(a: Acct):
               }, locked=True)
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
+
+
+async def delayed_profile(a: Acct, event, key: str, kind: str):
+    await asyncio.sleep(3)
+    try:
+        await sync_profile(a, await event.get_chat(), key, kind)
+    except Exception as e:
+        log("profile sync skipped:", type(e).__name__)
 
 
 def reply_id(msg):
@@ -419,6 +464,7 @@ async def copy_dialog(a: Acct, d, limit=None):
             "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
             "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
         })
+    await sync_profile(a, d.entity, str(d.id), "user")
 
 
 async def run_backfill(a: Acct):
@@ -475,6 +521,11 @@ async def sync_recent(a: Acct):
     async with HEAVY:
         recent = time.time() - RECENT_DAYS * 86400
         async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+            key = str(d.id)
+            if (d.is_user and private_ok(d.id, d.entity)) or key in a.chats:
+                # the name, @username, phone and photo of every copied chat, however quiet it is (a few hours apart per chat)
+                if await sync_profile(a, d.entity, key, "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"):
+                    await asyncio.sleep(0.3)
             if not (d.is_user and private_ok(d.id, d.entity)):
                 continue
             if not (d.unread_count or (d.date and d.date.timestamp() > recent)):
@@ -672,7 +723,7 @@ async def set_chats(r):
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
     a.auto_private = bool(body.get("auto_private", True))
-    a.chats = {str(c["id"]): {"two_way": bool(c.get("two_way"))} for c in body.get("chats", [])[:600]}
+    a.chats = {str(c["id"]): {"two_way": bool(c.get("two_way")), "photo": str(c.get("photo") or "")} for c in body.get("chats", [])[:600]}
     a.save_list()
     return web.json_response({"ok": True, "count": len(a.chats)})
 

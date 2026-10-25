@@ -132,7 +132,7 @@ export function openFolders() {
     const chats = [...S.chats.values()].filter((c) => !c.saved).sort((a, b) => chatTitle(a).localeCompare(chatTitle(b)));
     const boxes = chats.map((c) => {
       const cb = h('input', { type: 'checkbox', checked: chosen.has(c.id), onchange: () => (cb.checked ? chosen.add(c.id) : chosen.delete(c.id)) });
-      return h('label', { class: 'row folder-chat' }, cb, avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title }, 'sm'), h('span', { class: 'ellipsis' }, chatTitle(c)));
+      return h('label', { class: 'row folder-chat' }, cb, avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm'), h('span', { class: 'ellipsis' }, chatTitle(c)));
     });
     const err = h('div', { class: 'err', role: 'alert' });
     clear(box).append(

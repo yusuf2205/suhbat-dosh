@@ -97,7 +97,7 @@ export function openPalette() {
         if (!s) continue;
         out.push({
           type: 'chat', label: title, sub: c.last_message ? previewText(c.last_message).slice(0, 60) : '', kind: c.type === 'direct' ? t('pal.person') : c.type === 'group' ? t('pal.group') : t('pal.channel'),
-          avatar: avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title }, 'sm'), s: s + 4 + (c.unread ? 3 : 0) + Math.min(3, (c.last_message_at || 0) / 1e13),
+          avatar: avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm'), s: s + 4 + (c.unread ? 3 : 0) + Math.min(3, (c.last_message_at || 0) / 1e13),
           run: () => fire('open-chat', c.id),
         });
       }

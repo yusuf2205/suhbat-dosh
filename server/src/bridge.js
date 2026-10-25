@@ -95,8 +95,8 @@ function stateOf(req) {
 async function pushRules(uid) {
   const o = link(uid);
   if (!o) return;
-  const rows = q.all("SELECT tg_chat, two_way, kind FROM tg_chats WHERE user_id = ? ORDER BY (kind != 'user') DESC, two_way DESC LIMIT 600", uid);
-  await call('POST', '/chats', uid, { auto_private: !!o.auto_private, chats: rows.map((r) => ({ id: r.tg_chat, two_way: !!r.two_way })) });
+  const rows = q.all("SELECT tg_chat, two_way, kind, tg_photo FROM tg_chats WHERE user_id = ? ORDER BY (kind != 'user') DESC, two_way DESC LIMIT 600", uid);
+  await call('POST', '/chats', uid, { auto_private: !!o.auto_private, chats: rows.map((r) => ({ id: r.tg_chat, two_way: !!r.two_way, photo: r.tg_photo || '' })) });
 }
 
 bridge.get('/bridge', async (req, res) => {
@@ -410,6 +410,33 @@ function applyRead(uid, b) {
   return { ok: true };
 }
 
+/** The other side's name, @username and phone as Telegram shows them: the mirrored chat follows (the photo comes separately). */
+function applyProfile(uid, b) {
+  const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(b.tg_chat ?? ''));
+  if (!row) return { ok: true, skipped: true };
+  const clean = (v, n) => String(v ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
+  const username = clean(b.username, 40).replace(/^@/, '');
+  const phone = clean(b.phone, 20).replace(/[^\d]/g, '');
+  const title = clean(b.title, 60);
+  q.run('UPDATE tg_chats SET tg_username = ?, tg_phone = ? WHERE user_id = ? AND tg_chat = ?', username, phone, uid, row.tg_chat);
+  let changed = row.tg_username !== username || row.tg_phone !== phone;
+  if (title && title !== row.title) {
+    q.run('UPDATE tg_chats SET title = ? WHERE user_id = ? AND tg_chat = ?', title, uid, row.tg_chat);
+    q.run('UPDATE chats SET title = ? WHERE id = ?', `✈ ${title}`, row.chat_id);
+    changed = true;
+  }
+  // no photo in Telegram any more: the picture goes too
+  if (!b.photo_id && row.tg_photo) {
+    const old = q.get('SELECT avatar_file FROM chats WHERE id = ?', row.chat_id)?.avatar_file;
+    q.run("UPDATE chats SET avatar_file = NULL WHERE id = ?", row.chat_id);
+    q.run("UPDATE tg_chats SET tg_photo = '' WHERE user_id = ? AND tg_chat = ?", uid, row.tg_chat);
+    if (old) { q.run('DELETE FROM files WHERE id = ?', old); removeFile(old); }
+    changed = true;
+  }
+  if (changed) refreshChat(uid, row.chat_id);
+  return { ok: true, changed };
+}
+
 /** One Telegram message (text, or a file with its caption). Dedupes by (chat, key); quiet: nothing is pushed, the chats are muted. */
 function deliver(b, file = null) {
   const uid = Number(b.owner);
@@ -422,6 +449,7 @@ function deliver(b, file = null) {
   if (b.edit) return applyEdit(uid, b);
   if (b.deleted) return applyDeleted(uid, b);
   if (b.read) return applyRead(uid, b);
+  if (b.profile) return applyProfile(uid, b);
   const tgChat = String(b.tg_chat ?? '');
   if (!/^-?\d{1,20}$/.test(tgChat)) return { ok: true, skipped: true };
   const text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
@@ -500,6 +528,28 @@ bridgeIn.post('/bridge/media', async (req, res) => {
   if (!out.id) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); return res.json(out); } // skipped or already there: the file is not kept
   q.run('UPDATE files SET chat_id = (SELECT chat_id FROM messages WHERE id = ?) WHERE id = ?', out.id, fid);
   res.json({ ok: true, id: out.id });
+});
+
+// the profile photo of the other side of a mirrored chat (raw image, details in the query)
+bridgeIn.post('/bridge/photo', async (req, res) => {
+  secret(req);
+  const uid = Number(req.query.owner);
+  const row = Number.isInteger(uid) && q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(req.query.tg_chat ?? ''));
+  const photoId = String(req.query.photo_id ?? '').replace(/[^\w-]/g, '').slice(0, 40);
+  if (!row || !photoId) { req.resume(); return res.json({ ok: true, skipped: true }); }
+  const fid = rid(16);
+  const dest = filePath(fid);
+  let size;
+  try { size = await receive(req, dest, 2 * 1024 * 1024); } catch (e) { removeFile(fid); throw e; }
+  const type = size > 0 ? sniff(readHead(dest), false) : null;
+  if (!type || type.kind !== 'image') { removeFile(fid); throw new HttpError(415, 'unsupported_media'); }
+  const old = q.get('SELECT avatar_file FROM chats WHERE id = ?', row.chat_id)?.avatar_file;
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at) VALUES (?,?,?,?,?,?,?)', fid, uid, row.chat_id, `avatar.${type.mime.split('/')[1]}`, type.mime, size, now());
+  q.run('UPDATE chats SET avatar_file = ? WHERE id = ?', fid, row.chat_id);
+  q.run('UPDATE tg_chats SET tg_photo = ? WHERE user_id = ? AND tg_chat = ?', photoId, uid, row.tg_chat);
+  if (old) { q.run('DELETE FROM files WHERE id = ?', old); removeFile(old); }
+  refreshChat(uid, row.chat_id);
+  res.json({ ok: true });
 });
 
 // ------------------------------------------------------------------ answering from here (two-way chats only)

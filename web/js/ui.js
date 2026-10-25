@@ -100,6 +100,8 @@ export function modal({ title, body, onClose, className = '', bare = false }) {
       overlay.remove();
       modalStack.splice(modalStack.indexOf(api), 1);
       document.removeEventListener('keydown', onKey);
+      vv?.removeEventListener('resize', fit);
+      vv?.removeEventListener('scroll', fit);
       onClose?.();
       if (opener?.isConnected) opener.focus?.();
     },
@@ -107,6 +109,20 @@ export function modal({ title, body, onClose, className = '', bare = false }) {
   const onKey = (e) => {
     if (e.key === 'Escape' && modalStack[modalStack.length - 1] === api) { e.stopPropagation(); api.close(); }
   };
+  // The on-screen keyboard (iPhone) does not shrink the page, it covers it: the sheet is fitted to what is left visible,
+  // so the field being typed in and the buttons under it stay on screen.
+  const vv = window.visualViewport;
+  const fit = () => {
+    if (!vv) return;
+    const covered = window.innerHeight - vv.height > 80;
+    overlay.style.top = covered ? `${vv.offsetTop}px` : '';
+    overlay.style.bottom = covered ? 'auto' : '';
+    overlay.style.height = covered ? `${vv.height}px` : '';
+    box.style.maxHeight = covered ? `${Math.max(220, vv.height - 12)}px` : '';
+    if (covered) document.activeElement?.scrollIntoView?.({ block: 'nearest' });
+  };
+  vv?.addEventListener('resize', fit);
+  vv?.addEventListener('scroll', fit);
   closeBtn.addEventListener('click', api.close);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) api.close(); });
   document.addEventListener('keydown', onKey);

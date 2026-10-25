@@ -19,7 +19,7 @@ export function openRooms() {
       const inside = groupCallChatId() === c.id;
       const who = (room?.participants || []).map((p) => S.users.get(p.id) || { id: p.id, name: p.name });
       list.append(h('div', { class: 'room-row' },
-        avatar({ id: c.id, name: c.title }, 'sm'),
+        avatar({ id: c.id, name: c.title, avatar: c.avatar }, 'sm'),
         h('div', { class: 'room-main' },
           h('b', { class: 'ellipsis' }, chatTitle(c)),
           who.length ? h('div', { class: 'room-who' }, who.slice(0, 6).map((u) => avatar(u, 'sm')), h('small', { class: 'muted' }, who.map((u) => u.name).slice(0, 3).join(', '))) : h('small', { class: 'muted' }, t('room.empty'))),

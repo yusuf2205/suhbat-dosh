@@ -294,6 +294,8 @@ export function chatOut(chatId, viewerId) {
     id: c.id,
     type: c.type,
     title: c.title,
+    avatar: c.avatar_file ? `/api/files/${c.avatar_file}` : null,
+    ...(c.imported_from === 'tgbridge' ? (() => { const t = q.get('SELECT tg_username, tg_phone FROM tg_chats WHERE chat_id = ?', chatId); return t && (t.tg_username || t.tg_phone) ? { tg: { username: t.tg_username, phone: t.tg_phone } } : {}; })() : {}),
     description: c.description,
     owner_id: c.owner_id,
     invite_code: isAdmin(m) ? c.invite_code : null,

@@ -253,7 +253,7 @@ async function removeChat(c) {
 }
 
 function entityOf(c) {
-  return c.type === 'direct' ? c.peer : { id: c.id, name: c.title };
+  return c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar };
 }
 
 function item(c) {

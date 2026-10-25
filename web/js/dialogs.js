@@ -150,10 +150,12 @@ export async function renderInfo(m, chatId) {
       if (!chat.saved && !p.is_bot && p.id !== S.me.id) nodes.push(h('div', { class: 'sgroup' }, safetyRow(p)));
       if (p.avatar) nodes.push(h('div', { class: 'sheading' }, t('st.album')), h('div', { class: 'sgroup album' }, photoGrid(p.id, false)));
     } else {
-      nodes.push(h('div', { style: { textAlign: 'center' } }, h('div', { style: { display: 'inline-block' } }, avatar({ id: chat.id, name: chat.title }, 'lg')),
+      nodes.push(h('div', { style: { textAlign: 'center' } }, h('div', { style: { display: 'inline-block' } }, avatar({ id: chat.id, avatar: chat.avatar, name: chat.title }, 'lg')),
         h('h2', null, chat.title),
-        chat.description ? h('p', { class: 'muted' }, chat.description) : null,
+        chat.description && !chat.tg && !String(chat.description).startsWith('tgb:') ? h('p', { class: 'muted' }, chat.description) : null,
         h('div', { class: 'muted' }, `${chat.members_count} ${chat.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`)));
+      if (chat.tg) nodes.push(h('div', { class: 'sgroup' }, ...[chat.tg.username ? [`@${chat.tg.username}`, t('settings.username')] : null, chat.tg.phone ? [`+${chat.tg.phone}`, t('br.phone')] : null].filter(Boolean)
+        .map(([v, cap]) => h('div', { class: 'sinfo' }, h('div', { class: 'sinfo-main' }, h('div', { class: 'sinfo-value' }, v), h('div', { class: 'sinfo-cap' }, cap))))));
       if (isAdmin) nodes.push(h('button', { class: 'btn secondary', type: 'button', onclick: () => editChat(chat, draw) }, t('info.edit')));
     }
     const act = (ico, label, onclick, extra = '') => h('button', { type: 'button', class: extra, onclick }, icon(ico, 22), h('span', null, label));
@@ -312,7 +314,7 @@ export function openForward(msgOrList) {
         m.close();
       } catch (e) { fail(e); }
     },
-  }, avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title }, 'sm'), h('span', { class: 'grow' }, chatTitle(c)))));
+  }, avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm'), h('span', { class: 'grow' }, chatTitle(c)))));
 }
 
 export async function openJoin(code) {
@@ -322,7 +324,7 @@ export async function openJoin(code) {
     const m = modal({
       title: t('join.title'),
       body: h('div', { style: { textAlign: 'center' } },
-        h('div', { style: { display: 'inline-block' } }, avatar({ id: c.id, name: c.title }, 'lg')),
+        h('div', { style: { display: 'inline-block' } }, avatar({ id: c.id, name: c.title, avatar: c.avatar }, 'lg')),
         h('h2', null, c.title), c.description ? h('p', { class: 'muted' }, c.description) : null,
         h('p', { class: 'muted' }, t('common.members_n', { n: c.members_count })),
         r.banned ? h('div', { class: 'err' }, errText('user_banned'))

@@ -360,7 +360,7 @@ export function renderHeader() {
   const c = activeChat();
   if (!c || !view) return;
   const peer = c.peer;
-  const ent = c.type === 'direct' ? peer : { id: c.id, name: c.title };
+  const ent = c.type === 'direct' ? peer : { id: c.id, name: c.title, avatar: c.avatar };
   clear(view.who).append(
     avatar(ent, 'sm'),
     h('span', { class: 'grow' }, h('b', { class: 'ellipsis' }, chatTitle(c), c.ttl ? h('span', { class: 'ttl-chip', title: t('ttl.title') }, ` \u23F1 ${ttlLabel(c.ttl)}`) : null), h('span', { class: `sub ${subtitleLive(c) ? 'live' : ''}` }, subtitle(c))),
@@ -416,7 +416,7 @@ function subtitle(c) {
     return (c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden')) + pres;
   }
   if (c.saved) return '';
-  if (c.imported) return t(c.imported === 'tgbridge' ? 'br.subtitle' : 'imp.subtitle');
+  if (c.imported) return t(c.imported === 'tgbridge' ? 'br.subtitle' : 'imp.subtitle') + (c.tg?.username ? ` · @${c.tg.username}` : '');
   return `${c.members_count} ${c.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;
 }
 
