@@ -257,3 +257,8 @@ mark { background: color-mix(in srgb, var(--yel, #f6c90e) 55%, transparent); col
 .thread-composer .input { flex: 1; }
 .reactors-head { font-weight: 800; margin: 8px 0 2px; }
 .reactors-emoji { font-size: 1.3rem; }
+
+/* narrow screens: a long subtitle in the chat header is cut with "…" instead of widening the whole page */
+.chat-head .who > .grow { min-width: 0; display: flex; flex-direction: column; }
+.chat-head .who > .grow > b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-head .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
