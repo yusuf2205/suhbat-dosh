@@ -770,14 +770,35 @@ async def send(r):
 SEND_MAX = 50 * 1024 * 1024
 
 
+def _ogg_opus(data: bytes):
+    """WebM/Opus or M4A/AAC in, Ogg/Opus (mono, 48 kHz) out. PyAV carries its own ffmpeg libraries: nothing is installed in the system."""
+    import io
+    import av
+    inp = av.open(io.BytesIO(data))
+    buf = io.BytesIO()
+    out = av.open(buf, "w", format="ogg")
+    stream = out.add_stream("libopus", rate=48000)
+    stream.bit_rate = 32000
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+    for frame in inp.decode(audio=0):
+        for f in resampler.resample(frame):
+            for pkt in stream.encode(f):
+                out.mux(pkt)
+    for f in resampler.resample(None):
+        for pkt in stream.encode(f):
+            out.mux(pkt)
+    for pkt in stream.encode(None):
+        out.mux(pkt)
+    out.close()
+    inp.close()
+    return buf.getvalue()
+
+
 async def to_ogg_opus(data: bytes):
-    """Telegram shows a voice message only as Ogg/Opus; what a phone or browser records (WebM/Opus, M4A) is converted. None: no ffmpeg or it failed."""
+    """Telegram shows a voice message only as Ogg/Opus; what a phone or browser records (WebM/Opus, M4A) is converted. None: failed."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-v", "error", "-i", "pipe:0", "-vn", "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-f", "ogg", "pipe:1",
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(proc.communicate(data), 60)
-        return out if proc.returncode == 0 and out else None
+        out = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(None, _ogg_opus, data), 60)
+        return out or None
     except Exception as e:
         log("voice conversion failed:", type(e).__name__)
         return None
