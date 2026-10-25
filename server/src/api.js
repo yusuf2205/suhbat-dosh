@@ -1148,7 +1148,7 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     if (dup) return { message: messageOut(dup), duplicate: true };
   }
   if (replyTo && !q.get('SELECT 1 AS x FROM messages WHERE id = ? AND chat_id = ?', replyTo, chat.id)) replyTo = null;
-  if (chat.imported_from === 'tgbridge' && kind !== 'text') throw new HttpError(400, 'bridge_text_only');
+  if (chat.imported_from === 'tgbridge' && !['text', 'image', 'video', 'voice', 'audio', 'file'].includes(kind)) throw new HttpError(400, 'bridge_text_only');
   if (topicId === null && chat.forum && !threadOf) {
     const want = requestContext.getStore()?.topic || 0;
     topicId = want && q.get('SELECT 1 AS x FROM topics WHERE id = ? AND chat_id = ? AND closed = 0', want, chat.id) ? want : null;
@@ -1161,9 +1161,9 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   );
   const id = Number(r.lastInsertRowid);
   if (chat.imported_from === 'tgbridge') {
-    // a message written in a mirrored chat is also sent to Telegram (text only)
+    // a message written in a mirrored chat is also sent to Telegram: text, photo, voice, video, file
     const rk = replyTo ? q.get('SELECT import_key FROM messages WHERE id = ?', replyTo)?.import_key : null;
-    bridgeOut(chat, id, text, rk);
+    bridgeOut(chat, id, text, rk, fileId ? { id: fileId, kind, duration } : null);
   }
   if (threadOf) {
     // a comment under a channel post: it lives in its thread, not in the feed, and nobody is pushed about it

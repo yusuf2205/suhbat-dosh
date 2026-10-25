@@ -8,6 +8,9 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { notifyAdmins } from './notify.js';
+import { notifyTelegram } from './telegram.js';
+import { bridgeAvailable, bridgeConfigured } from './bridge.js';
+import { getSetting, setSetting } from './access.js';
 import { turnStatus } from './turn.js';
 
 // counters bumped by index.js
@@ -155,7 +158,7 @@ async function mirrorBackup(src, name) {
   const bad = [];
   if (dir && out.dir !== 'ok') bad.push(`папка — ${out.dir}`);
   if (url && out.webdav !== 'ok') bad.push(`WebDAV — ${out.webdav}`);
-  if (bad.length) notifyAdmins(`⚠️ Копия базы не попала во внешнее хранилище: ${bad.join('; ')}`);
+  if (bad.length) alert(`⚠️ Копия базы не попала во внешнее хранилище: ${bad.join('; ')}`);
 }
 
 export function listBackups() {
@@ -260,9 +263,15 @@ function autoVerify() {
     const r = verifyBackup(newest.name);
     if (!r.ok && now() - lastVerifyAlert > 12 * 3600_000) {
       lastVerifyAlert = now();
-      notifyAdmins(`⚠️ Проверка резервной копии не прошла (${newest.name}): ${r.problems.join('; ')}`);
+      alert(`⚠️ Проверка резервной копии не прошла (${newest.name}): ${r.problems.join('; ')}`);
     }
   } catch (e) { log('error', 'backup verify failed', { err: e.message }); }
+}
+
+// ------------------------------------------------------------------ alerts: in the messenger and, where the administrator signed in with Telegram, there too
+export function alert(text) {
+  notifyAdmins(text);
+  for (const r of q.all('SELECT telegram_id FROM users WHERE is_admin = 1 AND is_bot = 0 AND banned_at IS NULL AND telegram_id IS NOT NULL')) notifyTelegram(r.telegram_id, text);
 }
 
 // ------------------------------------------------------------------ monitors
@@ -274,12 +283,12 @@ function check() {
   const d = disk();
   if (d.total && d.free < Math.max(5 * 1024 ** 3, d.total * 0.08) && now() - lastDiskAlert > 12 * 3600_000) {
     lastDiskAlert = now();
-    notifyAdmins(`⚠️ На диске сервера заканчивается место: свободно ${(d.free / 1024 ** 3).toFixed(1)} ГБ из ${(d.total / 1024 ** 3).toFixed(0)} ГБ.`);
+    alert(`⚠️ На диске сервера заканчивается место: свободно ${(d.free / 1024 ** 3).toFixed(1)} ГБ из ${(d.total / 1024 ** 3).toFixed(0)} ГБ.`);
   }
   const recentErr = samples.slice(-10).reduce((a, x) => a + x.err, 0);
   if (recentErr >= 15 && now() - lastErrAlert > 3600_000) {
     lastErrAlert = now();
-    notifyAdmins(`⚠️ Всплеск ошибок сервера: ${recentErr} за последние 10 минут. Проверьте журнал контейнера.`);
+    alert(`⚠️ Всплеск ошибок сервера: ${recentErr} за последние 10 минут. Проверьте журнал контейнера.`);
   }
   return s;
 }
@@ -327,7 +336,37 @@ function autoBackup() {
   } catch (e) { log('error', 'auto backup failed', { err: e.message }); }
 }
 
+const probes = new Map(); // name -> { fails, since, alerted }
+async function probe(name, label, test) {
+  const p = probes.get(name) || { fails: 0, since: 0, alerted: false };
+  probes.set(name, p);
+  let ok = false;
+  try { ok = await test(); } catch { ok = false; }
+  if (ok) {
+    if (p.alerted) alert(`✅ ${label}: снова работает (не отвечал около ${Math.max(1, Math.round((now() - p.since) / 60_000))} мин).`);
+    p.fails = 0; p.alerted = false;
+    return;
+  }
+  if (!p.fails) p.since = now();
+  p.fails += 1;
+  if (p.fails === 3 && !p.alerted) { p.alerted = true; alert(`⚠️ ${label}: не отвечает уже несколько минут.`); }
+}
+
+/** Is everything the messenger relies on answering? The public address is checked from inside, through the tunnel, like a visitor would. */
+async function runProbes() {
+  const pub = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+  if (pub) await probe('site', `Сайт ${pub.replace(/^https?:\/\//, '')} снаружи`, async () => (await fetch(`${pub}/healthz`, { signal: AbortSignal.timeout(8000) })).ok);
+  if (bridgeConfigured()) await probe('bridge', 'Мост с Телеграмом', () => bridgeAvailable());
+}
+
 export function startMonitors() {
+  // the server was off for a while (power cut, the NAS restarted, a crash): the last heartbeat tells
+  const last = Number(getSetting('heartbeat', '0')) || 0;
+  setTimeout(() => {
+    if (last && now() - last > 5 * 60_000) alert(`⚠️ Сервер был недоступен около ${Math.round((now() - last) / 60_000)} мин (перезагрузка, отключение питания или сбой). Сейчас работает.`);
+  }, 20_000).unref();
+  setInterval(() => { try { setSetting('heartbeat', String(now())); } catch { /* the database is busy */ } }, 60_000).unref();
+  setInterval(runProbes, 60_000).unref();
   sample();
   setInterval(check, 60_000).unref();
   setTimeout(autoBackup, 30_000).unref();

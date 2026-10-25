@@ -81,6 +81,12 @@ const T = {
 
 const send = (chat_id, text, extra = {}) => tg('sendMessage', { chat_id, text, ...extra });
 
+/** A plain message to a person's Telegram (they have signed in with this bot, so it may write to them). Never throws. */
+export async function notifyTelegram(tgId, text) {
+  if (!telegramEnabled() || !tgId) return;
+  try { await send(String(tgId), String(text).slice(0, 3500)); } catch { /* blocked the bot, or no network: the in-app message is still there */ }
+}
+
 function confirmText(row) {
   return `Подтвердить вход в Suhbat-dosh? / Suhbat-dosh’ga kirishni tasdiqlaysizmi?\n\n` +
     `Устройство: ${row.device || '—'}\nIP: ${row.ip || '—'}\nВремя: ${new Date(row.created_at).toISOString().replace('T', ' ').slice(0, 19)} UTC\n\n` +

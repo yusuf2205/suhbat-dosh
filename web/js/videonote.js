@@ -1,6 +1,6 @@
 // Round video messages ("circles"): record up to a minute from the camera, preview, send. They travel as ordinary
 // video files named circle.webm / circle.mp4 and are drawn as a circle in the chat.
-import { ensureMediaPermission, mediaErrorText, openAppSettings } from './mediaaccess.js';
+import { ensureMediaPermission, openAppSettings, showMediaProblem } from './mediaaccess.js';
 import { h, clear } from './dom.js';
 import { t } from './i18n.js';
 import { icon } from './icons.js';
@@ -58,14 +58,14 @@ export function recordVideoNote() {
 
     async function open() {
       stopStream();
-      if (!(await ensureMediaPermission(true))) { openAppSettings(); toast(mediaErrorText({ name: 'NotAllowedError' }, 'call.no_media'), 6000); end(null); return; }
+      if (!(await ensureMediaPermission(true))) { openAppSettings(); showMediaProblem({ name: 'NotAllowedError' }, 'call.no_media'); end(null); return; }
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true },
           video: { facingMode: facing, width: { ideal: 480 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
         });
       } catch (e) {
-        toast(mediaErrorText(e, 'call.no_media'), 6000);
+        showMediaProblem(e, 'call.no_media');
         end(null);
         return;
       }
@@ -80,13 +80,14 @@ export function recordVideoNote() {
       if (!stream) return;
       chunks = [];
       const mime = pickMime();
-      mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 1_000_000, audioBitsPerSecond: 64_000 });
+      try { mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 1_000_000, audioBitsPerSecond: 64_000 }); } catch (e) { showMediaProblem(e, 'call.no_media'); end(null); return; }
       mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       mr.onstop = () => {
         clearInterval(timer);
         const type = mr.mimeType || mime || 'video/webm';
         const blob = new Blob(chunks, { type });
         const duration = Math.max(1, Math.round((Date.now() - started) / 1000));
+        if (blob.size < 2000 && duration >= 2) { showMediaProblem({ name: 'EmptyRecording', message: `${blob.size} bytes in ${duration} s` }, 'call.no_media'); end(null); return; }
         if (blob.size < 2000 || duration < 1) { recBtn.classList.remove('on'); open(); return; }
         result = { blob, ext: /mp4/.test(type) ? 'mp4' : 'webm', duration };
         stopStream();

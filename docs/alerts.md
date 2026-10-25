@@ -1,0 +1,11 @@
+# Alerts
+
+The administrators get a message in the messenger (from "Suhbat-dosh") and, if they signed in with the Telegram bot, in Telegram too, when:
+
+* the site stops answering from outside (the server opens `PUBLIC_URL/healthz` through the tunnel once a minute; three misses in a row = an alert, and another when it is back);
+* the Telegram bridge container stops answering;
+* the server itself was off for more than five minutes (power cut, the NAS restarted, a crash), found by the heartbeat it writes every minute;
+* the disk is nearly full, or the number of server errors jumps;
+* a database copy did not reach the second disk, or the daily check of the newest copy failed.
+
+Set `PUBLIC_URL` in `.env` (for example `https://suhbat-dosh.uz`) to switch the outside check on.

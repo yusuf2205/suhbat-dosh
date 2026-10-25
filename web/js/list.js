@@ -43,9 +43,9 @@ const isPhone = () => window.matchMedia('(max-width: 600px)').matches;
 
 /** The big header (greeting, search, stories) folds into a thin bar with the main buttons while the list is scrolled. */
 function setCompact(v) {
-  if (v === compact || !heroEl) return;
+  if (!heroEl) return;
   compact = v;
-  heroEl.classList.toggle('compact', v);
+  heroEl.classList.toggle('compact', v || document.documentElement.classList.contains('compact-ui')); // the compact interface keeps the header folded
 }
 
 function onListScroll() {
@@ -301,6 +301,7 @@ function empty(emoji, title, hint, action) {
 
 export function render() {
   if (!listEl) return;
+  setCompact(compact);
   const view = S.view;
   titleEl.textContent = t(view === 'contacts' ? 'nav.contacts' : view === 'archive' ? 'nav.archive' : view === 'calls' ? 'nav.calls' : 'nav.messages');
   if (greetEl) {
@@ -333,6 +334,7 @@ export function render() {
     const n = [...S.chats.values()].reduce((a, c) => a + (isMuted(c) || c.archived ? 0 : c.unread), 0);
     nb.hidden = n === 0;
     nb.textContent = n > 99 ? '99+' : String(n);
+    try { if (n > 0) navigator.setAppBadge?.(n); else navigator.clearAppBadge?.(); } catch { /* not supported */ }
   }
 
   renderRecent();

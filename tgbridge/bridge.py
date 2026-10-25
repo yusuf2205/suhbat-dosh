@@ -102,6 +102,11 @@ class MockClient:
         self.n += 1
         return self.n
 
+    async def send_file_bytes(self, chat_id, data, name, kind, caption, reply_to=None, duration=0):
+        self.n += 1
+        self.last_file = {"chat": chat_id, "kind": kind, "name": name, "size": len(data), "caption": caption}
+        return self.n
+
     async def log_out(self):
         self.authorized = False
 
@@ -762,6 +767,68 @@ async def send(r):
     return web.json_response({"tg_msg": mid})
 
 
+SEND_MAX = 50 * 1024 * 1024
+
+
+async def to_ogg_opus(data: bytes):
+    """Telegram shows a voice message only as Ogg/Opus; what a phone or browser records (WebM/Opus, M4A) is converted. None: no ffmpeg or it failed."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-v", "error", "-i", "pipe:0", "-vn", "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-f", "ogg", "pipe:1",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(data), 60)
+        return out if proc.returncode == 0 and out else None
+    except Exception as e:
+        log("voice conversion failed:", type(e).__name__)
+        return None
+
+
+async def send_file(r):
+    """A photo, voice message, video, audio or file written here goes to the Telegram chat (only where answering from here is allowed)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    q = r.query
+    chat = str(q.get("chat", ""))
+    if not may_answer(a, chat):
+        return web.json_response({"error": "read_only"}, status=403)
+    kind = q.get("kind", "file")
+    if kind not in ("image", "video", "voice", "audio", "file"):
+        return web.json_response({"error": "unsupported"}, status=400)
+    data = await r.read()
+    if not data or len(data) > SEND_MAX:
+        return web.json_response({"error": "file_too_big"}, status=413)
+    name = re.sub(r"[^\w.\- ()]", "_", q.get("name", "file"))[:80] or "file"
+    caption = q.get("caption", "")[:1000]
+    reply = int(q["reply_to"]) if q.get("reply_to", "").isdigit() else None
+    try:
+        duration = int(float(q.get("duration") or 0))
+    except ValueError:
+        duration = 0
+    if kind == "voice":
+        converted = await to_ogg_opus(data)
+        if converted:
+            data, name = converted, "voice.ogg"
+    if MOCK:
+        mid = await a.client.send_file_bytes(int(chat), data, name, kind, caption, reply, duration)
+    else:
+        import io
+        from telethon.tl.types import DocumentAttributeAudio
+        f = io.BytesIO(data)
+        f.name = name
+        opts = {"caption": caption or None, "reply_to": reply}
+        if kind == "voice":
+            opts.update(voice_note=True, attributes=[DocumentAttributeAudio(duration=duration, voice=True)])
+        elif kind == "video":
+            opts.update(supports_streaming=True)
+        elif kind == "file":
+            opts.update(force_document=True)
+        m = await a.client.send_file(int(chat), f, **opts)
+        mid = m.id
+    a.sent.append(mid)
+    return web.json_response({"tg_msg": mid})
+
+
 async def read_back(r):
     """The chat was read here: mark it read in Telegram too (only for chats that may be answered from here)."""
     a = who(r)
@@ -815,6 +882,13 @@ async def logout(r):
     return web.json_response({"ok": True})
 
 
+async def mock_last(r):
+    """Tests only: what was last sent to Telegram as a file."""
+    if not MOCK:
+        return web.json_response({"error": "forbidden"}, status=403)
+    return web.json_response(getattr(who(r).client, "last_file", None) or {})
+
+
 async def mock_message(r):
     """Tests only: pretend that a message arrived in Telegram."""
     if not MOCK:
@@ -856,13 +930,13 @@ async def mock_media(r):
 
 
 def app():
-    a = web.Application(middlewares=[guard], client_max_size=256 * 1024)
+    a = web.Application(middlewares=[guard], client_max_size=SEND_MAX + 1024 * 1024)
     a.add_routes([
         web.get("/health", health), web.get("/accounts", accounts),
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
-        web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/logout", logout),
+        web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/read", read_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.post("/mock/media", mock_media),
+        web.post("/read", read_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
     ])
     return a
 

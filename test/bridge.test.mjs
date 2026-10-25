@@ -292,3 +292,25 @@ test('the chat takes the other side\'s name, @username, phone and profile photo 
   assert.equal(chat.avatar, null);
   assert.equal((await tgPost(`/api/bridge/in`, JSON.stringify({ owner: u.user.id, tg_chat: '999999', profile: true, title: 'x' }), { 'content-type': 'application/json' }).then((r) => r.json())).skipped, true, 'an unknown chat is ignored');
 });
+
+test('a photo and a file written here go to Telegram as files', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002060', 'Отправитель');
+  await link(u);
+  assert.equal((await mock(u.user.id, { chat: 5151, kind: 'user', title: 'Малика', msg: 1, author: 'Малика', text: 'Привет' })).forwarded, true);
+  const chat = await until(async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Малика'));
+  assert.ok(chat);
+  const last = async () => (await (await fetch(`http://127.0.0.1:${BPORT}/mock/last?u=${u.user.id}`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json());
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const up = (name, body, extra = '') => fetch(`${BASE}/api/chats/${chat.id}/files?name=${encodeURIComponent(name)}${extra}`, { method: 'POST', headers: { cookie: u.cookie, 'content-type': 'application/octet-stream' }, body });
+  const r1 = await up('photo.png', png, '&caption=' + encodeURIComponent('вот'));
+  assert.equal(r1.status, 201, await r1.clone().text());
+  const l1 = await until(async () => { const x = await last(); return x.kind === 'image' ? x : null; });
+  assert.ok(l1, 'the photo was handed to Telegram');
+  assert.equal(l1.size, png.length);
+  assert.equal(l1.caption, 'вот');
+  assert.equal((await up('заметки.txt', Buffer.from('просто текст для проверки'))).status, 201);
+  const l2 = await until(async () => { const x = await last(); return x.kind === 'file' ? x : null; });
+  assert.ok(l2, 'the file was handed to Telegram');
+  assert.equal(l2.size, Buffer.byteLength('просто текст для проверки'));
+  assert.match(l2.name, /\.txt$/);
+});

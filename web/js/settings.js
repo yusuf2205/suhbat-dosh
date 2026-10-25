@@ -8,6 +8,7 @@ import { S, fire, savePrefs } from './state.js';
 import { icon } from './icons.js';
 import { api } from './net.js';
 import { avatar, confirmDialog, lightbox, modal, popMenu, toast } from './ui.js';
+import { openMediaCheck } from './mediaaccess.js';
 import { dndRows, openFolders, openGlobalSearch, quietSettings } from './extras.js';
 import { compose as composeStory, openStoryArchive } from './stories.js';
 import { openScanner } from './scanner.js';
@@ -265,6 +266,7 @@ export function openSettings() {
         heading(t('st.sec_data')),
         group(
           row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
+          row('mic', t('mc.title'), { hint: t('mc.row_hint'), onclick: () => { m.close(); openMediaCheck(); } }),
           row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
           row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
           row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
@@ -387,7 +389,9 @@ export function openSettings() {
             } else {
               await disablePush();
             }
-          }, t('st.bg_hint'))));
+          }, t('st.bg_hint')), ...(on ? [group(row('bell', t('st.bg_test'), { hint: t('st.bg_test_hint'), onclick: async () => {
+            try { const r = await api('POST', '/api/push/test'); toast(r.devices ? t('st.bg_test_sent', { n: r.devices }) : t('st.bg_test_none'), 6000); } catch (e) { toast(errText(e.code)); }
+          } }))] : [])));
         });
       };
       bgRow();
@@ -664,6 +668,12 @@ export function openSettings() {
             h('label', null, t('st.theme_to'), ' ', timeInput('themeTo', '07:00')))))] : []),
           heading(t('settings.text_size')),
           group(h('div', { class: 'sfield' }, h('div', { class: 'row between' }, h('span', null, t('settings.text_size')), val), size)),
+          heading(t('st.compact')),
+          group(h('div', { class: 'sfield' }, (() => {
+            const sel = h('select', { class: 'input', 'aria-label': t('st.compact') }, ...['auto', 'on', 'off'].map((v) => h('option', { value: v, selected: (S.prefs.compact || 'auto') === v }, t(`st.compact_${v}`))));
+            sel.onchange = () => { S.prefs.compact = sel.value; savePrefs(); fire('theme'); };
+            return sel;
+          })(), h('p', { class: 'muted' }, t('st.compact_hint')))),
           group(row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() })),
         ],
       };

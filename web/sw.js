@@ -1,6 +1,6 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v106';
-const SHELL = ['/', '/styles.css?v=13', '/splash.css?v=3', '/design2.css?v=11', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
+const CACHE = 'suhbat-shell-v107';
+const SHELL = ['/', '/styles.css?v=13', '/splash.css?v=3', '/design2.css?v=12', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -38,6 +38,8 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     // do not bother the user when the app is open and focused: it already shows the message
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // the number on the icon of the installed app (iPhone 16.4+, Android, desktop)
+    if (typeof d.badge === 'number') { try { await (d.badge > 0 ? self.navigator.setAppBadge?.(d.badge) : self.navigator.clearAppBadge?.()); } catch { /* not supported */ } }
     if (wins.some((w) => w.visibilityState === 'visible' && w.focused)) return;
     await self.registration.showNotification(d.title || 'Suhbat-dosh', {
       body: d.body || '', icon: '/icon.svg?v=2', badge: '/icon.svg?v=2', tag: d.tag || 'suhbat', renotify: true,

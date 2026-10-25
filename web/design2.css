@@ -262,3 +262,27 @@ mark { background: color-mix(in srgb, var(--yel, #f6c90e) 55%, transparent); col
 .chat-head .who > .grow { min-width: 0; display: flex; flex-direction: column; }
 .chat-head .who > .grow > b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-head .sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.modal.mc .mc-report { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 ui-monospace, Consolas, monospace; background: var(--surface-2); border-radius: 10px; padding: 10px; max-height: 46vh; overflow: auto; margin: 8px 0; }
+
+/* compact interface: small phones (320x480 points) and whoever switches it on */
+@media (max-width: 600px) {
+  html.compact-ui { --compact: 1; }
+  html.compact-ui .app .bottomnav button { min-height: 40px; font-size: .66rem; padding: 3px 0; }
+  html.compact-ui .app[data-view='list'] .chatlist { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  html.compact-ui .ci { padding-top: 6px; padding-bottom: 6px; gap: 10px; }
+  html.compact-ui .ci .avatar { width: 40px; height: 40px; font-size: .9rem; }
+  html.compact-ui .tabs { padding: 2px 8px 4px; gap: 4px; }
+  html.compact-ui .tab { padding: 4px 10px; font-size: .82rem; }
+  html.compact-ui .chat-head { min-height: 48px; padding-top: 2px; padding-bottom: 2px; }
+  html.compact-ui .chat-head .avatar { width: 34px; height: 34px; }
+  html.compact-ui .msg .bubble { padding: 6px 10px; font-size: .94rem; }
+  html.compact-ui .msg { max-width: 94%; }
+  html.compact-ui .composer { padding: 4px 6px; gap: 4px; }
+  html.compact-ui .composer .icon-btn, html.compact-ui .composer .send-btn { width: 38px; height: 38px; }
+  html.compact-ui .modal { max-height: 100vh; border-radius: 14px 14px 0 0; }
+  html.compact-ui .modal-head { padding: 10px 14px; }
+  html.compact-ui .modal-body { padding: 10px 14px; }
+  html.compact-ui .sinfo { padding: 8px 12px; }
+  html.compact-ui .app .bottomnav button[aria-current='true'] { font-size: .6rem; }
+}

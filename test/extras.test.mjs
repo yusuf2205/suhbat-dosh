@@ -104,7 +104,7 @@ test('live location: updates only while it lasts, only from its owner, and can b
   assert.equal((await call(b.cookie, 'PUT', `/api/messages/${m.id}/live`, { lat: 1, lon: 1 })).status, 404);
   assert.equal((await call(a.cookie, 'PUT', `/api/messages/${m.id}/live`, { lat: 99, lon: 1 })).status, 400);
   const stopped = await call(a.cookie, 'POST', `/api/messages/${m.id}/live/stop`);
-  assert.ok(stopped.data.message.live_until <= Date.now());
+  assert.ok(stopped.data.message.live_until <= Date.now() + 1000); // stopped now (the clocks of two processes may differ by a millisecond)
   assert.equal((await call(a.cookie, 'PUT', `/api/messages/${m.id}/live`, { lat: 41.3, lon: 69.2 })).status, 409);
 });
 

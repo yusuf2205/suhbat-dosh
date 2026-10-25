@@ -10,6 +10,7 @@
 //  * everything is kept in sync: new messages, edits, what was deleted in Telegram (marked, never removed), what was read, and read marks go back;
 //  * disconnecting ends the session on Telegram's side and, on request, removes the copies.
 import express from 'express';
+import fs from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
@@ -556,13 +557,44 @@ bridgeIn.post('/bridge/photo', async (req, res) => {
 export const bridgeTwoWay = (chatId) => !!q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ? AND two_way = 1', chatId);
 
 /** Called for every message written in a mirrored chat. The row gets the Telegram id so the echo is not copied twice. */
-export function bridgeOut(chat, messageId, text, replyKey) {
+const SEND_KINDS = ['image', 'video', 'voice', 'audio', 'file'];
+const SEND_MAX = 50 * 1024 * 1024;
+
+/** A photo, voice message, video or file goes to Telegram as the raw bytes, the details in the query. */
+async function callFile(uid, params, bytes) {
+  let r;
+  try {
+    r = await fetch(`${BASE()}/send-file?u=${uid}&${new URLSearchParams(params)}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${TOKEN()}`, 'content-type': 'application/octet-stream' }, body: bytes, signal: AbortSignal.timeout(180_000),
+    });
+  } catch { throw new HttpError(503, 'bridge_unavailable'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new HttpError(r.status === 403 ? 502 : r.status, j.error || 'bridge_error');
+  return j;
+}
+
+export function bridgeOut(chat, messageId, text, replyKey, file = null) {
   const row = q.get('SELECT * FROM tg_chats WHERE chat_id = ?', chat.id);
   if (!row) return;
   const me = link(row.user_id);
   q.run('UPDATE messages SET import_author = ? WHERE id = ?', me?.tg_name || 'Я', messageId);
   const reply = replyKey ? Number(String(replyKey).split(':').pop()) : null;
-  call('POST', '/send', row.user_id, { chat: row.tg_chat, text, reply_to: Number.isInteger(reply) ? reply : null }).then((r) => {
+  const replyTo = Number.isInteger(reply) ? reply : null;
+  let sending;
+  if (file && SEND_KINDS.includes(file.kind)) {
+    const f = q.get('SELECT * FROM files WHERE id = ?', file.id);
+    if (!f || f.size > SEND_MAX) sending = Promise.reject(new HttpError(413, 'file_too_big'));
+    else {
+      sending = fs.promises.readFile(filePath(f.id)).then((bytes) => callFile(row.user_id, {
+        chat: row.tg_chat, kind: file.kind, name: f.name, mime: f.mime, caption: text || '', duration: file.duration ?? '', ...(replyTo ? { reply_to: replyTo } : {}),
+      }, bytes));
+    }
+  } else if (!String(text || '').trim()) {
+    return; // a poll, a contact ...: there is nothing to say to Telegram
+  } else {
+    sending = call('POST', '/send', row.user_id, { chat: row.tg_chat, text, reply_to: replyTo });
+  }
+  sending.then((r) => {
     q.run('UPDATE messages SET import_key = ? WHERE id = ?', `tg:${row.tg_chat}:${r.tg_msg}`, messageId);
   }).catch((e) => {
     log('warn', 'bridge send failed', { err: e.code || e.message });

@@ -2,7 +2,8 @@
 FROM python:3.12-slim
 ARG PIP_INDEX=https://pypi.org/simple
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install -i $PIP_INDEX --no-cache-dir -r /tmp/requirements.txt && useradd -r -u 10001 bridge && mkdir /data && chown bridge /data
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/* \
+ && pip install -i $PIP_INDEX --no-cache-dir -r /tmp/requirements.txt && useradd -r -u 10001 bridge && mkdir /data && chown bridge /data
 WORKDIR /app
 COPY bridge.py .
 USER bridge

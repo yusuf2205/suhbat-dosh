@@ -37,7 +37,7 @@ import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
 import { canOpenNative, isOffice, openNative, prefetchNative } from './native.js';
 import { fileIcon } from './fileicons.js';
-import { ensureMediaPermission, mediaErrorText, openAppSettings } from './mediaaccess.js';
+import { ensureMediaPermission, openAppSettings, showMediaProblem } from './mediaaccess.js';
 import { aliasOf, shownName, aliasSig, animalAvatar } from './persona.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
@@ -833,15 +833,16 @@ async function startRecording(hs) {
   if (rec) return;
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { holdState = null; return toast(t('voice.unsupported')); }
   let stream;
-  if (!(await ensureMediaPermission(false))) { holdState = null; openAppSettings(); return toast(mediaErrorText({ name: 'NotAllowedError' }), 6000); }
+  if (!(await ensureMediaPermission(false))) { holdState = null; openAppSettings(); return showMediaProblem({ name: 'NotAllowedError' }); }
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   } catch (e) {
     holdState = null;
-    return toast(mediaErrorText(e), 6000);
+    return showMediaProblem(e);
   }
   const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((m) => MediaRecorder.isTypeSupported(m));
-  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  let mr;
+  try { mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); } catch (e) { stream.getTracks().forEach((tr) => tr.stop()); holdState = null; return showMediaProblem(e); }
   const chunks = [];
   rec = {
     mr, stream, chunks, started: Date.now(), state: 'recording', duration: 0, chatId: S.active, peaks: [], hold: !hs?.up, locked: !!hs?.up, cancelling: false,
@@ -857,6 +858,7 @@ async function startRecording(hs) {
     const chatId = r.chatId;
     closeRecorder(false);
     if (duration < 0.7) return; // an accidental touch is not a message
+    if (blob.size < 500) { showMediaProblem({ name: 'EmptyRecording', message: `${blob.size} bytes in ${Math.round(duration)} s` }); return; } // the microphone gave no sound at all
     const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
     await uploadFile(chatId, blob, `voice.${ext}`, { voice: true, duration, waveform: wave });
   };
@@ -870,7 +872,7 @@ async function startRecording(hs) {
     rec.analyser = an;
     rec.buf = new Uint8Array(an.fftSize);
   } catch { /* the waveform is optional */ }
-  mr.start(250);
+  try { mr.start(250); } catch (e) { stream.getTracks().forEach((tr) => tr.stop()); rec = null; holdState = null; return showMediaProblem(e); }
   rec.timer = setInterval(() => {
     if (!rec || rec.mr !== mr) return;
     rec.duration = (Date.now() - rec.started) / 1000;

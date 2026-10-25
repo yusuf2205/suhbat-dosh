@@ -48,6 +48,21 @@ pushRouter.post('/push/subscribe', (req, res) => {
   res.json({ ok: true });
 });
 
+/** How many messages wait for this person in chats that are not muted or archived (the number on the app icon). */
+export function unreadBadge(uid) {
+  return q.get(
+    `SELECT COUNT(*) AS n FROM (SELECT 1 FROM messages m
+       JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0 AND mb.muted = 0 AND mb.archived = 0 AND COALESCE(mb.muted_until, 0) <= ?
+       WHERE m.id > MAX(mb.last_read_id, mb.cleared_before) AND m.thread_of IS NULL AND (m.sender_id IS NULL OR m.sender_id != ?) LIMIT 99)`, uid, now(), uid).n;
+}
+
+/** A test notification to all the devices of the person: is the phone really reachable in the background? */
+pushRouter.post('/push/test', (req, res) => {
+  if (!rateLimit(`pushtest:${req.user.id}`, 6, 60_000)) throw new HttpError(429, 'slow_down');
+  const sent = pushToUser(req.user.id, { title: 'Suhbat-dosh', body: 'Проверка уведомлений: всё работает', tag: 'push-test', badge: unreadBadge(req.user.id) }, { ttl: 120 });
+  res.json({ ok: true, devices: sent });
+});
+
 pushRouter.post('/push/unsubscribe', (req, res) => {
   q.run('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?', String(req.body?.endpoint || ''), req.user.id);
   res.json({ ok: true });
@@ -90,7 +105,7 @@ export function pushNewMessage(chat, row) {
   if (row.kind === 'call') return;
   const sender = row.sender_id ? getUser(row.sender_id) : null;
   const title = chat.type === 'direct' ? sender?.name || 'Suhbat-dosh' : `${chat.title}${sender ? ` · ${sender.name}` : ''}`;
-  const payload = JSON.stringify({ title, body: preview(row), chat_id: chat.id, message_id: row.id, tag: `chat-${chat.id}` });
+  const base = { title, body: preview(row), chat_id: chat.id, message_id: row.id, tag: `chat-${chat.id}` };
   for (const uid of memberIds(chat.id)) {
     if (uid === row.sender_id || isOnline(uid)) continue;
     const m = q.get('SELECT muted, muted_until FROM members WHERE chat_id = ? AND user_id = ?', chat.id, uid);
@@ -99,6 +114,7 @@ export function pushNewMessage(chat, row) {
     if (!u || u.banned_at || u.presence === 'busy') continue; // "busy": no notifications
     const mention = !!u.username && new RegExp(`@${u.username}\\b`, 'i').test(row.text || '');
     if (focusMutes(u, { senderId: row.sender_id, urgent: !!row.urgent, mention })) continue; // focus mode
+    const payload = JSON.stringify({ ...base, badge: unreadBadge(uid) });
     for (const s of q.all('SELECT * FROM push_subs WHERE user_id = ?', uid)) {
       vapid();
       webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 3600, urgency: 'high' })

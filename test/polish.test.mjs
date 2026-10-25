@@ -171,3 +171,13 @@ test('backups: retention keeps a sensible set; verification; storage overview', 
   const nobody = await login('+998900000032', 'Bek');
   assert.equal((await call(nobody.cookie, 'GET', '/api/admin/storage')).status, 403);
 });
+
+test('push: the test notification answers and is private', async () => {
+  const a = await login('+998900000041', 'Ann');
+  const b = await login('+998900000042', 'Bek');
+  assert.equal((await call(a.cookie, 'POST', '/api/push/test')).data.devices, 0, 'no device is subscribed');
+  const dm = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.user.id })).data.chat;
+  for (let i = 0; i < 3; i++) await call(b.cookie, 'POST', `/api/chats/${dm.id}/messages`, { text: `m${i}` });
+  // the number itself is computed inside the server process; here the endpoint must at least stay private
+  assert.equal((await call('', 'POST', '/api/push/test')).status, 401);
+});
