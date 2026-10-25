@@ -27,3 +27,4 @@ tgbridge-data/
 
 __pycache__/
 backups-offsite/
+tgbridge/wheels/*.whl

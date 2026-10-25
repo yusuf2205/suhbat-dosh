@@ -2,8 +2,10 @@
 FROM python:3.12-slim
 ARG PIP_INDEX=https://pypi.org/simple
 COPY requirements.txt /tmp/requirements.txt
-# PyAV (its own ffmpeg libraries) turns recorded voice messages into what Telegram plays; without it they are sent as they are
-RUN pip install -i $PIP_INDEX --no-cache-dir --only-binary=:all: av || echo 'PyAV not installed: voice messages are sent as recorded'
+# PyAV (its own ffmpeg libraries) turns recorded voice messages into what Telegram plays; without it they are sent as they are.
+# It is installed from a wheel placed in wheels/ (a slow connection must not stop the build).
+COPY wheels /tmp/wheels
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels av || echo 'PyAV not installed: voice messages are sent as recorded'
 RUN pip install -i $PIP_INDEX --no-cache-dir -r /tmp/requirements.txt && useradd -r -u 10001 bridge && mkdir /data && chown bridge /data
 WORKDIR /app
 COPY bridge.py .
