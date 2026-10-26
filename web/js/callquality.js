@@ -31,6 +31,12 @@ export class VideoAdapter {
     this.level = MODE_START[mode] ?? 0;
     this.bad = 0;
     this.good = 0;
+    // last resort: when even the lowest rung does not fit, the video is switched off (voice only) and probed again later
+    this.paused = false;
+    this.event = null;   // 'pause' | 'resume' after the push that changed it
+    this.deep = 0;
+    this.calm = 0;
+    this.pauses = 0;
   }
 
   params() {
@@ -39,7 +45,19 @@ export class VideoAdapter {
 
   /** Feed one sample; returns the new ladder step when it changed, otherwise null. */
   push(s, availableKbps = null) {
+    this.event = null;
     if (this.mode === 'save') return null; // fixed low profile
+    if (this.paused) {
+      // each new pause waits longer before the next probe (up to ~1 min), so a bad link is not hammered with video
+      this.calm = s === 3 ? this.calm + 1 : 0;
+      if (this.calm >= Math.min(30, 5 * 2 ** Math.min(this.pauses - 1, 3))) {
+        this.paused = false; this.calm = 0; this.deep = 0; this.bad = 0; this.good = 0;
+        this.level = LADDER.length - 1;
+        this.event = 'resume';
+        return LADDER[this.level];
+      }
+      return null;
+    }
     const before = this.level;
     // "high" degrades more reluctantly (needs a longer run of bad samples) and never goes below 540p
     const floor = this.mode === 'high' ? 2 : LADDER.length - 1;
@@ -60,8 +78,44 @@ export class VideoAdapter {
     if (availableKbps) {
       while (LADDER[this.level].kbps > availableKbps * 0.85 && this.level < floor) this.level += 1;
     }
+    // already on the lowest rung and still bad: stop sending video, the voice gets the whole link
+    this.deep = this.level === LADDER.length - 1 && s === 1 ? this.deep + 1 : 0;
+    if (this.deep >= 3) {
+      this.paused = true; this.deep = 0; this.calm = 0; this.pauses += 1;
+      this.event = 'pause';
+      return null;
+    }
     return this.level !== before ? LADDER[this.level] : null;
   }
+}
+
+/** Audio bitrate follows the link too: a lean voice stream survives where the full one stutters. */
+export class AudioAdapter {
+  constructor() { this.low = false; this.bad = 0; this.good = 0; }
+
+  /** Returns the new maxBitrate (bps) when it changed, otherwise null. */
+  push(s) {
+    if (s === 1) { this.bad += 1; this.good = 0; } else if (s === 3) { this.good += 1; this.bad = 0; } else { this.bad = 0; }
+    if (!this.low && this.bad >= 3) { this.low = true; this.bad = 0; return 24000; }
+    if (this.low && this.good >= 6) { this.low = false; this.good = 0; return 64000; }
+    return null;
+  }
+}
+
+/** A call that stays "connected" while nothing arrives (the phone moved from Wi-Fi to mobile data) needs a nudge. */
+export class Stall {
+  constructor(limit = 3) { this.limit = limit; this.n = 0; this.zero = 0; }
+
+  /** Feed the incoming kbps of every sample; true once nothing arrived for `limit` samples in a row. */
+  push(kbpsIn) {
+    this.n += 1;
+    if (this.n <= 1) return false;   // the first sample has no previous report to compare with
+    this.zero = kbpsIn < 0.5 ? this.zero + 1 : 0;
+    if (this.zero >= this.limit) { this.zero = 0; return true; }
+    return false;
+  }
+
+  reset() { this.zero = 0; }
 }
 
 /** Turn two consecutive getStats() reports into one sample (kbps, loss %, rtt, jitter, size). */

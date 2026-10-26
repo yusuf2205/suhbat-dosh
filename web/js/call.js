@@ -5,7 +5,7 @@ import { S, fire, savePrefs } from './state.js';
 import { api, wsSend } from './net.js';
 import { icon } from './icons.js';
 import { popMenu, avatar, modal, toast, beep } from './ui.js';
-import { Summary, VideoAdapter, sampleFromStats, score } from './callquality.js';
+import { AudioAdapter, Stall, Summary, VideoAdapter, sampleFromStats, score } from './callquality.js';
 import { LANGS, captionsSupported, defaultCapLang, startCaptions, translateCaption } from './captions.js';
 import { getLang } from './i18n.js';
 import { createTogether } from './together.js';
@@ -542,7 +542,19 @@ async function applyVideoParams(p) {
   } catch { /* not supported everywhere */ }
 }
 
-async function prioritiseAudio() {
+/** Video off / on for a bad link: the encoder stops (no black frames), the voice keeps the whole link. */
+async function setVideoActive(on) {
+  const sender = cur?.pc?.getSenders().find((s) => s.track?.kind === 'video');
+  if (!sender) return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings?.length) params.encodings = [{}];
+    params.encodings[0].active = on;
+    await sender.setParameters(params);
+  } catch { /* not supported everywhere */ }
+}
+
+async function prioritiseAudio(bps = 64000) {
   const sender = cur?.pc?.getSenders().find((s) => s.track?.kind === 'audio');
   if (!sender) return;
   try {
@@ -550,7 +562,7 @@ async function prioritiseAudio() {
     if (!params.encodings?.length) params.encodings = [{}];
     params.encodings[0].priority = 'high';
     params.encodings[0].networkPriority = 'high';
-    params.encodings[0].maxBitrate = 64000; // Opus wideband: clear speech, tiny share of the link
+    params.encodings[0].maxBitrate = bps; // Opus wideband: clear speech, tiny share of the link (24 kbps on a bad one)
     await sender.setParameters(params);
   } catch { /* optional */ }
 }
@@ -558,6 +570,9 @@ async function prioritiseAudio() {
 function startStats() {
   if (!cur || cur.statsTimer) return;
   cur.adapter = new VideoAdapter(mode());
+  cur.audioAdapter = new AudioAdapter();
+  cur.stall = new Stall();
+  cur.steady = 0;
   cur.summary = new Summary(mode());
   cur.prevStats = null;
   let lastAt = performance.now();
@@ -580,13 +595,29 @@ function startStats() {
       if (s.width && s.height) parts.push(`${s.width}×${s.height}${s.fps ? `@${Math.round(s.fps)}` : ''}`);
       if (s.rtt !== null) parts.push(`${Math.round(s.rtt)} ms`);
       ui.stats.textContent = parts.join(' · ');
-      if (q === 1) setStatus(t('call.poor'));
-      else if (ui.status.textContent === t('call.poor') || ui.status.textContent === t('call.reconnecting')) setStatus('');
+      const mine = [t('call.poor'), t('call.audio_only'), t('call.reconnecting')];
+      if (cur.adapter.paused) setStatus(t('call.audio_only'));
+      else if (q === 1) setStatus(t('call.poor'));
+      else if (mine.includes(ui.status.textContent)) setStatus('');
     }
     if (cur.video) {
       const step = cur.adapter.push(q, s.availableKbps);
+      if (cur.adapter.event === 'pause') {
+        setVideoActive(false);
+        if (cur.summary) cur.summary.audioOnly = (cur.summary.audioOnly || 0) + 1;
+      } else if (cur.adapter.event === 'resume') {
+        setVideoActive(true);
+        toast(t('call.video_back'), 3000);
+      }
       if (step) applyVideoParams(step);
     }
+    const bps = cur.audioAdapter.push(q);
+    if (bps) prioritiseAudio(bps);
+    // 'connected' but silent for ~6 s: the route died without the browser noticing (Wi-Fi to mobile data), so find a new one
+    if (cur.stall.push(s.kbpsIn)) scheduleRestart(0, true);
+    // a calm stretch earns the restart budget back, so a long call is not cut by drops spread over an hour
+    cur.steady = q >= 2 ? cur.steady + 1 : 0;
+    if (cur.steady >= 15) cur.restarts = 0;
   }, 2000);
 }
 
@@ -649,12 +680,13 @@ function newPc() {
 }
 
 /** Network changed / link dropped: re-gather candidates without ending the call. */
-function scheduleRestart(delay) {
+function scheduleRestart(delay, force = false) {
   if (!cur || cur.restartTimer || cur.state === 'incoming') return;
   cur.restartTimer = setTimeout(async () => {
     if (!cur) return;
     cur.restartTimer = null;
-    if (cur.pc.connectionState === 'connected') return;
+    if (cur.pc.connectionState === 'connected' && !force) return;
+    if (force) setStatus(t('call.reconnecting'));
     cur.restarts = (cur.restarts || 0) + 1;
     if (cur.restarts > 6) {
       const never = !cur.connectedAt;
@@ -825,7 +857,7 @@ export async function handleCallEvent(ev) {
       if (cur?.id !== ev.call_id || !cur.pc) break;
       try {
         if (ev.kind === 'restart' && cur.role === 'caller') {
-          scheduleRestart(0);
+          scheduleRestart(0, true);
         } else if (ev.kind === 'offer') {
           if (cur.pc.signalingState === 'have-local-offer') {
             // both sides offered at once: the callee yields (rolls back), the caller keeps its offer

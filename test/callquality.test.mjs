@@ -99,3 +99,65 @@ test('summary averages and never contains media', () => {
   assert.equal(j.duration, 120);
   assert.deepEqual(Object.keys(j).filter((k) => typeof j[k] === 'string'), ['codec', 'mode']);
 });
+
+test('video is switched off when even the lowest rung is bad, and comes back after a calm stretch', async () => {
+  const { VideoAdapter, LADDER } = await import('../web/js/callquality.js');
+  const a = new VideoAdapter('auto');
+  const events = [];
+  for (let i = 0; i < 30; i++) { a.push(1); if (a.event) events.push(a.event); }
+  assert.deepEqual(events, ['pause']);
+  assert.equal(a.paused, true);
+  for (let i = 0; i < 4; i++) a.push(3);
+  assert.equal(a.paused, true);              // not yet: a calm stretch is needed
+  a.push(1);                                  // a bad sample resets the stretch
+  for (let i = 0; i < 4; i++) a.push(3);
+  assert.equal(a.paused, true);
+  const step = a.push(3);
+  assert.equal(a.event, 'resume');
+  assert.equal(a.paused, false);
+  assert.equal(step.label, LADDER.at(-1).label); // probes on the lowest rung, then climbs normally
+});
+
+test('the high and save modes never switch the video off', async () => {
+  const { VideoAdapter } = await import('../web/js/callquality.js');
+  for (const mode of ['high', 'save']) {
+    const a = new VideoAdapter(mode);
+    for (let i = 0; i < 40; i++) a.push(1);
+    assert.equal(a.paused, false);
+  }
+});
+
+test('the second pause waits longer before probing again', async () => {
+  const { VideoAdapter } = await import('../web/js/callquality.js');
+  const a = new VideoAdapter('auto');
+  const waitAfterPause = () => {
+    let n = 0;
+    while (!a.paused) a.push(1);
+    while (a.paused) { a.push(3); n += 1; }
+    return n;
+  };
+  const first = waitAfterPause();
+  const second = waitAfterPause();
+  assert.ok(second > first);
+});
+
+test('the audio stream gets leaner on a bad link and recovers', async () => {
+  const { AudioAdapter } = await import('../web/js/callquality.js');
+  const a = new AudioAdapter();
+  assert.equal(a.push(1), null);
+  assert.equal(a.push(1), null);
+  assert.equal(a.push(1), 24000);
+  for (let i = 0; i < 5; i++) assert.equal(a.push(3), null);
+  assert.equal(a.push(3), 64000);
+});
+
+test('a silent but "connected" call is detected', async () => {
+  const { Stall } = await import('../web/js/callquality.js');
+  const s = new Stall();
+  assert.equal(s.push(0), false);   // the first sample has nothing to compare with
+  assert.equal(s.push(40), false);
+  assert.equal(s.push(0), false);
+  assert.equal(s.push(0), false);
+  assert.equal(s.push(0), true);
+  assert.equal(s.push(0), false);   // counting starts again after a nudge
+});
