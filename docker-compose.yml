@@ -25,6 +25,36 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  # Self-healing: every 30 seconds starts again any of these services that is not running (a bind mount that was not ready at boot, a crash,
+  # a failed update). Docker's own restart policy does not retry a container whose start failed. Switch on with COMPOSE_PROFILES=...,watchdog.
+  # To stop a service on purpose, stop the watchdog first:  docker compose stop watchdog
+  watchdog:
+    image: docker:cli
+    profiles: ["watchdog"]
+    restart: always
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PROJECT: ${COMPOSE_PROJECT_NAME:-suhbat}
+      SERVICES: ${WATCHDOG_SERVICES:-suhbat tgbridge cloudflared whisper embed}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          for s in $$SERVICES; do
+            for c in $$(docker ps -a -q --filter "label=com.docker.compose.project=$$PROJECT" --filter "label=com.docker.compose.service=$$s" --filter status=exited --filter status=created); do
+              echo "$$(date -u +%FT%TZ) $$s was not running, starting it"
+              docker start "$$c" 2>&1 | tail -1
+            done
+          done
+          sleep 30
+        done
+
   # Speech-to-text for voice messages (faster-whisper on the CPU). Start with:  docker compose --profile whisper up -d --build whisper
   whisper:
     build: ./whisper
