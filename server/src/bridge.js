@@ -16,7 +16,7 @@ import { q, tx } from './db.js';
 import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, int, log, now, rateLimit, rid, str } from './util.js';
 import { config } from './config.js';
-import { filePath, readHead, receive, removeFile, sniff } from './files.js';
+import { checkName, filePath, readHead, receive, removeFile, sniff } from './files.js';
 import { audit, chatOut, getMessage, getUser, memberIds, messageOut } from './service.js';
 import { emit } from './realtime.js';
 
@@ -465,7 +465,18 @@ function deliver(b, file = null) {
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
   const key = `tg:${row.tg_chat}:${int(b.tg_msg, 'tg_msg')}`;
-  if (q.get('SELECT 1 AS x FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key)) return { ok: true, duplicate: true };
+  const had = q.get('SELECT id, kind, file_id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key);
+  if (had) {
+    // the file of a message that was copied as a mark such as "[Фото]" (history, a failed upload): the message becomes the real one
+    if (b.upgrade && file && had.kind === 'text' && !had.file_id) {
+      q.run('UPDATE messages SET kind = ?, file_id = ?, duration = ?, text = ? WHERE id = ?', file.kind, file.id, file.duration ?? null, text, had.id);
+      if (b.backfill) {
+        if (!syncTimers.has(row.chat_id)) syncTimers.set(row.chat_id, setTimeout(() => { syncTimers.delete(row.chat_id); try { refreshChat(uid, row.chat_id); } catch { /* chat gone */ } }, 2500).unref());
+      } else emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(had.id)) });
+      return { ok: true, id: had.id, upgraded: true };
+    }
+    return { ok: true, duplicate: true };
+  }
   const author = b.out ? (o.tg_name || 'Я') : String(b.author || '?').replace(/[\u0000-\u001f]/g, '').slice(0, 64);
   const reply = Number.isInteger(b.reply_to)
     ? q.get('SELECT id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${b.reply_to}`)?.id ?? null : null;
@@ -494,41 +505,94 @@ bridgeIn.post('/bridge/in', (req, res) => {
   res.json(deliver(req.body || {}));
 });
 
-// pictures and voice messages (and videos, when switched on in the bridge) arrive as the raw file with the details in the query
-const MEDIA_KINDS = { image: ['jpeg', 'png', 'webp', 'gif'], voice: ['ogg', 'webm', 'mp4', 'mpeg', 'wav'], video: ['mp4', 'webm'] };
+// pictures, voice messages, videos, music and files arrive as the raw file with the details in the query
+const MEDIA_KINDS = new Set(['image', 'voice', 'video', 'audio', 'file']);
+const MB = 1024 * 1024;
+const FILE_MAX = (Number(process.env.BRIDGE_FILE_MAX_MB) || 100) * MB;
+const VIDEO_MAX = (Number(process.env.BRIDGE_VIDEO_MAX_MB) || 200) * MB;
+const MIN_FREE = (Number(process.env.BRIDGE_MIN_FREE_GB) || 5) * 1024 * MB;   // the copy of the old history stops when the disk gets this tight
+const freeBytes = () => { try { const f = fs.statfsSync(config.filesDir); return f.bavail * f.bsize; } catch { return Infinity; } };
+
 bridgeIn.post('/bridge/media', async (req, res) => {
   secret(req);
   const qy = req.query;
   const want = String(qy.kind || '');
-  if (!MEDIA_KINDS[want]) { req.resume(); throw new HttpError(400, 'invalid_input'); }
+  if (!MEDIA_KINDS.has(want)) { req.resume(); throw new HttpError(400, 'invalid_input'); }
   const uid = Number(qy.owner);
   const row = Number.isInteger(uid) && q.get('SELECT 1 AS x FROM tg_bridge WHERE user_id = ?', uid);
   if (!row) { req.resume(); return res.json({ ok: true, skipped: true }); }
+  if (qy.backfill === '1' && freeBytes() < MIN_FREE) { req.resume(); throw new HttpError(507, 'disk_low'); }
   const fid = rid(16);
   const dest = filePath(fid);
-  const limit = want === 'video' ? config.maxUploadBytes : Math.min(config.maxUploadBytes, 25 * 1024 * 1024);
+  const limit = want === 'video' ? VIDEO_MAX : want === 'file' || want === 'audio' ? FILE_MAX : Math.min(config.maxUploadBytes, 25 * MB);
   let size;
   try { size = await receive(req, dest, limit); } catch (e) { removeFile(fid); throw e; }
   if (size === 0) { removeFile(fid); throw new HttpError(400, 'empty_file'); }
   const type = sniff(readHead(dest), want === 'voice');
-  const okKind = type && ((want === 'image' && type.kind === 'image') || (want === 'voice' && type.kind === 'voice') || (want === 'video' && type.kind === 'video'));
-  if (!okKind) { removeFile(fid); throw new HttpError(415, 'unsupported_media'); }
+  let kind;
+  let mime;
+  let name;
+  try {
+    if (want === 'file' || want === 'audio') {
+      if (type?.kind === 'image') { kind = 'image'; mime = type.mime; name = `photo.${mime.split('/')[1]}`; }   // a picture sent "as a file"
+      else if (want === 'audio' && type?.kind === 'audio') { kind = 'audio'; mime = type.mime; name = checkName(String(qy.name || 'audio')); }
+      else { kind = 'file'; mime = type?.mime === 'application/pdf' ? type.mime : 'application/octet-stream'; name = checkName(String(qy.name || 'file')); }
+    } else {
+      const okKind = type && ((want === 'image' && type.kind === 'image') || (want === 'voice' && type.kind === 'voice') || (want === 'video' && type.kind === 'video'));
+      if (!okKind) throw new HttpError(415, 'unsupported_media');
+      kind = type.kind;
+      mime = type.mime;
+      name = want === 'image' ? `photo.${mime.split('/')[1]}` : want === 'voice' ? 'voice.ogg' : 'video.mp4';
+    }
+  } catch (e) { removeFile(fid); throw e; }
   const tgChat = String(qy.tg_chat ?? '');
-  const name = want === 'image' ? `photo.${type.mime.split('/')[1]}` : want === 'voice' ? 'voice.ogg' : 'video.mp4';
   const dur = Number(qy.duration);
   const dim = (v) => (Number(v) > 0 && Number(v) < 20000 ? Math.round(Number(v)) : null);
   // the file row comes first (the message points at it); it is attached to its chat once the message knows which chat it landed in
-  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at, width, height) VALUES (?,?,?,?,?,?,?,?,?)', fid, uid, null, name, type.mime, size, now(), dim(qy.w), dim(qy.h));
+  q.run('INSERT INTO files (id, owner_id, chat_id, name, mime, size, created_at, width, height) VALUES (?,?,?,?,?,?,?,?,?)', fid, uid, null, name, mime, size, now(), dim(qy.w), dim(qy.h));
   let out;
   try {
     out = deliver({
     owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
-    caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1',
-  }, { id: fid, kind: type.kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
+    caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1', upgrade: qy.upgrade === '1',
+  }, { id: fid, kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
   } catch (e) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); throw e; }
   if (!out.id) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); return res.json(out); } // skipped or already there: the file is not kept
   q.run('UPDATE files SET chat_id = (SELECT chat_id FROM messages WHERE id = ?) WHERE id = ?', out.id, fid);
   res.json({ ok: true, id: out.id });
+});
+
+// Messages that are still only a mark ("[Фото]", "[Файл]" ...) although the bridge can fetch the file now: the history copied before files were
+// supported, uploads that failed while the server was down. The bridge asks for them, newest first, and puts the files in.
+const PLACEHOLDERS = { photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'] };
+bridgeIn.get('/bridge/pending', (req, res) => {
+  secret(req);
+  const uid = Number(req.query.owner);
+  const marks = String(req.query.kinds || '').split(',').flatMap((k) => PLACEHOLDERS[k] || []);
+  if (!Number.isInteger(uid) || !marks.length) return res.json({ items: [], left: 0 });
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const where = `c.user_id = ? AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')})
+    AND m.id NOT IN (SELECT message_id FROM tg_media_skip)`;
+  const args = [uid, ...marks.map((m) => `${m}%`)];
+  const items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where} ORDER BY m.id DESC LIMIT ?`, ...args, limit)
+    .map((r) => ({ id: r.id, tg_chat: r.tg_chat, tg_msg: Number(String(r.import_key).split(':').pop()) })).filter((r) => Number.isInteger(r.tg_msg));
+  const left = q.get(`SELECT COUNT(*) AS n FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where}`, ...args)?.n ?? 0;
+  res.json({ items, left });
+});
+
+// the file of a message cannot be fetched (too big, deleted in Telegram, a blocked type): the mark stays and is not asked for again
+bridgeIn.post('/bridge/media-skip', (req, res) => {
+  secret(req);
+  const uid = Number(req.body?.owner);
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+  const why = String(req.body?.reason || '').replace(/[^\w-]/g, '').slice(0, 30);
+  let n = 0;
+  if (Number.isInteger(uid)) {
+    for (const id of ids) {
+      n += Number(q.run('INSERT OR IGNORE INTO tg_media_skip (message_id, reason, at) SELECT m.id, ?, ? FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE m.id = ? AND c.user_id = ?', why, now(), id, uid).changes);
+    }
+  }
+  res.json({ ok: true, skipped: n });
 });
 
 // the profile photo of the other side of a mirrored chat (raw image, details in the query)

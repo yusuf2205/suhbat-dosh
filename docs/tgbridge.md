@@ -71,15 +71,17 @@ Every linked person is one permanent connection to Telegram inside the `tgbridge
 | Telegram's limits | They apply per Telegram account (each person has their own) and per `api_id`. One `api_id` for a few dozen people is fine; a service with hundreds of accounts under one `api_id` risks being limited by Telegram. If that ever happens, register another application at my.telegram.org and give the bridge a second `api_id`. |
 | Who is connected | The administrator panel shows for every person whether the Telegram link is alive ("подключён" / "нет связи"). |
 | Groups and channels | Everybody picks their own, one by one (nothing is copied by default), and the administrator sees them all like the personal chats. Choose with care: a busy group of thousands of people is a lot of data. |
-| Disk | Only text, photos and voice (video is off). Photos and voice come for new messages; the old history is text only. Plan for disk space as for a messenger with that many active people. |
+| Disk | Text, photos, voice, video, music and files, also from the old history (fetched in the background). Plan for disk space as for a messenger with that many active people; the old history stops being fetched when less than `BRIDGE_MIN_FREE_GB` (5) is left. |
 
 ## Limits
 
-* **Copied:** text, photos and voice messages (up to 25 MB each). Photos and voice of the *old history* come only as a mark such as "[Photo]"
-  (set `BACKFILL_MEDIA=1` in `.env.bridge` to download them too; it is heavy). Files, stickers, polls arrive as a mark such as "[File]".
+* **Copied:** text, photos and voice messages (up to 25 MB each), videos and round videos (`BRIDGE_VIDEO_MAX_MB`, default 200; `BRIDGE_VIDEO=0` switches video off),
+  music and documents (`BRIDGE_FILE_MAX_MB`, default 100). Programs and scripts (`.exe`, `.bat`, `.js` ...) are not copied, nor stickers, GIFs, polls: they arrive as a mark such as "[File]".
+* **Messages that are only a mark** ("[Photo]", "[File]" ...: the old history, an upload that failed while the server was down) get their file afterwards.
+  A pass in the bridge asks the server for them, newest first, a few at a time, and puts the file into the message in place (`BRIDGE_UPGRADE=0` switches it off).
+  What cannot be fetched (too big, deleted in Telegram, a blocked type) keeps its mark and is not asked for again (table `tg_media_skip`; empty it to try again after raising a limit).
+  A failed upload is also tried again at once (three times); `docker compose logs tgbridge` shows "media upgrade: files added ... to go".
 * **Voice messages** are Telegram's Ogg/Opus: Chrome, Edge, Firefox and Android play them; Safari on iPhone may not.
-* **Video is prepared but off.** Switch it on with `BRIDGE_VIDEO=1` in `.env.bridge` (size limit `BRIDGE_VIDEO_MAX_MB`, default 50; round video messages included),
-  then `docker compose --profile tgbridge up -d tgbridge`. The test suite runs the same scenario with `TEST_BRIDGE_VIDEO=1`.
 * Telegram may restrict an account that behaves like a bot. Normal personal use is far below the limits; the first history copy is paced (about a chat every 0.6 s).
 * Messages of people's contacts are stored on your server; they do not know it.
 

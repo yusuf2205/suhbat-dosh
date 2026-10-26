@@ -17,8 +17,10 @@ import hmac
 import json
 import os
 import re
+import tempfile
 import time
 from collections import deque
+from datetime import datetime, timezone
 
 from aiohttp import ClientSession, ClientTimeout, web
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -35,11 +37,16 @@ BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
 TELEGRAM_SERVICE = 777000
 HEAVY = asyncio.Semaphore(int(os.environ.get("BRIDGE_HEAVY_JOBS", "10")))   # history copies and light passes running at once
 RECENT_DAYS = 3        # the light pass looks only at chats with something new in the last days
-# media: photos and voice messages are copied; videos are prepared but OFF until BRIDGE_VIDEO=1
+# media: photos, voice messages, videos (BRIDGE_VIDEO=0 switches them off), music and files are copied
 MEDIA_MAX = int(os.environ.get("BRIDGE_MEDIA_MAX_MB", "25")) * 1024 * 1024
-VIDEO_ON = os.environ.get("BRIDGE_VIDEO") == "1"
-VIDEO_MAX = int(os.environ.get("BRIDGE_VIDEO_MAX_MB", "50")) * 1024 * 1024
-BACKFILL_MEDIA = os.environ.get("BACKFILL_MEDIA") == "1"   # also download the pictures of the old history (heavy)
+VIDEO_ON = os.environ.get("BRIDGE_VIDEO") != "0"
+VIDEO_MAX = int(os.environ.get("BRIDGE_VIDEO_MAX_MB", "200")) * 1024 * 1024
+FILE_MAX = int(os.environ.get("BRIDGE_FILE_MAX_MB", "100")) * 1024 * 1024
+BACKFILL_MEDIA = os.environ.get("BACKFILL_MEDIA") == "1"   # also download the pictures while the first copy of the history runs (heavy)
+# the files of messages that are only a mark such as "[Фото]" (old history, uploads that failed) are fetched later, a few at a time, newest first
+UPGRADE_ON = os.environ.get("BRIDGE_UPGRADE") != "0"
+UPGRADE_DELAY = float(os.environ.get("UPGRADE_DELAY", "60"))
+UPGRADE_IDLE = float(os.environ.get("UPGRADE_IDLE", "600"))
 
 
 def log(*a):
@@ -75,12 +82,45 @@ def write_secret(path: str, data: bytes):
 
 
 # ---------------------------------------------------------------- one Telegram account
+class FakeMsg:
+    """A Telegram message with a file, as the upgrade pass sees it (tests only)."""
+
+    def __init__(self, kind, size, name, caption=""):
+        from types import SimpleNamespace
+        self.kind = kind
+        self.message = caption
+        self.out = False
+        self.reply_to = None
+        self.date = datetime.now(timezone.utc)
+        self.file = SimpleNamespace(size=size, name=name, width=None, height=None, duration=None)
+        for attr in ("sticker", "voice", "video_note", "gif", "photo", "video", "audio", "poll", "geo", "contact", "document"):
+            setattr(self, attr, None)
+        if kind == "image":
+            self.photo = True
+        elif kind == "voice":
+            self.voice = True
+        elif kind == "video":
+            self.video = True
+            self.document = True
+        elif kind == "audio":
+            self.audio = True
+            self.document = True
+        else:
+            self.document = True
+
+    async def download_media(self, file=None):
+        with open(file, "wb") as f:
+            f.write(TINY[self.kind])
+        return file
+
+
 class MockClient:
     """A stand-in for Telethon so the whole path can be tested without an account."""
 
     def __init__(self):
         self.authorized = False
         self.n = 1000
+        self.tg = {}   # (chat, message id) -> FakeMsg: messages whose file can still be fetched
 
     async def connect(self):
         pass
@@ -97,6 +137,12 @@ class MockClient:
     async def history(self, chat_id, limit):
         base = int(time.time() * 1000) - 86400_000
         return [{"tg_msg": 1 + i, "author": "Дилшод (мок)", "out": i % 2 == 1, "text": f"старое сообщение {i + 1}", "ts": base + i * 60_000} for i in range(3)]
+
+    async def get_messages(self, chat, ids=None):
+        return [self.tg.get((int(chat), i)) for i in ids]
+
+    async def get_dialogs(self, limit=None):
+        return []
 
     async def send(self, chat_id, text, reply_to=None):
         self.n += 1
@@ -155,6 +201,9 @@ class Acct:
         self.sent_edit = set()
         self.backfill = {"state": "idle", "done": 0, "total": 0}
         self.bf_task = None
+        self.up_task = None        # fetches the files of messages that were copied as a mark
+        self.up_fail = {}          # message -> how many times Telegram refused its file
+        self.up_done = 0
         self.last_sync = 0.0
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.synced = False        # the first complete copy of the personal chats has finished
@@ -186,6 +235,8 @@ class Acct:
     async def wipe(self):
         if self.bf_task:
             self.bf_task.cancel()
+        if self.up_task:
+            self.up_task.cancel()
         for p in (self.session_file, self.list_file, self.session_file + ".tmp", self.list_file + ".tmp"):
             try:
                 os.remove(p)
@@ -273,28 +324,70 @@ def private_ok(entity_id: int, entity) -> bool:
 
 
 def media_kind(msg):
-    """Which kind of file this message carries and we are willing to copy: 'image', 'voice', 'video' (only when switched on) or None."""
+    """Which kind of file this message carries and we are willing to copy: image, voice, video, audio, file; None for the rest (stickers, GIFs, polls ...)."""
     if getattr(msg, "voice", None):
         return "voice"
     if getattr(msg, "photo", None):
         return "image"
-    if VIDEO_ON and (getattr(msg, "video", None) or getattr(msg, "video_note", None)) and not getattr(msg, "gif", None):
-        return "video"
+    if getattr(msg, "sticker", None) or getattr(msg, "gif", None):
+        return None
+    if getattr(msg, "video", None) or getattr(msg, "video_note", None):
+        return "video" if VIDEO_ON else None
+    if getattr(msg, "audio", None):
+        return "audio"
+    if getattr(msg, "document", None):
+        return "file"
     return None
 
 
-async def upload_media(a: Acct, msg, kind: str, meta: dict) -> bool:
-    """Download the file of a message and hand it to Suhbat-dosh. False means: send the text placeholder instead."""
+def media_limit(kind: str) -> int:
+    return VIDEO_MAX if kind == "video" else FILE_MAX if kind in ("file", "audio") else MEDIA_MAX
+
+
+MEDIA_SEM = asyncio.Semaphore(2)   # big downloads at once (the temporary files live in memory)
+
+
+async def upload_media_r(a: Acct, msg, kind: str, meta: dict) -> str:
+    """Download the file of a message and hand it to Suhbat-dosh. "ok", or why not: "retry" (the server was not reachable), "full" (its disk is nearly full),
+    "dl_fail" (Telegram would not give the file), "skip:<reason>" (never going to work: too big, a blocked type)."""
     f = getattr(msg, "file", None)
     size = getattr(f, "size", 0) or 0
-    if size > (VIDEO_MAX if kind == "video" else MEDIA_MAX):
-        return False
-    try:
-        data = await msg.download_media(file=bytes)
-    except Exception as e:
-        log("media download failed:", type(e).__name__)
-        return False
-    return await post_media(a, kind, data, {**meta, "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""})
+    if size > media_limit(kind):
+        return "skip:too_big"
+    async with MEDIA_SEM:
+        fd, path = tempfile.mkstemp(prefix="tgm-", suffix=".bin")
+        os.close(fd)
+        got = None
+        try:
+            try:
+                got = await msg.download_media(file=path)
+            except Exception as e:
+                log("media download failed:", type(e).__name__)
+                return "dl_fail"
+            src = got if isinstance(got, str) and os.path.exists(got) else path
+            if not os.path.getsize(src):
+                return "skip:empty"
+            params = {**meta, "name": getattr(f, "name", "") or "", "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""}
+            res = "retry"
+            for wait in (0, 3, 10):   # the server may be restarting: a few quick tries, the upgrade pass keeps trying later
+                if wait:
+                    await asyncio.sleep(wait)
+                res = await post_media_r(a, kind, src, params)
+                if res != "retry":
+                    break
+            return res
+        finally:
+            for p in {path, got}:
+                if isinstance(p, str):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+
+
+async def upload_media(a: Acct, msg, kind: str, meta: dict) -> bool:
+    """False means: send the text placeholder instead (the file is fetched later if it can be)."""
+    return await upload_media_r(a, msg, kind, meta) == "ok"
 
 
 PROFILE_EVERY = 6 * 3600
@@ -331,17 +424,152 @@ async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False
         return False
 
 
-async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
-    if not data:
-        return False
+async def post_media_r(a: Acct, kind: str, src, meta: dict) -> str:
+    """src: the bytes, or the path of a file (streamed, never read into memory at once)."""
     params = {"owner": a.uid, "kind": kind, **{k: ("1" if v is True else "" if v is None or v is False else str(v)) for k, v in meta.items()}}
+    f = None
     try:
-        async with _http().post(f"{SERVER}/api/bridge/media", params=params, data=data, timeout=ClientTimeout(total=180),
+        if isinstance(src, (bytes, bytearray)):
+            if not src:
+                return "skip:empty"
+            data = src
+        else:
+            f = open(src, "rb")
+            data = f
+        async with _http().post(f"{SERVER}/api/bridge/media", params=params, data=data, timeout=ClientTimeout(total=1800),
                                 headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/octet-stream"}) as r:
-            return r.status < 300
+            if r.status < 300:
+                return "ok"
+            if r.status == 507:
+                return "full"
+            if r.status in (400, 413, 415):
+                return "skip:" + {400: "bad", 413: "too_big", 415: "type"}[r.status]
+            return "retry"
     except Exception as e:
         log("media upload failed:", type(e).__name__)
-        return False
+        return "retry"
+    finally:
+        if f:
+            f.close()
+
+
+async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
+    return await post_media_r(a, kind, data, meta) == "ok"
+
+
+# ---------------------------------------------------------------- files of messages that were copied as a mark
+def upgrade_kinds() -> str:
+    return "photo,voice,file,audio" + (",video" if VIDEO_ON else "")
+
+
+async def pending_media(a: Acct, limit=20):
+    try:
+        async with _http().get(f"{SERVER}/api/bridge/pending", params={"owner": a.uid, "kinds": upgrade_kinds(), "limit": limit}, timeout=ClientTimeout(total=30),
+                               headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+            return await r.json() if r.status == 200 else None
+    except Exception:
+        return None
+
+
+async def skip_media(a: Acct, ids, reason: str):
+    if not ids:
+        return
+    try:
+        async with _http().post(f"{SERVER}/api/bridge/media-skip", json={"owner": a.uid, "ids": ids, "reason": reason}, timeout=ClientTimeout(total=30),
+                                headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+            await r.read()
+    except Exception:
+        pass
+
+
+async def upgrade_round(a: Acct) -> str:
+    """One batch. "ok": there may be more; "idle": nothing is waiting; "down": the server cannot be reached; "full": its disk is nearly full."""
+    p = await pending_media(a)
+    if p is None:
+        return "down"
+    items = p.get("items") or []
+    if not items:
+        return "idle"
+    by_chat = {}
+    for it in items:
+        by_chat.setdefault(it["tg_chat"], []).append(it)
+    skips = {}
+    done = 0
+    for chat, its in by_chat.items():
+        try:
+            msgs = await a.client.get_messages(int(chat), ids=[i["tg_msg"] for i in its])
+        except ValueError:   # a chat this account has left
+            skips.setdefault("chat", []).extend(i["id"] for i in its)
+            continue
+        except Exception as e:
+            log("media upgrade: a chat could not be read:", type(e).__name__)
+            await asyncio.sleep(5)
+            continue
+        for it, m in zip(its, msgs):
+            if m is None:
+                skips.setdefault("gone", []).append(it["id"])
+                continue
+            mk = media_kind(m)
+            if not mk:
+                skips.setdefault("nomedia", []).append(it["id"])
+                continue
+            res = await upload_media_r(a, m, mk, {
+                "tg_chat": chat, "chat_kind": "user", "backfill": True, "upgrade": True, "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
+                "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+            })
+            if res == "ok":
+                done += 1
+                a.up_fail.pop(it["id"], None)
+            elif res.startswith("skip:"):
+                skips.setdefault(res[5:], []).append(it["id"])
+            elif res == "full":
+                await flush_skips(a, skips)
+                return "full"
+            elif res == "retry":
+                await flush_skips(a, skips)
+                return "down"
+            else:   # Telegram would not give this file: three tries, then it is left as a mark
+                a.up_fail[it["id"]] = a.up_fail.get(it["id"], 0) + 1
+                if a.up_fail[it["id"]] >= 3:
+                    skips.setdefault("download", []).append(it["id"])
+                    a.up_fail.pop(it["id"], None)
+            await asyncio.sleep(0.4)   # be gentle with Telegram and the NAS
+    await flush_skips(a, skips)
+    a.up_done += done
+    if done:
+        log("media upgrade: files added for account", a.uid, "-", a.up_done, "so far,", max(0, int(p.get("left", 0)) - done), "to go")
+    return "ok"
+
+
+async def flush_skips(a: Acct, skips: dict):
+    for reason, ids in skips.items():
+        await skip_media(a, ids, reason)
+    skips.clear()
+
+
+async def upgrade_loop(a: Acct):
+    await asyncio.sleep(UPGRADE_DELAY)
+    warm = False
+    while a.client is not None and a.me:
+        if a.backfill["state"] in ("running", "queued"):
+            await asyncio.sleep(30)
+            continue
+        try:
+            if not warm:
+                await a.client.get_dialogs(limit=BACKFILL_DIALOGS)   # the account's chats become known to the library again after a restart
+                warm = True
+            res = await upgrade_round(a)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log("media upgrade failed:", repr(e)[:100])
+            res = "down"
+        await asyncio.sleep({"ok": 2, "idle": UPGRADE_IDLE, "down": 60, "full": 3600}.get(res, 60))
+
+
+def start_upgrade(a: Acct):
+    if UPGRADE_ON and (a.up_task is None or a.up_task.done()):
+        a.up_task = asyncio.create_task(upgrade_loop(a))
 
 
 def may_answer(a: Acct, chat: str) -> bool:
@@ -436,6 +664,8 @@ def attach_handlers(a: Acct):
               }, locked=True)
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
+
+    start_upgrade(a)
 
 
 async def delayed_profile(a: Acct, event, key: str, kind: str):
@@ -631,6 +861,7 @@ async def login_task(a: Acct):
             await a.persist_session()
             a.save_list()
             L["status"] = "done"
+            start_upgrade(a)
             return
         while True:
             try:
@@ -931,6 +1162,8 @@ TINY = {
     "image": base64.b64decode("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="),
     "voice": b"OggS\x00\x02" + b"\x00" * 40,
     "video": b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 40,
+    "audio": b"ID3\x03" + b"\x00" * 40,
+    "file": b"PK\x03\x04" + b"\x00" * 40,
 }
 
 
@@ -944,7 +1177,14 @@ async def mock_media(r):
     key = str(b["chat"])
     if not a.me or (key not in a.chats and not a.auto_private) or (kind == "video" and not VIDEO_ON):
         return web.json_response({"forwarded": False})
-    ok = await post_media(a, kind, TINY[kind], {"tg_chat": key, "chat_kind": b.get("chat_kind", "user"), "title": b.get("title", ""), "tg_msg": b["msg"],
+    if b.get("placeholder"):
+        # the message was copied as a mark; its file can still be fetched (what the upgrade pass is for)
+        a.client.tg[(int(key), b["msg"])] = FakeMsg(kind, int(b.get("size", 40)), b.get("name", "file.zip"), b.get("caption", ""))
+        label = {"image": "[Фото]", "voice": "[Голосовое сообщение]", "video": "[Видео]", "audio": "[Аудио]", "file": "[Файл]"}[kind]
+        await to_server({"owner": a.uid, "tg_chat": key, "kind": "user", "title": b.get("title", ""), "tg_msg": b["msg"], "author": b.get("author", "Кто-то"),
+                         "out": False, "text": f"{label} {b.get('caption', '')}".strip(), "ts": int(time.time() * 1000), "reply_to": None})
+        return web.json_response({"forwarded": True})
+    ok = await post_media(a, kind, TINY[kind], {"tg_chat": key, "chat_kind": b.get("chat_kind", "user"), "title": b.get("title", ""), "tg_msg": b["msg"], "name": b.get("name", ""),
                                                "author": b.get("author", "Кто-то"), "out": bool(b.get("out")), "caption": b.get("caption", ""), "ts": int(time.time() * 1000),
                                                "duration": b.get("duration", ""), "w": b.get("w", ""), "h": b.get("h", "")})
     return web.json_response({"forwarded": ok})

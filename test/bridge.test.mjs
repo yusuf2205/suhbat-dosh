@@ -14,7 +14,7 @@ const PORT = 6860 + Math.floor(Math.random() * 40);
 const BPORT = 6900 + Math.floor(Math.random() * 40);
 const BASE = `http://127.0.0.1:${PORT}`;
 const TOKEN = crypto.randomBytes(24).toString('base64url');
-const VIDEO = process.env.TEST_BRIDGE_VIDEO === '1'; // run the same test with videos switched on
+const VIDEO = process.env.TEST_BRIDGE_VIDEO !== '0'; // videos are copied unless switched off (TEST_BRIDGE_VIDEO=0)
 const pyEnv = { ...process.env, ...(process.env.TGBRIDGE_PYPATH ? { PYTHONPATH: process.env.TGBRIDGE_PYPATH } : {}) };
 const havePy = spawnSync('python', ['-c', 'import aiohttp, cryptography'], { env: pyEnv }).status === 0;
 let server; let bridgeProc; let bdir;
@@ -24,7 +24,7 @@ before(async () => {
   bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-brd-'));
   bridgeProc = spawn('python', ['tgbridge/bridge.py'], {
     cwd: root, stdio: 'inherit',
-    env: { ...pyEnv, TGBRIDGE_MOCK: '1', PORT: String(BPORT), DATA_DIR: bdir, BRIDGE_TOKEN: TOKEN, TGBRIDGE_KEY: crypto.randomBytes(32).toString('base64'), SERVER_URL: BASE, MOCK_LOGIN_DELAY: '0.4', ...(VIDEO ? { BRIDGE_VIDEO: '1' } : {}) },
+    env: { ...pyEnv, TGBRIDGE_MOCK: '1', PORT: String(BPORT), DATA_DIR: bdir, BRIDGE_TOKEN: TOKEN, TGBRIDGE_KEY: crypto.randomBytes(32).toString('base64'), SERVER_URL: BASE, MOCK_LOGIN_DELAY: '0.4', BRIDGE_VIDEO: VIDEO ? '1' : '0', UPGRADE_DELAY: '0.3', UPGRADE_IDLE: '0.4' },
   });
   const env = {
     ...process.env, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', OTP_MODE: 'dev', LOG_LEVEL: 'error', OTP_REQUESTS_PER_IP: '300',
@@ -102,7 +102,7 @@ test('personal chats are mirrored by default and quietly, history comes along, g
   const after1 = await until(async () => { const c = (await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}`)).data.chat; return c.unread === 1 ? c : null; });
   assert.ok(after1, 'one new unread message');
   assert.equal((await call(admin.cookie, 'GET', `/api/chats/${dil.chat_id}/messages`)).data.messages.length, 4);
-  // pictures and voice messages are copied as files; videos are prepared but switched off
+  // pictures, voice messages, videos, music and files are copied as files
   assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'image', msg: 60, caption: 'Фото с вечера', w: 640, h: 480 })).forwarded, true);
   assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'voice', msg: 61, duration: 7 })).forwarded, true);
   assert.equal((await mockMedia(admin.user.id, { chat: 777, kind: 'video', msg: 62 })).forwarded, VIDEO, VIDEO ? 'videos are on' : 'videos are off for now');
@@ -313,4 +313,47 @@ test('a photo and a file written here go to Telegram as files', { skip: !havePy 
   assert.ok(l2, 'the file was handed to Telegram');
   assert.equal(l2.size, Buffer.byteLength('просто текст для проверки'));
   assert.match(l2.name, /\.txt$/);
+});
+
+test('files, music and videos are copied; a message that was only a mark gets its file later', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002070', 'Файлы');
+  await link(u);
+  assert.equal((await mock(u.user.id, { chat: 6161, kind: 'user', title: 'Рустам', msg: 1, author: 'Рустам', text: 'Привет' })).forwarded, true);
+  const chat = await until(async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Рустам'));
+  assert.ok(chat);
+  const msgs = async () => (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages`)).data.messages;
+  const find = (pred) => until(async () => (await msgs()).find(pred));
+
+  // a document arrives with its name; a song stays a song; a blocked type is not stored (the mark stays)
+  assert.equal((await mockMedia(u.user.id, { chat: 6161, kind: 'file', msg: 10, name: 'отчёт.zip', caption: 'за октябрь' })).forwarded, true);
+  const doc = await find((m) => m.kind === 'file');
+  assert.ok(doc, 'the document arrived');
+  assert.equal(doc.file.name, 'отчёт.zip');
+  assert.equal(doc.text, 'за октябрь');
+  const got = await fetch(BASE + doc.file.url, { headers: { cookie: u.cookie } });
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get('content-type'), 'application/octet-stream', 'a document is never shown in the page');
+  assert.equal((await mockMedia(u.user.id, { chat: 6161, kind: 'audio', msg: 11, name: 'песня.mp3' })).forwarded, true);
+  assert.ok(await find((m) => m.kind === 'audio'), 'the song arrived as audio');
+  assert.equal((await mockMedia(u.user.id, { chat: 6161, kind: 'file', msg: 12, name: 'setup.exe' })).forwarded, false, 'a program is not copied');
+
+  // marks: the message was copied as text before files were supported; the bridge fetches the files by itself
+  const mark = (msg, kind, extra = {}) => mockMedia(u.user.id, { chat: 6161, kind, msg, placeholder: true, ...extra });
+  assert.equal((await mark(20, 'image', { caption: 'старое фото' })).forwarded, true);
+  assert.equal((await mark(21, 'voice')).forwarded, true);
+  assert.equal((await mark(22, 'file', { name: 'договор.zip' })).forwarded, true);
+  assert.equal((await mark(23, 'file', { name: 'огромный.zip', size: 500 * 1024 * 1024 })).forwarded, true, 'too big for the limit');
+  assert.equal((await mark(24, 'file', { name: 'run.exe' })).forwarded, true, 'a blocked type');
+  const old = await find((m) => m.kind === 'image' && m.text === 'старое фото');
+  assert.ok(old, 'the photo replaced its mark');
+  assert.equal(old.file.mime, 'image/jpeg');
+  assert.ok(await find((m) => m.kind === 'voice'), 'the voice message too');
+  const dog = await find((m) => m.kind === 'file' && m.file?.name === 'договор.zip');
+  assert.ok(dog, 'the document too');
+  const all = await msgs();
+  assert.equal(all.filter((m) => m.text === '[Файл]' && m.kind === 'text').length, 2, 'the two that cannot be fetched stay marks');
+  // ... and they are not asked for again
+  const waiting = async () => (await (await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=photo,voice,file,video,audio`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json()).items;
+  assert.ok(await until(async () => (await waiting()).length === 0), 'nothing is waiting any more');
+  assert.equal((await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=file`)).status, 403, 'the door needs the secret');
 });
