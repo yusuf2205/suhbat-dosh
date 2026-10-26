@@ -22,8 +22,9 @@ export function adminNodes(chat, redraw) {
   const owner = chat.my_role === 'owner';
   const out = [h('h3', null, t('adm.title'))];
   out.push(toggle(t('adm.approval'), t('adm.approval_hint'), chat.join_approval, async (on) => { keep(await api('POST', `/api/chats/${chat.id}/approval`, { on })); redraw(); }));
-  out.push(h('button', { class: 'btn secondary', type: 'button', onclick: () => openLinks(chat, redraw) }, t('adm.links')));
-  out.push(h('button', { class: 'btn secondary', type: 'button', onclick: () => openRequests(chat, redraw) }, t('adm.requests')));
+  out.push(h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '10px 0' } },
+    h('button', { class: 'btn secondary', type: 'button', onclick: () => openLinks(chat, redraw) }, t('adm.links')),
+    h('button', { class: 'btn secondary', type: 'button', onclick: () => openRequests(chat, redraw) }, t('adm.requests'))));
   if (owner && chat.type === 'group' && !chat.secret && !chat.imported) {
     out.push(toggle(t('adm.forum'), t('adm.forum_hint'), chat.forum, async (on) => { keep(await api('POST', `/api/chats/${chat.id}/forum`, { on })); redraw(); }));
   }
