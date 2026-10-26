@@ -1142,7 +1142,7 @@ function maybeAutoReply(chat, sender, kind) {
   postMessage({ chat, user: peer, text: `🤖 ${text}`, auto: true, silent: false });
 }
 
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null, topicId = null, threadOf = null }) {
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, forwardNote = null, forwardHops = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null, topicId = null, threadOf = null }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1155,9 +1155,9 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   }
   const t = now();
   const r = q.run(
-    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, t,
+    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, forward_note, forward_hops, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, forwardNote, forwardHops, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, t,
   );
   const id = Number(r.lastInsertRowid);
   if (chat.imported_from === 'tgbridge') {
@@ -1234,6 +1234,8 @@ api.post('/chats/:id/messages', (req, res) => {
   let fileId = null;
   let duration = null;
   let forwardFrom = null;
+  let forwardNote = null;
+  let forwardHops = null;
   let liveUntil = null;
   if (b.forward_of !== undefined) {
     const src = getMessage(int(b.forward_of, 'forward_of'));
@@ -1245,6 +1247,14 @@ api.post('/chats/:id/messages', (req, res) => {
     fileId = src.file_id;
     duration = src.duration;
     forwardFrom = src.forward_from || sender || '';
+    // the path it travelled: the author, then everybody who passed it on (the first and the last few are kept)
+    let path = [forwardFrom];
+    try { if (src.forward_hops) path = JSON.parse(src.forward_hops); } catch { /* an old row */ }
+    path = [...path, req.user.name];
+    if (path.length > 6) path = [path[0], ...path.slice(-5)];
+    forwardHops = JSON.stringify(path.map((n) => String(n).slice(0, 40)));
+    const note = typeof b.note === 'string' ? b.note.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, 500) : '';
+    forwardNote = note || null;
   } else {
     text = str(b.text, 'text', { min: 1, max: LIMITS.TEXT_MAX * 2 });
     if (isSecretChat(chat.id)) {
@@ -1276,7 +1286,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil, topicId: topicFor(req, chat, me, replyTo) });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, forwardNote, forwardHops, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil, topicId: topicFor(req, chat, me, replyTo) });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 

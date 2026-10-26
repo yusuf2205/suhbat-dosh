@@ -199,6 +199,8 @@ export function messageOut(row) {
     text: row.text,
     reply_to: reply,
     forward_from: row.forward_from,
+    ...(row.forward_note ? { forward_note: row.forward_note } : {}),
+    ...(row.forward_hops ? { forward_path: JSON.parse(row.forward_hops) } : {}),
     file,
     duration: row.duration,
     waveform: row.waveform || null,

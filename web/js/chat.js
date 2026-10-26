@@ -1073,7 +1073,7 @@ function renderMessages() {
       want.push(keyed('unread', () => h('div', { class: 'unread-div', role: 'separator' }, t('chat.new_messages'))));
       dividerDone = true;
     }
-    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
+    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.forward_note, m.forward_path?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
       m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
@@ -1132,13 +1132,19 @@ function buildMessage(m, c) {
   if (m.kind === 'call') return buildCallEntry(m, c);
   const mine = c.imported ? m.import_author === c.import_me : m.sender_id === S.me.id;
   const bigEmoji = m.kind === 'text' && !m.file && /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*){1,3}$/u.test((m.text || '').trim());
-  const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}${m.kind === 'sticker' ? ' sticker-bubble' : ''}` });
+  const bubble = h('div', { class: `bubble${bigEmoji ? ' big-emoji' : ''}${m.kind === 'sticker' ? ' sticker-bubble' : ''}${m.forward_from ? ' forwarded' : ''}` });
   if (!mine && c.type !== 'direct') {
     const al = aliasOf(c, m.sender_id);
     bubble.append(h('div', { class: `sender${al ? ' persona' : ''}` }, al ? animalAvatar(al.a, 'xs') : null,
       m.import_author || (al ? al.n : (S.users.get(m.sender_id)?.name ?? '…')), al?.real ? h('small', { class: 'muted' }, ` · ${al.real}`) : null));
   }
-  if (m.forward_from) bubble.append(h('div', { class: 'fwd' }, t('chat.forwarded_from', { name: m.forward_from })));
+  if (m.forward_note) bubble.append(h('div', { class: 'fwd-note' }, h('span', { class: 'fwd-pen', 'aria-hidden': 'true' }, '\u270E'), ` ${m.forward_note}`));
+  if (m.forward_path?.length > 1) {
+    // who wrote it, then everybody who passed it on: the path the message travelled
+    const hops = [];
+    m.forward_path.forEach((n, i) => { if (i) hops.push(h('span', { class: 'arrow', 'aria-hidden': 'true' }, '\u2192')); hops.push(h('span', { class: `hop${i === 0 ? ' origin' : ''}` }, n)); });
+    bubble.append(h('div', { class: 'fwd-chain', role: 'note', 'aria-label': t('fwd.path') }, ...hops));
+  } else if (m.forward_from) bubble.append(h('div', { class: 'fwd' }, t('chat.forwarded_from', { name: m.forward_from })));
   if (m.reply_to) {
     bubble.append(h('div', { class: 'quote', onclick: () => jumpTo(c.id, m.reply_to.id) },
       h('b', null, shownName(c, m.reply_to.sender_id, m.reply_to.sender_name || '')), previewText(m.reply_to)));

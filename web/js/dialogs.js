@@ -317,21 +317,49 @@ export function openChatSearch(chatId) {
   input.focus();
 }
 
+/** Passing messages on: a card of what goes, a personal note, and several recipients at once. */
 export function openForward(msgOrList) {
   const list = Array.isArray(msgOrList) ? msgOrList : [msgOrList];
-  const m = modal({ title: t('msg.forward_to'), body: [] });
-  const chats = [...S.chats.values()].filter((c) => c.can_post)
-    .sort((a, b) => b.last_message_at - a.last_message_at);
-  m.setBody(chats.map((c) => h('button', {
-    class: 'list-item clickable', type: 'button',
-    onclick: async () => {
+  const picked = new Map();   // chat id -> chat
+  const all = [...S.chats.values()].filter((c) => c.can_post).sort((a, b) => b.last_message_at - a.last_message_at);
+  const first = list[0];
+  const preview = h('div', { class: 'fwd-preview' },
+    h('div', { class: 'fwd-preview-from' }, `\u21AA ${first.forward_from || S.users.get(first.sender_id)?.name || first.import_author || ''}`),
+    h('div', { class: 'fwd-preview-text' }, previewText(first) || ' '),
+    list.length > 1 ? h('div', { class: 'muted small' }, t('fwd.more', { n: list.length - 1 })) : null);
+  const note = h('textarea', { class: 'input', rows: 2, maxLength: 500, placeholder: t('fwd.note_ph'), 'aria-label': t('fwd.note') });
+  const find = h('input', { class: 'input', type: 'search', placeholder: t('fwd.find'), 'aria-label': t('fwd.find') });
+  const chips = h('div', { class: 'fwd-chips' });
+  const rows = h('div', { class: 'fwd-list' });
+  const send = h('button', { class: 'btn', type: 'button', disabled: true }, t('fwd.send'));
+  const nameOf = (c) => chatTitle(c);
+  const face = (c) => avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm');
+  function paint() {
+    const term = find.value.trim().toLowerCase();
+    clear(rows).append(...all.filter((c) => !term || nameOf(c).toLowerCase().includes(term)).map((c) => h('button', {
+      class: `fwd-row${picked.has(c.id) ? ' on' : ''}`, type: 'button', 'aria-pressed': picked.has(c.id) ? 'true' : 'false',
+      onclick: () => { if (picked.has(c.id)) picked.delete(c.id); else picked.set(c.id, c); paint(); },
+    }, face(c), h('span', { class: 'grow' }, nameOf(c)), h('span', { class: 'fwd-check', 'aria-hidden': 'true' }, picked.has(c.id) ? '\u2713' : ''))));
+    clear(chips).append(...[...picked.values()].map((c) => h('button', { class: 'fwd-chip', type: 'button', 'aria-label': `${nameOf(c)} \u2715`, onclick: () => { picked.delete(c.id); paint(); } }, nameOf(c), h('span', { 'aria-hidden': 'true' }, ' \u2715'))));
+    send.disabled = picked.size === 0;
+    send.textContent = picked.size ? `${t('fwd.send')} \u00B7 ${picked.size}` : t('fwd.send');
+  }
+  const m = modal({ title: t('fwd.title'), className: 'fwd-modal', body: [preview, note, find, chips, rows, send] });
+  find.addEventListener('input', paint);
+  send.addEventListener('click', async () => {
+    send.disabled = true;
+    const text = note.value.trim();
+    let failed = 0;
+    for (const c of picked.values()) {
       try {
-        for (const msg of list) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid() });
-        toast(t('msg.forwarded'));
-        m.close();
-      } catch (e) { fail(e); }
-    },
-  }, avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm'), h('span', { class: 'grow' }, chatTitle(c)))));
+        // the note goes with the first message of each chat
+        for (const [i, msg] of list.entries()) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid(), ...(i === 0 && text ? { note: text } : {}) });
+      } catch (e) { failed += 1; fail(e); }
+    }
+    if (failed < picked.size) toast(t('msg.forwarded'));
+    m.close();
+  });
+  paint();
 }
 
 export async function openJoin(code) {

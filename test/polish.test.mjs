@@ -181,3 +181,30 @@ test('push: the test notification answers and is private', async () => {
   // the number itself is computed inside the server process; here the endpoint must at least stay private
   assert.equal((await call('', 'POST', '/api/push/test')).status, 401);
 });
+
+test('passing a message on keeps the path it travelled and the note of the person who passed it', async () => {
+  const a = await login('+998900000081', 'Айдар');
+  const b = await login('+998900000082', 'Мадина');
+  const c = await login('+998900000083', 'Бекзод');
+  const ab = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.user.id })).data.chat;
+  const bc = (await call(b.cookie, 'POST', '/api/chats/direct', { user_id: c.user.id })).data.chat;
+  const src = (await call(a.cookie, 'POST', `/api/chats/${ab.id}/messages`, { text: 'Собрание в пятницу' })).data.message;
+  const hop1 = await call(b.cookie, 'POST', `/api/chats/${bc.id}/messages`, { forward_of: src.id, client_id: 'client-hop-0001', note: '  Посмотри, это про нас  ' });
+  assert.equal(hop1.status, 201, JSON.stringify(hop1.data));
+  assert.equal(hop1.data.message.text, 'Собрание в пятницу');
+  assert.equal(hop1.data.message.forward_from, 'Айдар');
+  assert.equal(hop1.data.message.forward_note, 'Посмотри, это про нас');
+  assert.deepEqual(hop1.data.message.forward_path, ['Айдар', 'Мадина']);
+  // passed on again: the author stays, the path grows, a message without a note has none
+  const cc = (await call(c.cookie, 'POST', '/api/chats/direct', { user_id: a.user.id })).data.chat;
+  const hop2 = await call(c.cookie, 'POST', `/api/chats/${cc.id}/messages`, { forward_of: hop1.data.message.id, client_id: 'client-hop-0002' });
+  assert.equal(hop2.data.message.forward_from, 'Айдар');
+  assert.deepEqual(hop2.data.message.forward_path, ['Айдар', 'Мадина', 'Бекзод']);
+  assert.equal(hop2.data.message.forward_note, undefined);
+  // the history shows the same
+  const list = (await call(c.cookie, 'GET', `/api/chats/${cc.id}/messages`)).data.messages;
+  assert.deepEqual(list.find((m) => m.id === hop2.data.message.id).forward_path, ['Айдар', 'Мадина', 'Бекзод']);
+  // an over-long note is cut, nothing breaks
+  const long = await call(b.cookie, 'POST', `/api/chats/${bc.id}/messages`, { forward_of: src.id, client_id: 'client-hop-0003', note: 'я'.repeat(900) });
+  assert.equal(long.data.message.forward_note.length, 500);
+});
