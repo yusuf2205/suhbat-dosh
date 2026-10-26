@@ -18,6 +18,7 @@ export async function translatorAvailable() {
 export const translatorReady = () => { translatorAvailable(); return health.ok; };
 // known from the start (the first page a person opens must already know whether translation is there), and kept fresh
 translatorAvailable().catch(() => {});
+setTimeout(() => { health.at = 0; translatorAvailable().catch(() => {}); }, 8000).unref();   // the network may not be up yet at the very start
 setInterval(() => translatorAvailable().catch(() => {}), 60_000).unref();
 
 translate.post('/translate', async (req, res) => {
