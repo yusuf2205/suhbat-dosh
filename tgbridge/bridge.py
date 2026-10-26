@@ -204,6 +204,7 @@ class Acct:
         self.up_task = None        # fetches the files of messages that were copied as a mark
         self.up_fail = {}          # message -> how many times Telegram refused its file
         self.up_done = 0
+        self.up_nochat = set()     # chats whose messages could not be fetched (the library does not know them)
         self.last_sync = 0.0
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.synced = False        # the first complete copy of the personal chats has finished
@@ -474,7 +475,7 @@ def upgrade_kinds() -> str:
 
 async def pending_media(a: Acct, limit=20):
     try:
-        async with _http().get(f"{SERVER}/api/bridge/pending", params={"owner": a.uid, "kinds": upgrade_kinds(), "limit": limit}, timeout=ClientTimeout(total=30),
+        async with _http().get(f"{SERVER}/api/bridge/pending", params={"owner": a.uid, "kinds": upgrade_kinds(), "limit": limit, "skip_chats": ",".join(sorted(a.up_nochat))}, timeout=ClientTimeout(total=30),
                                headers={"Authorization": f"Bearer {TOKEN}"}) as r:
             return await r.json() if r.status == 200 else None
     except Exception:
@@ -508,8 +509,8 @@ async def upgrade_round(a: Acct) -> str:
     for chat, its in by_chat.items():
         try:
             msgs = await a.client.get_messages(int(chat), ids=[i["tg_msg"] for i in its])
-        except ValueError:   # a chat this account has left
-            skips.setdefault("chat", []).extend(i["id"] for i in its)
+        except ValueError:   # a chat this account cannot read right now (left it, not among the known dialogs): not asked about again until the next start
+            a.up_nochat.add(chat)
             continue
         except Exception as e:
             log("media upgrade: a chat could not be read:", type(e).__name__)

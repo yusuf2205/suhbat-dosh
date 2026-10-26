@@ -576,9 +576,10 @@ bridgeIn.get('/bridge/pending', (req, res) => {
   const marks = String(req.query.kinds || '').split(',').flatMap((k) => PLACEHOLDERS[k] || []);
   if (!Number.isInteger(uid) || !marks.length) return res.json({ items: [], left: 0 });
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
-  const where = `c.user_id = ? AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')})
+  const unreachable = String(req.query.skip_chats || '').split(',').filter((c) => /^-?\d{1,20}$/.test(c)).slice(0, 200);   // chats this account cannot read right now
+  const where = `c.user_id = ? ${unreachable.length ? `AND c.tg_chat NOT IN (${unreachable.map(() => '?').join(',')})` : ''} AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')})
     AND m.id NOT IN (SELECT message_id FROM tg_media_skip)`;
-  const args = [uid, ...marks.map((m) => `${m}%`)];
+  const args = [uid, ...unreachable, ...marks.map((m) => `${m}%`)];
   const items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where} ORDER BY m.id DESC LIMIT ?`, ...args, limit)
     .map((r) => ({ id: r.id, tg_chat: r.tg_chat, tg_msg: Number(String(r.import_key).split(':').pop()) })).filter((r) => Number.isInteger(r.tg_msg));
   const left = q.get(`SELECT COUNT(*) AS n FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where}`, ...args)?.n ?? 0;
