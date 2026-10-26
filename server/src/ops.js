@@ -115,16 +115,40 @@ const stampOf = (name, fallback) => {
 const copyPlain = (from, to) => pipeline(fs.createReadStream(from), fs.createWriteStream(to));
 
 /** An external disk that is not plugged in must not be "written" into the empty folder it leaves behind: a marker file proves it is there. */
-const offsiteMissing = () => !!process.env.BACKUP_MIRROR_MARKER && !fs.existsSync(process.env.BACKUP_MIRROR_MARKER);
+const offsiteMissing = () => !offsite().found;
+
+/**
+ * Where the second copies go. Either fixed (BACKUP_MIRROR_DIR / BACKUP_FILES_DIR / BACKUP_MIRROR_MARKER), or found: BACKUP_OFFSITE_FIND is
+ * a folder with the external disks inside (they may come up late after a reboot and under another name, sdc1 today and sdd1 tomorrow);
+ * the disk that holds a folder named BACKUP_OFFSITE_NAME with the file ".offsite" in it is the one.
+ */
+export function offsite() {
+  const find = process.env.BACKUP_OFFSITE_FIND;
+  if (find) {
+    const name = process.env.BACKUP_OFFSITE_NAME || 'Suhbat-backup';
+    try {
+      for (const d of fs.readdirSync(find)) {
+        const root = path.join(find, d, name);
+        if (fs.existsSync(path.join(root, '.offsite'))) return { configured: true, found: true, dir: path.join(root, 'db'), files: path.join(root, 'files'), where: `${d}/${name}` };
+      }
+    } catch { /* the folder is not there */ }
+    return { configured: true, found: false, dir: path.join(find, '_missing', 'db'), files: null, where: null };
+  }
+  const dir = process.env.BACKUP_MIRROR_DIR || '';
+  const marker = process.env.BACKUP_MIRROR_MARKER;
+  return { configured: !!dir, found: !marker || fs.existsSync(marker), dir: dir || null, files: process.env.BACKUP_FILES_DIR || null, where: dir || null };
+}
 
 export function mirrorConfig() {
-  const dir = process.env.BACKUP_MIRROR_DIR || '';
+  const o = offsite();
+  const dir = o.configured ? (o.where || o.dir || 'внешний диск') : '';
   const url = webdavUrl();
   return { dir: dir || null, webdav: url ? url.replace(/\/\/[^/@]*@/, '//') : null, configured: !!(dir || url) };
 }
 
 async function mirrorBackup(src, name) {
-  const dir = process.env.BACKUP_MIRROR_DIR;
+  const o = offsite();
+  const dir = o.configured ? o.dir : null;
   const url = webdavUrl();
   if (!dir && !url) return;
   const out = { at: now(), name, dir: null, webdav: null };
@@ -241,7 +265,7 @@ export function verifyBackup(name) {
     try { out.newest_message_at = t.prepare('SELECT MAX(created_at) AS t FROM messages').get().t || null; } catch { /* no table */ }
     // a snapshot that is much smaller than the live data is not a copy of it
     for (const tb of ['users', 'messages']) if (out.live[tb] > 50 && out.counts[tb] < out.live[tb] * 0.5) out.problems.push(`в копии мало записей: ${tb}`);
-    const dest = process.env.BACKUP_FILES_DIR || path.join(config.backupDir, 'files');
+    const dest = offsite().files || path.join(config.backupDir, 'files');
     try {
       const have = new Set(fs.readdirSync(dest));
       out.files_missing = t.prepare('SELECT id FROM files').all().filter((r) => fs.existsSync(path.join(config.filesDir, r.id)) && !have.has(r.id)).length;
@@ -299,11 +323,12 @@ function check() {
  */
 export const filesMirror = { last: null };
 async function mirrorFiles() {
-  const dest = process.env.BACKUP_FILES_DIR || path.join(config.backupDir, 'files');
+  const o = offsite();
+  const dest = o.files || path.join(config.backupDir, 'files');
   let copied = 0;
   let bytes = 0;
   try {
-    if (process.env.BACKUP_FILES_DIR && offsiteMissing()) throw new Error('внешний диск не подключён');
+    if (o.configured && !o.found) throw new Error('внешний диск не подключён');
     await fs.promises.mkdir(dest, { recursive: true });
     for (const ent of await fs.promises.readdir(config.filesDir, { withFileTypes: true })) {
       if (!ent.isFile()) continue;

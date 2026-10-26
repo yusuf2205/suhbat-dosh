@@ -15,6 +15,24 @@
   BACKUP_MIRROR_MARKER=/offsite/.offsite    # an empty file created on that disk (touch /mnt/usb/suhbat-backup/.offsite)
   ```
 
+  **A disk that comes up late or under another name** (a NAS after a reboot: `sdc1` today, `sdd1` tomorrow). Do not bind one disk's folder, that stops the container from starting when the disk is not there yet
+  (the site was down for hours because of exactly this). Share the whole USB area instead, with `rslave`, and let the server find the folder by its marker:
+
+  ```yaml
+  # docker-compose.override.yml (only on that machine)
+  services:
+    suhbat:
+      volumes:
+        - type: bind
+          source: /mnt/@usb
+          target: /offsite
+          bind: { propagation: rslave }
+  ```
+  ```
+  # .env
+  BACKUP_OFFSITE_FIND=/offsite              # every disk under it is looked at; the one with Suhbat-backup/.offsite is used (db/ and files/ inside)
+  ```
+
   The marker stops the server from writing into the empty folder that is left behind when the disk is unplugged (the copies would then land on the system disk and look fine).
   When the disk is missing the admin overview says so.
 * **WebDAV** (Nextcloud, Yandex Disk, pCloud): `BACKUP_WEBDAV_URL`, `BACKUP_WEBDAV_USER`, `BACKUP_WEBDAV_PASS` upload every new snapshot.
