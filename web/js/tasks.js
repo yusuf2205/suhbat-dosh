@@ -99,7 +99,6 @@ export async function openTasks() {
         h('input', { type: 'checkbox', checked: k.done, 'aria-label': k.title, onchange: async (e) => { await call('POST', `/api/tasks/${k.id}/toggle`, { done: e.target.checked }); load(); } }),
         h('button', { class: 'task-row-main', type: 'button', onclick: () => {
           win.close();
-          fire('open-chat', k.chat_id);
           import('./chat.js').then((c) => c.jumpTo(k.chat_id, k.message_id));
         } },
         h('b', { class: 'ellipsis' }, k.title),

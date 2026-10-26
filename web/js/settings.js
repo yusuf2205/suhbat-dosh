@@ -669,6 +669,12 @@ export function openSettings() {
             h('label', null, t('st.theme_to'), ' ', timeInput('themeTo', '07:00')))))] : []),
           heading(t('settings.text_size')),
           group(h('div', { class: 'sfield' }, h('div', { class: 'row between' }, h('span', null, t('settings.text_size')), val), size)),
+          heading(t('guard.title')),
+          group(h('div', { class: 'sfield' }, (() => {
+            const sel = h('select', { class: 'input', 'aria-label': t('guard.title') }, ...[0, 3, 5, 10].map((v) => h('option', { value: String(v), selected: (Number(S.prefs.sendDelay) || 0) === v }, v ? t('guard.sec', { n: v }) : t('guard.off'))));
+            sel.onchange = () => { S.prefs.sendDelay = Number(sel.value); savePrefs(); };
+            return sel;
+          })(), h('p', { class: 'muted' }, t('guard.hint')))),
           heading(t('atr.title')),
           group(switchRow(t('atr.all'), !!S.prefs.autoTrAll, (v) => { setAutoAll(v); }, t('atr.all_hint'))),
           heading(t('st.compact')),

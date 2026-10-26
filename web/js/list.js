@@ -69,6 +69,11 @@ export function mount(sidebar) {
     oninput: () => { S.query = searchInput.value.trim(); runRemote(); render(); },
   });
   titleEl = h('h2', { class: 'view-title' });
+  const todayN = h('span', { class: 'today-n', hidden: true });
+  const todayBtn = h('button', { class: 'icon-btn today-btn', type: 'button', 'aria-label': t('today.title'), onclick: () => import('./today.js').then((x) => x.openToday()) }, icon('sun', 24), todayN);
+  const paintToday = () => { todayN.hidden = !S.todayCount; todayN.textContent = S.todayCount > 99 ? '99+' : String(S.todayCount || ''); };
+  on('today', paintToday);
+  import('./today.js').then((x) => x.startToday());
   const composeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('menu.new_chat'), 'aria-haspopup': 'menu' }, icon('compose', 24));
   composeBtn.classList.add('compose-btn');
   const composeMenu = (anchor) => popMenu(anchor, [
@@ -103,7 +108,7 @@ export function mount(sidebar) {
   const searchBox = h('div', { class: 'search' }, icon('search', 18), searchInput);
   clear(el).append(
     (heroEl = h('div', { class: 'hero' },
-    h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), searchBtn, composeBtn),
+    h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), todayBtn, searchBtn, composeBtn),
     h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, storiesBar())))),
     tabsEl, netEl, listEl, nav, fab,
   );

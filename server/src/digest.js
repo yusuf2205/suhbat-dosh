@@ -45,7 +45,7 @@ export function buildDigest(rows, me, names = new Map()) {
   for (const r of rows) {
     per.set(r.sender_id, (per.get(r.sender_id) || 0) + 1);
     if (r.kind in out.media) out.media[r.kind] += 1;
-    if (['poll', 'event', 'task', 'miniapp', 'note'].includes(r.kind)) out.cards.push({ id: r.id, kind: r.kind, title: clip(r.text, 100), sender: nameOf(r.sender_id) });
+    if (['poll', 'event', 'task', 'miniapp', 'note', 'deal'].includes(r.kind)) out.cards.push({ id: r.id, kind: r.kind, title: clip(r.text, 100), sender: nameOf(r.sender_id) });
     if (!['text', 'image', 'video', 'file'].includes(r.kind) || !r.text) continue;
     const text = r.text;
     if (mention.test(text) || (r.reply_to && mine.has(r.reply_to))) add('mentions', r);

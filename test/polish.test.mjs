@@ -208,3 +208,42 @@ test('passing a message on keeps the path it travelled and the note of the perso
   const long = await call(b.cookie, 'POST', `/api/chats/${bc.id}/messages`, { forward_of: src.id, client_id: 'client-hop-0003', note: 'я'.repeat(900) });
   assert.equal(long.data.message.forward_note.length, 500);
 });
+
+test('"Договорились": a card with an owner and a due time, agreed to by the others; the day summary lists what waits', async () => {
+  const a = await login('+998900000091', 'Рустам');
+  const b = await login('+998900000092', 'Зарина');
+  const dm = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.user.id })).data.chat;
+  // somebody waits for Зарина's answer
+  await call(a.cookie, 'POST', `/api/chats/${dm.id}/messages`, { text: 'Ты видела смету?' });
+  const waiting = (await call(b.cookie, 'GET', '/api/today')).data;
+  assert.equal(waiting.waiting.length, 1);
+  assert.equal(waiting.waiting[0].chat_id, dm.id);
+  assert.equal((await call(a.cookie, 'GET', '/api/today')).data.waiting.length, 0, 'the author waits for nobody');
+
+  const due = Date.now() + 2 * 3600_000;
+  const made = await call(a.cookie, 'POST', `/api/chats/${dm.id}/deals`, { title: 'Заказ 20 штук, оплата в пятницу', owner_id: b.user.id, due_at: due });
+  assert.equal(made.status, 201, JSON.stringify(made.data));
+  const deal = made.data.message.deal;
+  assert.equal(made.data.message.kind, 'deal');
+  assert.deepEqual([deal.owner_id, deal.due_at, deal.done, deal.agreed, deal.people], [b.user.id, due, false, [a.user.id], 2]);
+  // the other side is asked to confirm, and it shows in her summary; the author's answer cleared "waiting" (her own message is last)
+  let day = (await call(b.cookie, 'GET', '/api/today')).data;
+  assert.equal(day.confirm.length, 1);
+  assert.equal(day.deals.length, 1, 'she is responsible for it and it is due soon');
+  assert.equal(day.waiting.length, 1, 'the card is also the last thing said, from the other side');
+  const agreed = await call(b.cookie, 'POST', `/api/deals/${deal.id}/agree`, {});
+  assert.deepEqual(agreed.data.message.deal.agreed.sort(), [a.user.id, b.user.id].sort());
+  assert.equal((await call(b.cookie, 'GET', '/api/today')).data.confirm.length, 0);
+  // an agreement can be taken back; a stranger cannot touch the card
+  assert.deepEqual((await call(b.cookie, 'POST', `/api/deals/${deal.id}/agree`, { agree: false })).data.message.deal.agreed, [a.user.id]);
+  const c = await login('+998900000093', 'Чужой');
+  assert.equal((await call(c.cookie, 'POST', `/api/deals/${deal.id}/agree`, {})).status, 404);
+  assert.equal((await call(c.cookie, 'POST', `/api/deals/${deal.id}/done`, {})).status, 404);
+  // done: leaves the summary
+  const fin = await call(b.cookie, 'POST', `/api/deals/${deal.id}/done`, { done: true });
+  assert.equal(fin.data.message.deal.done, true);
+  assert.equal((await call(b.cookie, 'GET', '/api/today')).data.deals.length, 0);
+  // a bad owner or time is refused; the reminder row exists while open
+  assert.equal((await call(a.cookie, 'POST', `/api/chats/${dm.id}/deals`, { title: 'x', owner_id: c.user.id })).status, 400);
+  assert.equal((await call(a.cookie, 'POST', `/api/chats/${dm.id}/deals`, { title: 'x', due_at: 5 })).status, 400);
+});

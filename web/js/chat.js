@@ -6,6 +6,7 @@ import { accessBadge, accessMenu, shareMessageFile } from './drive.js';
 import { eventNode, openEventCreate } from './events.js';
 import { miniNode, openMiniCreate } from './mini.js';
 import { openTaskCreate, openTasks, taskNode } from './tasks.js';
+import { dealNode, openDealCreate } from './deals.js';
 import { openDigest } from './digest.js';
 import { noteNode, openNoteCreate } from './notes.js';
 import { firstUrl, linkCard } from './linkcard.js';
@@ -549,6 +550,7 @@ function renderComposer() {
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
       { label: t('task.new'), onClick: () => openTaskCreate(S.active) },
+      { label: t('deal.new'), onClick: () => openDealCreate(S.active) },
       { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
@@ -667,17 +669,21 @@ async function sendText({ silent = false, urgent = false } = {}) {
   }
   lastTyping = 0;
   const secret = isSecret(c);
+  const warn = secret ? '' : sendWarning(c, text);
+  if (warn && !(await confirmDialog(warn, { okLabel: t('guard.send_anyway') }))) return;
   let envelope = null;
   if (secret) {
     try { envelope = await sealPayload(c, { t: text }); } catch { toast(t('secret.cannot_send')); return; }
   }
   const clientId = uuid();
+  const delay = secret ? 0 : Math.max(0, Math.min(30, Number(S.prefs.sendDelay) || 0));
+  const hold = delay ? Date.now() + delay * 1000 : undefined;
   const local = {
-    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind: secret ? 'secret' : 'text', text: envelope ?? text, plain: secret ? text : undefined, pending: true,
+    id: `c:${clientId}`, client_id: clientId, chat_id: c.id, sender_id: S.me.id, kind: secret ? 'secret' : 'text', text: envelope ?? text, plain: secret ? text : undefined, pending: true, hold,
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
     reactions: {}, file: null, created_at: Date.now(), ...(c.forum && currentTopic(c.id) ? { topic_id: currentTopic(c.id) } : {}),
   };
-  outbox.add({ ...(c.forum ? { topic: currentTopic(c.id) || 0 } : {}), chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined });
+  outbox.add({ ...(c.forum ? { topic: currentTopic(c.id) || 0 } : {}), chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined, hold });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -693,6 +699,37 @@ async function sendText({ silent = false, urgent = false } = {}) {
   scrollBottom();
   if (S.net === 'online') flushOutbox();
   else fire('outbox');
+}
+
+const ATTACH_RE = /(во\s?вложени|вложени[ея]|прикрепил|прикрепляю|прикреплён|прикреплен|прилагаю|attached|attachment|ilovada|ilova qildim|biriktirdim|biriktirilgan)/i;
+
+/** Before a message goes out: a promised attachment that is not there, or words for somebody who is not in this chat. */
+function sendWarning(c, text) {
+  if (ATTACH_RE.test(text)) return t('guard.attachment');
+  if (c.type === 'direct' && !c.saved && c.peer) {
+    const first = (n) => String(n || '').trim().split(/\s+/)[0].toLowerCase();
+    const m = /^\s*(\p{Lu}[\p{L}'\u2019\u02BB-]{2,})\s*[,!:\u2014-]/u.exec(text);
+    if (m) {
+      const word = m[1].toLowerCase();
+      if (word !== first(c.peer.name) && word !== first(S.me.name)
+        && [...S.chats.values()].some((x) => x.id !== c.id && x.type === 'direct' && x.peer && first(x.peer.name) === word)) return t('guard.wrong_chat', { name: m[1], chat: c.peer.name });
+    }
+  }
+  return '';
+}
+
+/** The message is still held back: take it out of the queue and put the text back into the field. */
+function undoSend(m) {
+  if (!m.hold || m.hold <= Date.now()) return;
+  outbox.remove(m.client_id);
+  const c = S.chats.get(m.chat_id);
+  const b = bucket(m.chat_id);
+  b.list = b.list.filter((x) => x !== m);
+  nodeCache.delete(`m:${m.id}`);
+  if (c) { c.last_message = b.list[b.list.length - 1] || null; }
+  if (view && S.active === m.chat_id) { view.ta.value = m.plain ?? m.text; autoGrow(); syncComposerButtons(); view.ta.focus(); }
+  renderMessages();
+  fire('chats');
 }
 
 const upLabel = { preparing: 'up.preparing', queued: 'up.queued', paused: 'up.paused', waiting: 'up.waiting', error: 'up.error' };
@@ -1110,7 +1147,7 @@ function renderMessages() {
       want.push(keyed('unread', () => h('div', { class: 'unread-div', role: 'separator' }, t('chat.new_messages'))));
       dividerDone = true;
     }
-    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.forward_note, m.forward_path?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
+    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.deal && JSON.stringify(m.deal), m.forward_note, m.forward_path?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
       m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
@@ -1193,9 +1230,10 @@ function buildMessage(m, c) {
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
   if (m.kind === 'task' && m.task) bubble.append(taskNode(m));
+  if (m.kind === 'deal' && m.deal) bubble.append(dealNode(m));
   if (m.kind === 'note' && m.note) bubble.append(noteNode(m));
   if (m.kind === 'miniapp' && m.mini) bubble.append(miniNode(m));
-  else if ((m.kind === 'poll' && m.poll) || (m.kind === 'event' && m.event) || (m.kind === 'task' && m.task) || (m.kind === 'note' && m.note)) { /* the card shows the text */ }
+  else if ((m.kind === 'poll' && m.poll) || (m.kind === 'event' && m.event) || (m.kind === 'task' && m.task) || (m.kind === 'deal' && m.deal) || (m.kind === 'note' && m.note)) { /* the card shows the text */ }
   else if (m.kind === 'sticker' || m.kind === 'secret') { /* shown above */ }
   else if (m.kind === 'location') bubble.append(locationNode(m));
   else if (m.kind === 'contact') bubble.append(contactNode(m));
@@ -1224,6 +1262,11 @@ function buildMessage(m, c) {
   bubble.append(h('div', { class: 'meta' }, m.edited_at ? h('span', null, t('chat.edited')) : null, h('span', null, fmtTime(m.created_at)), status));
   if (m.failed) {
     bubble.append(h('button', { class: 'btn link', type: 'button', onclick: () => retryFailed(m) }, t('msg.failed')));
+  }
+  if (m.pending && m.hold && m.hold > Date.now()) {
+    const undo = h('button', { class: 'btn link undo-send', type: 'button', onclick: () => undoSend(m) }, `\u21A9 ${t('guard.undo')}`);
+    bubble.append(undo);
+    setTimeout(() => undo.remove(), m.hold - Date.now());
   }
   bubble.append(h('button', { class: 'more', type: 'button', 'aria-label': t('msg.more'), onclick: (e) => messageMenu(e.currentTarget, m) }, '⋯'));
   bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); messageMenu(bubble, m); });
@@ -1478,7 +1521,7 @@ function messageMenu(anchor, m) {
   if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') items.push({ label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
     if (!mine) items.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
-    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push({ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push({ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }, { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
     items.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }

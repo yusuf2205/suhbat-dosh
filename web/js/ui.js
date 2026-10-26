@@ -214,6 +214,7 @@ export function previewText(m) {
   if (m.kind === 'miniapp') return `🧩 ${m.text}`;
   if (m.once && (m.kind === 'image' || m.kind === 'video')) return `\u{1F525} ${t(m.kind === 'video' ? 'once.video' : 'once.photo')}`;
   if (m.kind === 'task') return `✅ ${m.text}`;
+  if (m.kind === 'deal') return `\u{1F91D} ${m.text}`;
   if (m.kind === 'note') return `📝 ${m.text}`;
   if (m.kind === 'location') return `📍 ${t('msg.location')}`;
   if (m.kind === 'contact') { try { return `👤 ${JSON.parse(m.text).name}`; } catch { return `👤 ${t('msg.contact')}`; } }

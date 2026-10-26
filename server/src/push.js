@@ -74,6 +74,7 @@ const preview = (m) => {
   if (m.kind === 'event') return `📅 ${m.text}`;
   if (m.kind === 'miniapp') return `🧩 ${m.text}`;
   if (m.kind === 'task') return `✅ ${m.text}`;
+  if (m.kind === 'deal') return `\u{1F91D} ${m.text}`;
   if (m.kind === 'note') return `📝 ${m.text}`;
   if (m.kind === 'location') return '📍 Геолокация';
   if (m.kind === 'sticker') return `${m.text || ''} Стикер`.trim();

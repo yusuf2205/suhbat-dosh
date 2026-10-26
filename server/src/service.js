@@ -127,6 +127,16 @@ export function taskOut(row) {
   };
 }
 
+export function dealOut(row) {
+  const d = q.get('SELECT * FROM deals WHERE message_id = ?', row.id);
+  if (!d) return null;
+  return {
+    id: d.id, title: d.title, creator_id: d.creator_id, owner_id: d.owner_id, due_at: d.due_at, done: !!d.done, done_at: d.done_at,
+    agreed: q.all('SELECT user_id FROM deal_ok WHERE deal_id = ? ORDER BY at', d.id).map((r) => r.user_id),
+    people: q.get("SELECT COUNT(*) AS n FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? AND m.banned = 0 AND u.is_bot = 0", d.chat_id).n,
+  };
+}
+
 export function miniOut(row) {
   const a = q.get('SELECT * FROM mini_apps WHERE message_id = ?', row.id);
   if (!a) return null;
@@ -209,6 +219,7 @@ export function messageOut(row) {
     event: row.kind === 'event' ? eventOut(row) : null,
     mini: row.kind === 'miniapp' ? miniOut(row) : null,
     task: row.kind === 'task' ? taskOut(row) : null,
+    deal: row.kind === 'deal' ? dealOut(row) : null,
     note: row.kind === 'note' ? noteOut(row) : null,
     ...(row.urgent ? { urgent: true } : {}),
     ...(row.once ? { once: { views: q.all('SELECT user_id FROM once_views WHERE message_id = ?', row.id).map((r) => r.user_id) } } : {}),

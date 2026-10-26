@@ -139,11 +139,14 @@ export const outbox = {
 };
 
 let flushing = false;
+let holdTimer = null;
 export async function flushOutbox() {
   if (flushing) return;
   flushing = true;
   try {
     for (const item of outbox.all()) {
+      // held back on purpose ("take it back" window): wait for it, and keep the order
+      if (item.hold && item.hold > Date.now()) { clearTimeout(holdTimer); holdTimer = setTimeout(flushOutbox, item.hold - Date.now() + 50); break; }
       try {
         const r = await api('POST', `/api/chats/${item.chat_id}/messages`, {
           text: item.text, client_id: item.client_id, reply_to: item.reply_to ?? undefined, kind: item.kind ?? undefined, silent: item.silent || undefined, urgent: item.urgent || undefined,
