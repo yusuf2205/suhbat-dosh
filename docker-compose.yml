@@ -51,6 +51,13 @@ services:
               echo "$$(date -u +%FT%TZ) $$s was not running, starting it"
               docker start "$$c" 2>&1 | tail -1
             done
+            # running but cut off from the network (a start that half failed): the others cannot find it, it cannot reach the outside
+            for c in $$(docker ps -q --filter "label=com.docker.compose.project=$$PROJECT" --filter "label=com.docker.compose.service=$$s"); do
+              if [ "$$(docker inspect -f '{{len .NetworkSettings.Networks}}' "$$c")" = 0 ]; then
+                echo "$$(date -u +%FT%TZ) $$s had no network, connecting it"
+                docker network connect --alias "$$s" "$${PROJECT}_default" "$$c" 2>&1 | tail -1
+              fi
+            done
           done
           sleep 30
         done
