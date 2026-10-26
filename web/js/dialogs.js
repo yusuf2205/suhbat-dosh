@@ -136,6 +136,7 @@ export async function renderInfo(m, chatId) {
     let counts = null;
     try { counts = await api('GET', `/api/chats/${chat.id}/media/counts`); } catch { /* optional */ }
     const nodes = [];
+    const fromTg = chat.imported === 'tgbridge';   // a copy of a Telegram chat: invitations and join requests make no sense there
     if (chat.type === 'direct') {
       const p = chat.peer;
       const infoRow = (value, cap) => h('div', { class: 'sinfo' }, h('div', { class: 'sinfo-main' }, h('div', { class: 'sinfo-value' }, value), h('div', { class: 'sinfo-cap' }, cap)));
@@ -150,13 +151,15 @@ export async function renderInfo(m, chatId) {
       if (!chat.saved && !p.is_bot && p.id !== S.me.id) nodes.push(h('div', { class: 'sgroup' }, safetyRow(p)));
       if (p.avatar) nodes.push(h('div', { class: 'sheading' }, t('st.album')), h('div', { class: 'sgroup album' }, photoGrid(p.id, false)));
     } else {
-      nodes.push(h('div', { style: { textAlign: 'center' } }, h('div', { style: { display: 'inline-block' } }, avatar({ id: chat.id, avatar: chat.avatar, name: chat.title }, 'lg')),
-        h('h2', null, chat.title),
+      const shownTitle = fromTg ? chat.title.replace(/^\u2708\uFE0F?\s*/, '') : chat.title;
+      nodes.push(h('div', { class: 'st-hero group-hero' }, avatar({ id: chat.id, avatar: chat.avatar, name: shownTitle }, 'xl'),
+        h('h3', null, shownTitle),
+        fromTg ? h('span', { class: 'tg-pill' }, icon('telegram', 14), 'Telegram') : null,
         chat.description && !chat.tg && !String(chat.description).startsWith('tgb:') ? h('p', { class: 'muted' }, chat.description) : null,
-        h('div', { class: 'muted' }, `${chat.members_count} ${chat.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`)));
+        h('div', { class: 'muted' }, countLine(chat))));
       if (chat.tg) nodes.push(h('div', { class: 'sgroup' }, ...[chat.tg.username ? [`@${chat.tg.username}`, t('settings.username')] : null, chat.tg.phone ? [`+${chat.tg.phone}`, t('br.phone')] : null].filter(Boolean)
         .map(([v, cap]) => h('div', { class: 'sinfo' }, h('div', { class: 'sinfo-main' }, h('div', { class: 'sinfo-value' }, v), h('div', { class: 'sinfo-cap' }, cap))))));
-      if (isAdmin) nodes.push(h('button', { class: 'btn secondary', type: 'button', onclick: () => editChat(chat, draw) }, t('info.edit')));
+      if (isAdmin) nodes.push(h('div', { class: 'info-edit' }, h('button', { class: 'btn secondary', type: 'button', onclick: () => editChat(chat, draw) }, icon('edit', 16), t('info.edit'))));
     }
     const act = (ico, label, onclick, extra = '') => h('button', { type: 'button', class: extra, onclick }, icon(ico, 22), h('span', null, label));
     const muted = isMuted(chat);
@@ -192,8 +195,8 @@ export async function renderInfo(m, chatId) {
         });
         nodes.push(h('label', { class: 'focus-row' }, h('span', null, h('b', null, t('dir.make_public')), h('small', { class: 'muted' }, t('dir.make_public_hint'))), pub));
       }
-      if (isAdmin) nodes.push(...adminNodes(chat, draw));
-      if (isAdmin && chat.invite_code) {
+      if (isAdmin && !fromTg) nodes.push(...adminNodes(chat, draw));
+      if (isAdmin && !fromTg && chat.invite_code) {
         const link = `${location.origin}/#/join/${chat.invite_code}`;
         nodes.push(h('h3', null, t('info.invite')), h('div', { class: 'invite' }, link),
           h('div', { class: 'row', style: { marginTop: '8px' } },
@@ -201,7 +204,7 @@ export async function renderInfo(m, chatId) {
             h('button', { class: 'btn secondary', type: 'button', onclick: () => showQr(chat.title || t('info.invite'), link) }, t('qr.show')),
             h('button', { class: 'btn link', type: 'button', onclick: async () => { await api('POST', `/api/chats/${chat.id}/invite/reset`).catch(fail); draw(); } }, t('info.reset'))));
       }
-      if (isAdmin) {
+      if (isAdmin && !fromTg) {
         const picker = userPicker({
           exclude: new Set(members.map((x) => x.user.id)),
           onPick: async (u) => { await api('POST', `/api/chats/${chat.id}/members`, { user_id: u.id }).catch(fail); draw(); },
@@ -221,6 +224,14 @@ export async function renderInfo(m, chatId) {
     m.setBody(nodes);
   };
   draw();
+}
+
+/** "1 участник", "3 участника", "5 участников" (Russian forms; Uzbek has none). */
+function countLine(chat) {
+  const n = chat.members_count;
+  if (getLang() !== 'ru') return `${n} ${chat.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;
+  const forms = chat.type === 'channel' ? { one: 'подписчик', few: 'подписчика', many: 'подписчиков', other: 'подписчика' } : { one: 'участник', few: 'участника', many: 'участников', other: 'участника' };
+  return `${n} ${forms[new Intl.PluralRules('ru').select(n)]}`;
 }
 
 function memberRow(chat, mem, redraw) {

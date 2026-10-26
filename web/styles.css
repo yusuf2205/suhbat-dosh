@@ -2065,6 +2065,12 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 
 .br-pick[hidden] { display: none; }
 
+.group-hero { background: transparent; padding: 8px 8px 6px; }
+.group-hero h3 { overflow-wrap: anywhere; }
+.group-hero p { margin: 2px 0; max-width: 32ch; overflow-wrap: anywhere; }
+.tg-pill { display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; padding: 3px 10px; border-radius: 999px; font-size: .74rem; font-weight: 600; background: var(--brand-soft); color: var(--brand-text); }
+.info-edit { display: flex; justify-content: center; margin: 4px 0 12px; }
+.info-edit .btn { display: inline-flex; align-items: center; gap: 8px; width: auto; padding-inline: 18px; border-radius: 999px; }
 .tg-gone { font-size: .78rem; color: var(--muted); margin-top: 4px; }
 .tg-prev { font-size: .78rem; color: var(--muted); margin-top: 4px; }
 .tg-prev summary { cursor: pointer; }

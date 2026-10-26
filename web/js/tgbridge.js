@@ -119,7 +119,6 @@ export function openBridge() {
       h('h4', null, `${t('br.chats_title')} (${st.chats.length})`), find, list,
       st.groups_allowed ? h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: () => pick(st) }, t('br.add_groups')) : null,
       h('button', { class: 'btn link', type: 'button', onclick: async () => { try { await api('POST', '/api/bridge/sync'); toast(t('br.sync_started')); draw(); } catch (e) { fail(e); } } }, t('br.sync_now')),
-      h('p', { class: 'muted small' }, t('br.admin_note')),
       h('div', { class: 'br-danger' },
         h('button', { class: 'btn danger', type: 'button', onclick: () => disconnect() }, t('br.disconnect')),
         h('p', { class: 'muted small' }, t('br.revoke_hint'))));
