@@ -9,6 +9,7 @@ const API = 'https://rtc.live.cloudflare.com/v1/turn/keys';
 const TTL = 86400;
 let cached = null; // array of RTCIceServer from Cloudflare
 let lastError = null;
+let failures = 0;
 
 export const cloudflareTurnConfigured = () => !!(process.env.CF_TURN_KEY_ID && process.env.CF_TURN_API_TOKEN);
 
@@ -32,13 +33,21 @@ async function fetchCloudflare() {
   throw new Error(lastError || 'empty response');
 }
 
+let retryTimer = null;
 async function refresh() {
+  clearTimeout(retryTimer);
   try {
     cached = await fetchCloudflare();
+    failures = 0;
     log('info', 'cloudflare turn credentials refreshed', { servers: cached.length });
   } catch (e) {
     lastError = e.message;
-    log('warn', 'cloudflare turn refresh failed', { err: e.message });
+    failures += 1;
+    // right after a (re)start the network may not be up yet, and a failure must not leave calls without TURN for hours: try again soon, then less often
+    const wait = Math.min(300_000, 5_000 * 2 ** Math.min(failures - 1, 6));
+    log('warn', 'cloudflare turn refresh failed', { err: e.message, retry_in_s: Math.round(wait / 1000) });
+    retryTimer = setTimeout(refresh, wait);
+    retryTimer.unref();
   }
 }
 
