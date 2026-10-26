@@ -5,7 +5,7 @@ import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs, chatTitle, isMuted } from './state.js';
 import { icon } from './icons.js';
 import { api } from './net.js';
-import { avatar, confirmDialog, fmtLastSeen, matchLine, modal, popMenu, previewText, toast } from './ui.js';
+import { avatar, confirmDialog, fmtLastSeen, lightbox, matchLine, modal, popMenu, previewText, toast } from './ui.js';
 import { openFolders, quietSettings } from './extras.js';
 import { updatesSection } from './updates.js';
 import { openMediaPanel, storageSection } from './viewer.js';
@@ -140,7 +140,7 @@ export async function renderInfo(m, chatId) {
     if (chat.type === 'direct') {
       const p = chat.peer;
       const infoRow = (value, cap) => h('div', { class: 'sinfo' }, h('div', { class: 'sinfo-main' }, h('div', { class: 'sinfo-value' }, value), h('div', { class: 'sinfo-cap' }, cap)));
-      nodes.push(h('div', { class: 'st-hero' }, avatar(p, 'xl'), h('h3', null, p.name),
+      nodes.push(h('div', { class: 'st-hero' }, zoomable(avatar(p, 'xl'), p.avatar), h('h3', null, p.name),
         h('div', { class: p.online ? 'accent' : 'muted' }, p.is_bot ? t('bots.label') : p.online ? t('chat.online') : p.last_seen ? fmtLastSeen(p.last_seen) : t('chat.last_seen_hidden'))));
       const rows = [];
       if (p.bio) rows.push(infoRow(p.bio, t('settings.bio')));
@@ -152,7 +152,7 @@ export async function renderInfo(m, chatId) {
       if (p.avatar) nodes.push(h('div', { class: 'sheading' }, t('st.album')), h('div', { class: 'sgroup album' }, photoGrid(p.id, false)));
     } else {
       const shownTitle = fromTg ? chat.title.replace(/^\u2708\uFE0F?\s*/, '') : chat.title;
-      nodes.push(h('div', { class: 'st-hero group-hero' }, avatar({ id: chat.id, avatar: chat.avatar, name: shownTitle }, 'xl'),
+      nodes.push(h('div', { class: 'st-hero group-hero' }, zoomable(avatar({ id: chat.id, avatar: chat.avatar, name: shownTitle }, 'xl'), chat.avatar),
         h('h3', null, shownTitle),
         fromTg ? h('span', { class: 'tg-pill' }, icon('telegram', 14), 'Telegram') : null,
         chat.description && !chat.tg && !String(chat.description).startsWith('tgb:') ? h('p', { class: 'muted' }, chat.description) : null,
@@ -224,6 +224,12 @@ export async function renderInfo(m, chatId) {
     m.setBody(nodes);
   };
   draw();
+}
+
+/** A profile picture opens full size on a tap. */
+function zoomable(el, src) {
+  if (!src) return el;
+  return h('button', { class: 'st-hero-photo', type: 'button', 'aria-label': t('info.photo'), onclick: () => lightbox(src) }, el);
 }
 
 /** "1 участник", "3 участника", "5 участников" (Russian forms; Uzbek has none). */
