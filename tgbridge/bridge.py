@@ -401,6 +401,18 @@ async def upload_media(a: Acct, msg, kind: str, meta: dict) -> bool:
     return await upload_media_r(a, msg, kind, meta) == "ok"
 
 
+def presence_of(entity):
+    """Whether a Telegram user is online, or when they were last seen (as much as their privacy lets us know)."""
+    st = getattr(entity, "status", None)
+    n = type(st).__name__ if st is not None else ""
+    ms = lambda d: int(d.timestamp() * 1000)
+    if n == "UserStatusOnline":
+        return {"online": True, "until": ms(st.expires)}
+    if n == "UserStatusOffline":
+        return {"online": False, "seen": ms(st.was_online)}
+    return {"UserStatusRecently": {"approx": "recently"}, "UserStatusLastWeek": {"approx": "week"}, "UserStatusLastMonth": {"approx": "month"}}.get(n)
+
+
 PROFILE_EVERY = 6 * 3600
 
 
@@ -415,6 +427,9 @@ async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False
     try:
         photo = getattr(entity, "photo", None)
         photo_id = str(getattr(photo, "photo_id", "") or "")
+        pr = presence_of(entity)
+        if pr:
+            await to_server({"owner": a.uid, "presence": True, "tg_chat": key, **pr})
         await to_server({
             "owner": a.uid, "tg_chat": key, "kind": kind, "profile": True, "title": display_name(entity) or "",
             "username": getattr(entity, "username", "") or "", "phone": getattr(entity, "phone", "") or "", "photo_id": photo_id,
@@ -642,6 +657,32 @@ def attach_handlers(a: Acct):
                 await to_server({"owner": a.uid, "read": True, "tg_chat": key, "max_id": event.max_id})
         except Exception as e:
             log("read skipped:", type(e).__name__)
+
+    @a.client.on(events.UserUpdate())
+    async def on_user(event):
+        """A contact came online or went away in Telegram."""
+        try:
+            key = str(event.user_id)
+            if key not in a.chats and not (a.auto_private and event.is_private):
+                return
+            ms = lambda d: int(d.timestamp() * 1000)
+            if event.online and getattr(event, "until", None):
+                body = {"online": True, "until": ms(event.until)}
+            elif event.online:
+                body = {"online": True}
+            elif getattr(event, "last_seen", None):
+                body = {"online": False, "seen": ms(event.last_seen)}
+            elif getattr(event, "recently", False):
+                body = {"approx": "recently"}
+            elif getattr(event, "within_weeks", False):
+                body = {"approx": "week"}
+            elif getattr(event, "within_months", False):
+                body = {"approx": "month"}
+            else:
+                return
+            await to_server({"owner": a.uid, "presence": True, "tg_chat": key, **body})
+        except Exception as e:
+            log("presence skipped:", type(e).__name__)
 
     @a.client.on(events.NewMessage())
     async def on_message(event):

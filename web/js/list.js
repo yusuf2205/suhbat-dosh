@@ -1,3 +1,4 @@
+import { tgOnline } from './tgpresence.js';
 import { justSwiped, swipeLeft } from './swipe.js';
 import { h, clear, debounce, hscroll } from './dom.js';
 import { t, errText } from './i18n.js';
@@ -253,7 +254,7 @@ async function removeChat(c) {
 }
 
 function entityOf(c) {
-  return c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar };
+  return c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar, online: tgOnline(c) };
 }
 
 function item(c) {

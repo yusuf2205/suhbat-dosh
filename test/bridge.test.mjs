@@ -379,3 +379,25 @@ test('a place sent in Telegram is a location message, also for a message that wa
   assert.equal((await tgPost({ tg_msg: 3, text: 'почти', geo: [999, 70] })).ok, true, 'a wrong place stays an ordinary message');
   assert.equal((await msgs()).find((m) => m.text === 'почти').kind, 'text');
 });
+
+test('the copy of a Telegram chat shows when the other side is online in Telegram, and when they were last there', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002090', 'Присутствие');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '8181', kind: 'user', title: 'Жасур', author: 'Жасур', ...body }) }).then((r) => r.json());
+  assert.ok((await tgPost({ tg_msg: 1, text: 'Привет' })).id);
+  const chatOf = async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Жасур');
+  assert.ok(await until(chatOf));
+  assert.equal((await chatOf()).tg?.presence, undefined, 'nothing known yet');
+  const onlineUntil = Date.now() + 120_000;
+  assert.equal((await tgPost({ presence: true, online: true, until: onlineUntil })).changed, true);
+  assert.equal((await chatOf()).tg.presence.online, true, 'online in Telegram');
+  assert.equal((await tgPost({ presence: true, online: true, until: onlineUntil })).changed, false, 'the same news again changes nothing');
+  const seen = Date.now() - 60_000;
+  await tgPost({ presence: true, online: false, seen });
+  const p = (await chatOf()).tg.presence;
+  assert.equal(p.online, false);
+  assert.equal(p.seen, seen);
+  await tgPost({ presence: true, approx: 'recently' });
+  assert.equal((await chatOf()).tg.presence.approx, 'recently');
+  assert.equal((await tgPost({ presence: true, tg_chat: '555555', online: true })).skipped, true, 'an unknown chat is ignored');
+});

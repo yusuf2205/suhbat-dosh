@@ -412,6 +412,31 @@ function applyRead(uid, b) {
   return { ok: true };
 }
 
+/** The other side came online in Telegram, or left: the chat shows it like a contact in this app. */
+function applyPresence(uid, b) {
+  const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(b.tg_chat ?? ''));
+  if (!row) return { ok: true, skipped: true };
+  const t = now();
+  let until = 0;
+  let seen = row.tg_seen;
+  let approx = row.tg_approx;
+  if (b.online === true) {
+    until = Math.min(Math.max(Number(b.until) || t + 180_000, t), t + 600_000);   // Telegram says how long its "online" holds; the end is taken as offline
+    approx = '';
+  } else if (Number(b.seen) > 0) {
+    seen = Math.min(Number(b.seen), t);
+    approx = '';
+  } else if (['recently', 'week', 'month'].includes(b.approx)) {
+    approx = b.approx;
+    seen = 0;
+  }
+  const wasOnline = row.tg_online_until > t;
+  if (until === row.tg_online_until && seen === row.tg_seen && approx === row.tg_approx) return { ok: true, changed: false };
+  q.run('UPDATE tg_chats SET tg_online_until = ?, tg_seen = ?, tg_approx = ? WHERE user_id = ? AND tg_chat = ?', until, seen, approx, uid, row.tg_chat);
+  if ((until > t) !== wasOnline || seen !== row.tg_seen || approx !== row.tg_approx) refreshChat(uid, row.chat_id);
+  return { ok: true, changed: true };
+}
+
 /** The other side's name, @username and phone as Telegram shows them: the mirrored chat follows (the photo comes separately). */
 function applyProfile(uid, b) {
   const row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, String(b.tg_chat ?? ''));
@@ -452,6 +477,7 @@ function deliver(b, file = null) {
   if (b.deleted) return applyDeleted(uid, b);
   if (b.read) return applyRead(uid, b);
   if (b.profile) return applyProfile(uid, b);
+  if (b.presence) return applyPresence(uid, b);
   const tgChat = String(b.tg_chat ?? '');
   if (!/^-?\d{1,20}$/.test(tgChat)) return { ok: true, skipped: true };
   let text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);

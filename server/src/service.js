@@ -298,7 +298,12 @@ export function chatOut(chatId, viewerId) {
     type: c.type,
     title: c.title,
     avatar: c.avatar_file ? `/api/files/${c.avatar_file}` : null,
-    ...(c.imported_from === 'tgbridge' ? (() => { const t = q.get('SELECT tg_username, tg_phone FROM tg_chats WHERE chat_id = ?', chatId); return t && (t.tg_username || t.tg_phone) ? { tg: { username: t.tg_username, phone: t.tg_phone } } : {}; })() : {}),
+    ...(c.imported_from === 'tgbridge' ? (() => {
+      const t = q.get('SELECT tg_username, tg_phone, tg_online_until, tg_seen, tg_approx FROM tg_chats WHERE chat_id = ?', chatId);
+      if (!t) return {};
+      const presence = t.tg_online_until || t.tg_seen || t.tg_approx ? { presence: { online: t.tg_online_until > Date.now(), until: t.tg_online_until, seen: t.tg_seen, approx: t.tg_approx } } : {};
+      return t.tg_username || t.tg_phone || presence.presence ? { tg: { username: t.tg_username, phone: t.tg_phone, ...presence } } : {};
+    })() : {}),
     description: c.description,
     owner_id: c.owner_id,
     invite_code: isAdmin(m) ? c.invite_code : null,

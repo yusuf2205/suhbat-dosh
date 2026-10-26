@@ -11,6 +11,7 @@ import { noteNode, openNoteCreate } from './notes.js';
 import { firstUrl, linkCard } from './linkcard.js';
 import { editImage, scanDocument } from './photoedit.js';
 import { attachQuick, openQuickManager } from './quick.js';
+import { tgOnline, tgSeenLine } from './tgpresence.js';
 import { applyAutoTr, autoAvailable, autoDecided, autoOn, foreignLang, langName, setAuto } from './autotr.js';
 import { onceNode } from './once.js';
 import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf } from './topics.js';
@@ -387,7 +388,7 @@ export function renderHeader() {
   const c = activeChat();
   if (!c || !view) return;
   const peer = c.peer;
-  const ent = c.type === 'direct' ? peer : { id: c.id, name: c.title, avatar: c.avatar };
+  const ent = c.type === 'direct' ? peer : { id: c.id, name: c.title, avatar: c.avatar, online: tgOnline(c) };
   if (view.trBtn) {
     const can = !isSecret(c) && !c.saved && autoAvailable();
     view.trBtn.hidden = !can;
@@ -451,7 +452,7 @@ function subtitle(c) {
     return (c.peer?.last_seen ? fmtLastSeen(c.peer.last_seen) : t('chat.last_seen_hidden')) + pres;
   }
   if (c.saved) return '';
-  if (c.imported) return t(c.imported === 'tgbridge' ? 'br.subtitle' : 'imp.subtitle') + (c.tg?.username ? ` · @${c.tg.username}` : '');
+  if (c.imported) return tgSeenLine(c) || (t(c.imported === 'tgbridge' ? 'br.subtitle' : 'imp.subtitle') + (c.tg?.username ? ` · @${c.tg.username}` : ''));
   return `${c.members_count} ${c.type === 'channel' ? t('chat.subscribers') : t('chat.members')}`;
 }
 
