@@ -340,6 +340,16 @@ def media_kind(msg):
     return None
 
 
+def geo_of(msg):
+    """[lat, lng] of a place (or live location, or venue) sent in Telegram, else None."""
+    g = getattr(msg, "geo", None)
+    lat, lng = getattr(g, "lat", None), getattr(g, "long", None)
+    try:
+        return [round(float(lat), 6), round(float(lng), 6)] if lat is not None and lng is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def media_limit(kind: str) -> int:
     return VIDEO_MAX if kind == "video" else FILE_MAX if kind in ("file", "audio") else MEDIA_MAX
 
@@ -459,7 +469,7 @@ async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
 
 # ---------------------------------------------------------------- files of messages that were copied as a mark
 def upgrade_kinds() -> str:
-    return "photo,voice,file,audio" + (",video" if VIDEO_ON else "")
+    return "geo,photo,voice,file,audio" + (",video" if VIDEO_ON else "")
 
 
 async def pending_media(a: Acct, limit=20):
@@ -509,6 +519,14 @@ async def upgrade_round(a: Acct) -> str:
             if m is None:
                 skips.setdefault("gone", []).append(it["id"])
                 continue
+            g = geo_of(m)
+            if g:   # a place: it becomes a location message in the same spot
+                if await post_in({"owner": a.uid, "tg_chat": chat, "kind": "user", "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
+                                  "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000)}):
+                    done += 1
+                    continue
+                await flush_skips(a, skips)
+                return "down"
             mk = media_kind(m)
             if not mk:
                 skips.setdefault("nomedia", []).append(it["id"])
@@ -660,7 +678,7 @@ def attach_handlers(a: Acct):
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
-                "reply_to": reply_id(event.message),
+                "reply_to": reply_id(event.message), "geo": geo_of(event.message),
               }, locked=True)
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
@@ -698,6 +716,7 @@ async def copy_dialog(a: Acct, d, limit=None):
         await to_server({
             "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
             "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+            "geo": geo_of(m),
         })
     await sync_profile(a, d.entity, str(d.id), "user")
 

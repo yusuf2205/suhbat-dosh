@@ -454,7 +454,11 @@ function deliver(b, file = null) {
   if (b.profile) return applyProfile(uid, b);
   const tgChat = String(b.tg_chat ?? '');
   if (!/^-?\d{1,20}$/.test(tgChat)) return { ok: true, skipped: true };
-  const text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
+  let text = String(b.text ?? b.caption ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
+  // a place sent in Telegram becomes a real location message (the same as one sent from here), not a mark
+  const geo = Array.isArray(b.geo) && b.geo.length === 2 && Math.abs(Number(b.geo[0])) <= 90 && Math.abs(Number(b.geo[1])) <= 180 && b.geo.every((v) => Number.isFinite(Number(v)))
+    ? `geo:${Number(b.geo[0])},${Number(b.geo[1])}` : null;
+  if (geo && !file) text = geo;
   if (!text.trim() && !file) return { ok: true, skipped: true };
   let row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   if (!row) {
@@ -469,8 +473,8 @@ function deliver(b, file = null) {
   const had = q.get('SELECT id, kind, file_id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key);
   if (had) {
     // the file of a message that was copied as a mark such as "[Фото]" (history, a failed upload): the message becomes the real one
-    if (b.upgrade && file && had.kind === 'text' && !had.file_id) {
-      q.run('UPDATE messages SET kind = ?, file_id = ?, duration = ?, text = ? WHERE id = ?', file.kind, file.id, file.duration ?? null, text, had.id);
+    if (b.upgrade && (file || geo) && had.kind === 'text' && !had.file_id) {
+      q.run('UPDATE messages SET kind = ?, file_id = ?, duration = ?, text = ? WHERE id = ?', file ? file.kind : 'location', file ? file.id : null, file?.duration ?? null, text, had.id);
       if (b.backfill) {
         if (!syncTimers.has(row.chat_id)) syncTimers.set(row.chat_id, setTimeout(() => { syncTimers.delete(row.chat_id); try { refreshChat(uid, row.chat_id); } catch { /* chat gone */ } }, 2500).unref());
       } else emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(had.id)) });
@@ -484,7 +488,7 @@ function deliver(b, file = null) {
   const ts = Number.isFinite(Number(b.ts)) && Number(b.ts) > 0 ? Math.min(Math.round(Number(b.ts)), now()) : now();
   const r = q.run(
     'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    row.chat_id, b.out ? uid : null, file ? file.kind : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, // others' messages have no account here: they count as unread
+    row.chat_id, b.out ? uid : null, file ? file.kind : geo ? 'location' : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, // others' messages have no account here: they count as unread
   );
   const id = Number(r.lastInsertRowid);
   q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?) WHERE id = ?', id, ts, row.chat_id);
@@ -565,7 +569,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
 
 // Messages that are still only a mark ("[Фото]", "[Файл]" ...) although the bridge can fetch the file now: the history copied before files were
 // supported, uploads that failed while the server was down. The bridge asks for them, newest first, and puts the files in.
-const PLACEHOLDERS = { photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'] };
+const PLACEHOLDERS = { geo: ['[Геопозиция]'], photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'] };
 bridgeIn.get('/bridge/pending', (req, res) => {
   secret(req);
   const uid = Number(req.query.owner);

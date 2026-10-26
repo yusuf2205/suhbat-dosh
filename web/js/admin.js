@@ -479,12 +479,21 @@ function messageNode(m, ctx, prev) {
     m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
     m.file && (m.kind === 'voice' || m.kind === 'audio') ? h('audio', { class: 'abub-audio', controls: true, preload: 'none', src: `/api/admin/files/${m.file.id}` }) : '',
     m.file && !['image', 'voice', 'audio'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
-    m.text && m.kind !== 'call' ? h('div', { class: 'abub-text' }, m.text) : '',
+    m.kind === 'location' ? locationLine(m.text) : '',
+    m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, m.text) : '',
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
     h('div', { class: 'abub-time', title: fmtDT(m.created_at) }, m.edited_at ? 'изм. ' : '', clock(m.created_at))));
   return nodes;
+}
+
+/** A place shared in a chat: a link to the map instead of the raw "geo:lat,lng". */
+function locationLine(text) {
+  const g = /^geo:(-?[\d.]+),(-?[\d.]+)/.exec(String(text || ''));
+  if (!g) return h('div', { class: 'abub-text' }, text);
+  return h('div', { class: 'abub-text' }, '\u{1F4CD} Геопозиция: ',
+    h('a', { href: `https://www.openstreetmap.org/?mlat=${g[1]}&mlon=${g[2]}#map=16/${g[1]}/${g[2]}`, target: '_blank', rel: 'noopener' }, `${g[1]}, ${g[2]}`));
 }
 
 async function openChat(id) {

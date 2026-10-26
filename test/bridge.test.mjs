@@ -361,3 +361,21 @@ test('files, music and videos are copied; a message that was only a mark gets it
   assert.ok(await until(async () => (await waiting()).length === 0), 'nothing is waiting any more');
   assert.equal((await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=file`)).status, 403, 'the door needs the secret');
 });
+
+test('a place sent in Telegram is a location message, also for a message that was copied as a mark', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002080', 'Места');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '7171', kind: 'user', title: 'Анвар', author: 'Анвар', ...body }) }).then((r) => r.json());
+  assert.ok((await tgPost({ tg_msg: 1, text: '[Геопозиция]', geo: [41.311081, 69.240562] })).id);
+  const chat = await until(async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Анвар'));
+  const msgs = async () => (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages`)).data.messages;
+  const here = (await msgs()).find((m) => m.kind === 'location');
+  assert.equal(here.text, 'geo:41.311081,69.240562');
+  // the old copy was only a mark; the upgrade turns it into the place
+  assert.ok((await tgPost({ tg_msg: 2, text: '[Геопозиция]' })).id);
+  assert.equal((await msgs()).filter((m) => m.kind === 'location').length, 1);
+  assert.equal((await tgPost({ tg_msg: 2, text: '', geo: [40.1, 70.2], upgrade: true, backfill: true })).upgraded, true);
+  assert.equal((await msgs()).filter((m) => m.kind === 'location').length, 2);
+  assert.equal((await tgPost({ tg_msg: 3, text: 'почти', geo: [999, 70] })).ok, true, 'a wrong place stays an ordinary message');
+  assert.equal((await msgs()).find((m) => m.text === 'почти').kind, 'text');
+});
