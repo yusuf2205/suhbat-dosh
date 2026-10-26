@@ -1073,7 +1073,7 @@ function renderMessages() {
       want.push(keyed('unread', () => h('div', { class: 'unread-div', role: 'separator' }, t('chat.new_messages'))));
       dividerDone = true;
     }
-    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
+    const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
       m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
@@ -1177,6 +1177,7 @@ function buildMessage(m, c) {
   }
   const status = mine ? h('span', { class: 'tick' }) : null;
   if (m.tg_deleted) bubble.append(h('div', { class: 'tg-gone' }, `\u{1F5D1} ${t('br.deleted_in_tg')}`));
+  if (m.tg_prev?.length) bubble.append(h('details', { class: 'tg-prev' }, h('summary', null, t('br.was_edited')), ...m.tg_prev.map((p) => h('div', { class: 'tg-prev-v' }, h('small', { class: 'muted' }, fmtTime(p.at)), ` ${p.text}`))));
   bubble.append(h('div', { class: 'meta' }, m.edited_at ? h('span', null, t('chat.edited')) : null, h('span', null, fmtTime(m.created_at)), status));
   if (m.failed) {
     bubble.append(h('button', { class: 'btn link', type: 'button', onclick: () => retryFailed(m) }, t('msg.failed')));

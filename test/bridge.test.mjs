@@ -231,9 +231,13 @@ test('both sides stay in step: edits, deletions marked not removed, read marks i
   const edited = await until(async () => (await list()).find((m) => m.text === 'Встретимся в семь'));
   assert.ok(edited, 'the new text arrived');
   assert.ok(edited.edited_at, 'and it is marked as edited');
+  assert.deepEqual(edited.tg_prev.map((p) => p.text), ['Встретимся в шесть'], 'the earlier version is kept');
+  await ev({ type: 'edit', chat: 777, msg: 200, text: 'Встретимся в восемь' });
+  const twice = await until(async () => (await list()).find((m) => m.text === 'Встретимся в восемь'));
+  assert.deepEqual(twice.tg_prev.map((p) => p.text), ['Встретимся в шесть', 'Встретимся в семь'], 'every version is kept, oldest first');
   // a deletion in Telegram is marked, the message stays (also when Telegram does not name the chat)
   await ev({ type: 'delete', ids: [200], with_chat: false });
-  const gone = await until(async () => (await list()).find((m) => m.text === 'Встретимся в семь' && m.tg_deleted));
+  const gone = await until(async () => (await list()).find((m) => m.text === 'Встретимся в восемь' && m.tg_deleted));
   assert.ok(gone, 'marked as deleted in Telegram, not removed');
   // reading in Telegram clears the unread count here
   await mock(admin.user.id, { chat: 777, kind: 'user', msg: 201, author: 'Дилшод', text: 'Ты где?' });

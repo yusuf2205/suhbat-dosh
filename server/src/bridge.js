@@ -372,6 +372,7 @@ function applyEdit(uid, b) {
   const m = q.get('SELECT * FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${Number(b.tg_msg)}`);
   const text = String(b.text ?? '').normalize('NFC').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').slice(0, 4000);
   if (!m || !text.trim() || m.text === text) return { ok: true, skipped: true };
+  if (m.text) q.run('INSERT INTO tg_edits (message_id, text, at) VALUES (?,?,?)', m.id, m.text, m.edited_at || m.created_at || now());   // the earlier version stays
   q.run('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?', text, Math.min(Number(b.ts) || now(), now()), m.id);
   emit(memberIds(row.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(m.id)) });
   return { ok: true, id: m.id };

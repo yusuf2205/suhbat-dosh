@@ -216,6 +216,7 @@ export function messageOut(row) {
     ...(commentsOn(row) ? { comments: q.get('SELECT COUNT(*) AS n FROM messages WHERE thread_of = ?', row.id).n } : {}),
     ...(row.import_author ? { import_author: row.import_author } : {}),
     ...(row.tg_deleted ? { tg_deleted: true } : {}),
+    ...(row.import_key && row.edited_at ? { tg_prev: q.all('SELECT text, at FROM tg_edits WHERE message_id = ? ORDER BY id', row.id) } : {}),
     transcript: row.kind === 'voice' || row.kind === 'audio' || row.kind === 'video' ? transcriptOut(row) : null,
     reactions,
     edited_at: row.edited_at,
