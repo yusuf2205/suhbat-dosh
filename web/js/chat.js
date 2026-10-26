@@ -11,7 +11,7 @@ import { noteNode, openNoteCreate } from './notes.js';
 import { firstUrl, linkCard } from './linkcard.js';
 import { editImage, scanDocument } from './photoedit.js';
 import { attachQuick, openQuickManager } from './quick.js';
-import { autoAvailable, autoOn, autoTrNode, setAuto } from './autotr.js';
+import { applyAutoTr, autoAvailable, autoDecided, autoOn, foreignLang, langName, setAuto } from './autotr.js';
 import { onceNode } from './once.js';
 import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf } from './topics.js';
 import { openReaders } from './readers.js';
@@ -279,11 +279,12 @@ function buildView() {
   view.wrap = h('div', { class: 'composer-wrap' }, view.ctx, view.composer, view.state);
   clear(root).append(
     h('div', { class: 'chat-head' }, view.back, view.who,
+      (view.trBtn = h('button', { class: 'icon-btn tr-toggle', type: 'button', hidden: true, onclick: toggleTranslate }, icon('globe', 22))),
       h('button', { class: 'icon-btn hide-narrow', type: 'button', 'aria-label': t('chat.search'), onclick: () => openChatSearch(S.active) }, icon('search', 22)),
       h('button', { class: 'icon-btn call-start', type: 'button', 'aria-label': t('chat.call'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, false) : startCall(S.active, false)) }, icon('phone', 22)),
       h('button', { class: 'icon-btn call-start video', type: 'button', 'aria-label': t('chat.video'), onclick: () => (activeChat()?.type === 'group' ? joinGroupCall(S.active, true) : startCall(S.active, true)) }, icon('video', 22)),
       (view.moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.more'), 'aria-haspopup': 'menu', onclick: () => chatMoreMenu(view.moreBtn) }, icon('more', 22)))),
-    view.pin, view.topics, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.dg, view.list, view.jump, view.wrap, fileInput,
+    view.pin, view.topics, (view.gbar = h('div', { class: 'gc-bar', hidden: true })), view.dg, (view.trs = h('div', { class: 'tr-suggest', hidden: true })), view.list, view.jump, view.wrap, fileInput,
   );
   view.list.addEventListener('scroll', onScroll, { passive: true });
   const typingPing = () => {
@@ -356,11 +357,45 @@ function saveDraft() {
 }
 
 // ---------------------------------------------------------------- header & composer state
+/** The globe in the header: read this chat in my language (or not). */
+function toggleTranslate() {
+  const c = activeChat();
+  if (!c) return;
+  if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
+  setAuto(c.id, !autoOn(c.id));
+  nodeCache.clear();
+  renderMessages();
+  renderHeader();
+}
+
+/** Other people write in the other language: offer to read it in mine, once. */
+function suggestTranslate(c, list) {
+  if (!view?.trs) return;
+  const bar = view.trs;
+  const lang = !isSecret(c) && !c.saved && !autoDecided(c.id) && !S.prefs.trNo?.[c.id] && autoAvailable() ? foreignLang(list) : '';
+  if (!lang) { bar.hidden = true; return; }
+  if (!bar.hidden && bar.dataset.chat === String(c.id) && bar.dataset.lang === lang) return;
+  bar.dataset.chat = String(c.id);
+  bar.dataset.lang = lang;
+  clear(bar).append(h('span', { class: 'tr-suggest-text' }, `\u{1F310} ${t('atr.suggest', { lang: langName(lang) })}`),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { setAuto(c.id, true); bar.hidden = true; nodeCache.clear(); renderMessages(); renderHeader(); } }, t('atr.turn_on')),
+    h('button', { class: 'btn link', type: 'button', onclick: () => { S.prefs.trNo = { ...(S.prefs.trNo || {}), [c.id]: true }; savePrefs(); bar.hidden = true; } }, t('atr.not_now')));
+  bar.hidden = false;
+}
+
 export function renderHeader() {
   const c = activeChat();
   if (!c || !view) return;
   const peer = c.peer;
   const ent = c.type === 'direct' ? peer : { id: c.id, name: c.title, avatar: c.avatar };
+  if (view.trBtn) {
+    const can = !isSecret(c) && !c.saved && autoAvailable();
+    view.trBtn.hidden = !can;
+    view.trBtn.classList.toggle('on', can && autoOn(c.id));
+    view.trBtn.setAttribute('aria-pressed', String(can && autoOn(c.id)));
+    view.trBtn.setAttribute('aria-label', `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`);
+    view.trBtn.title = view.trBtn.getAttribute('aria-label');
+  }
   clear(view.who).append(
     avatar(ent, 'sm'),
     h('span', { class: 'grow' }, h('b', { class: 'ellipsis' }, chatTitle(c), c.ttl ? h('span', { class: 'ttl-chip', title: t('ttl.title') }, ` \u23F1 ${ttlLabel(c.ttl)}`) : null), h('span', { class: `sub ${subtitleLive(c) ? 'live' : ''}` }, subtitle(c))),
@@ -1055,6 +1090,7 @@ function renderMessages() {
   if (!view) return;
   const c = activeChat();
   const b = bucket(c.id);
+  suggestTranslate(c, b.list);
   const want = [];
   if (!b.list.length && !b.loading) {
     want.push(keyed('empty', () => (c.peer?.is_bot
@@ -1164,7 +1200,7 @@ function buildMessage(m, c) {
   else if (m.kind === 'contact') bubble.append(contactNode(m));
   else if (bigEmoji && isSingleEmoji(m.text)) bubble.append(animatedEmoji(m.text.trim()) ?? h('div', { class: 'text' }, m.text));
   else if (m.text) bubble.append(h('div', { class: 'text' }, linkify(m.text)));
-  if (m.kind === 'text' && !mine && !c.secret && m.text && autoOn(c.id)) { const tr = autoTrNode(m.text); if (tr) bubble.append(tr); }
+  if (m.kind === 'text' && !mine && !c.secret && m.text && autoOn(c.id)) { const te = bubble.querySelector(':scope > .text'); if (te) applyAutoTr(te, m.text, linkify); }
   if (m.kind === 'text' && !c.secret && m.text && typeof m.id === 'number') { const card = linkCard(firstUrl(m.text)); if (card) bubble.append(card); }
   if (c.comments && c.type === 'channel' && typeof m.id === 'number' && !m.pending) bubble.append(commentsButton(m));
   if (m.markup?.inline_keyboard) bubble.append(keyboardNode(m));
@@ -1653,7 +1689,7 @@ function chatMoreMenu(anchor) {
     { label: t('task.title'), onClick: () => openTasks() },
     ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
       if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
-      setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages();
+      setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages(); renderHeader();
     } }] : []),
     ...(c.type === 'direct' || c.my_role !== 'member' ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
     { label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) },

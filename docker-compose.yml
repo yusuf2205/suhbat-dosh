@@ -38,7 +38,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       PROJECT: ${COMPOSE_PROJECT_NAME:-suhbat}
-      SERVICES: ${WATCHDOG_SERVICES:-suhbat tgbridge cloudflared whisper embed}
+      SERVICES: ${WATCHDOG_SERVICES:-suhbat tgbridge cloudflared whisper embed translate}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command:
@@ -106,18 +106,23 @@ services:
     security_opt: ["no-new-privileges:true"]
     # no ports are published: only the suhbat container can reach it
 
-  # Translation of chats on your own server (LibreTranslate). Start with:  docker compose --profile translate up -d translate
-  # (the server finds it at http://translate:5000 by itself; TRANSLATE_URL in .env changes that)
+  # Translation of chats on your own server: Russian, Uzbek, English (Meta's NLLB-200 on the CPU; LibreTranslate has no Uzbek). Start with:
+  #   docker compose --profile translate up -d --build translate
+  # The first start downloads the model (about 600 MB) into ./translate-models. The server finds it at http://translate:5000 (TRANSLATE_URL in .env changes that).
   translate:
-    image: libretranslate/libretranslate:latest
+    build: ./nllb
+    image: suhbat-nllb:latest
     profiles: ["translate"]
     restart: unless-stopped
     mem_limit: 3g
     environment:
-      LT_LOAD_ONLY: en,ru,uz
-      LT_DISABLE_WEB_UI: "true"
+      NLLB_THREADS: ${NLLB_THREADS:-4}
     volumes:
-      - ./translate-models:/home/libretranslate/.local
+      - ./translate-models:/models
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   # Public access through your own Cloudflare Tunnel (profile 'tunnel'; no open ports needed).
   # Set up with: sh scripts/set-tunnel-token.sh

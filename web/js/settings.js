@@ -1,4 +1,5 @@
 // Settings, laid out like Telegram: a list of sections with icons; each opens its own page with a back arrow.
+import { setAutoAll } from './autotr.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { LIMITS, PRIVACY_VALUES } from '/shared/contracts.js';
 import { motionLevel, setLiteMotion } from './motion.js';
@@ -668,6 +669,8 @@ export function openSettings() {
             h('label', null, t('st.theme_to'), ' ', timeInput('themeTo', '07:00')))))] : []),
           heading(t('settings.text_size')),
           group(h('div', { class: 'sfield' }, h('div', { class: 'row between' }, h('span', null, t('settings.text_size')), val), size)),
+          heading(t('atr.title')),
+          group(switchRow(t('atr.all'), !!S.prefs.autoTrAll, (v) => { setAutoAll(v); }, t('atr.all_hint'))),
           heading(t('st.compact')),
           group(h('div', { class: 'sfield' }, (() => {
             const sel = h('select', { class: 'input', 'aria-label': t('st.compact') }, ...['auto', 'on', 'off'].map((v) => h('option', { value: v, selected: (S.prefs.compact || 'auto') === v }, t(`st.compact_${v}`))));

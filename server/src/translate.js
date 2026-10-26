@@ -16,9 +16,12 @@ export async function translatorAvailable() {
   return ok;
 }
 export const translatorReady = () => { translatorAvailable(); return health.ok; };
+// known from the start (the first page a person opens must already know whether translation is there), and kept fresh
+translatorAvailable().catch(() => {});
+setInterval(() => translatorAvailable().catch(() => {}), 60_000).unref();
 
 translate.post('/translate', async (req, res) => {
-  if (!rateLimit(`tl:${req.user.id}`, 240, 60_000)) throw new HttpError(429, 'slow_down');
+  if (!rateLimit(`tl:${req.user.id}`, 600, 60_000)) throw new HttpError(429, 'slow_down');
   const text = typeof req.body?.text === 'string' ? req.body.text.slice(0, 2000) : '';
   const target = ['ru', 'uz', 'en'].includes(req.body?.target) ? req.body.target : '';
   if (!text.trim() || !target) throw new HttpError(400, 'invalid_input');
