@@ -1,4 +1,5 @@
 import { tgOnline } from './tgpresence.js';
+import { notifyBar } from './notifybar.js';
 import { justSwiped, swipeLeft } from './swipe.js';
 import { h, clear, debounce, hscroll } from './dom.js';
 import { t, errText } from './i18n.js';
@@ -110,7 +111,7 @@ export function mount(sidebar) {
     (heroEl = h('div', { class: 'hero' },
     h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), todayBtn, searchBtn, composeBtn),
     h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, storiesBar())))),
-    tabsEl, netEl, listEl, nav, fab,
+    tabsEl, netEl, notifyBar(), listEl, nav, fab,
   );
 
   if (!wired) {
