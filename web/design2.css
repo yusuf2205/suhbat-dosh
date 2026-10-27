@@ -105,6 +105,8 @@
     color: var(--ink-text); border: 0; border-radius: 0 0 26px 26px; padding: calc(8px + env(safe-area-inset-top)) 10px 10px; min-height: 0; position: relative; z-index: 3;
     box-shadow: 0 8px 22px rgba(0, 0, 0, .16);
   }
+  /* a fixed dark strip under the clock: without it iOS fades the status bar into the page, which looks blurry */
+  .app .chat-head::before, .app .hero::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: var(--ink); z-index: 60; pointer-events: none; }
   .app .chat-head .who b { color: #fff; }
   .app .chat-head .sub { color: var(--ink-muted); }
   .app .chat-head .sub.live { color: var(--yel); }

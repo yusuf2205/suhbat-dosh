@@ -81,13 +81,23 @@ function buildApp() {
   mountChat(appEl.querySelector('.main'));
 }
 
+/** The colour behind the phone's status bar follows the dark header (the chat, the list); iOS blurs it into the page otherwise. */
+function syncBarColor() {
+  requestAnimationFrame(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) return;
+    const dark = matchMedia('(max-width: 600px)').matches && !!document.querySelector('.app .chat-head, .app .hero');
+    meta.setAttribute('content', dark ? '#17171a' : '#fbc700');
+  });
+}
 function syncView() {
   if (appEl) {
     appEl.dataset.view = S.active ? 'chat' : 'list';
     appEl.dataset.section = S.view;
+    syncBarColor();
   }
 }
-on('view', () => { if (appEl) appEl.dataset.section = S.view; });
+on('view', () => { if (appEl) { appEl.dataset.section = S.view; syncBarColor(); } });
 on('active', () => { syncView(); renderPane(true); });
 
 // docked info pane (>= 1280px): same content as the info dialog, always visible next to the chat
