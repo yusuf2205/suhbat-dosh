@@ -357,6 +357,8 @@ def media_limit(kind: str) -> int:
 
 
 MEDIA_SEM = asyncio.Semaphore(2)   # big downloads at once (the temporary files live in memory)
+SMALL_SEM = asyncio.Semaphore(4)   # photos, voice messages and small files: never wait behind a film that takes an hour
+SMALL_FILE = 20 * 1024 * 1024
 
 
 async def upload_media_r(a: Acct, msg, kind: str, meta: dict) -> str:
@@ -366,7 +368,7 @@ async def upload_media_r(a: Acct, msg, kind: str, meta: dict) -> str:
     size = getattr(f, "size", 0) or 0
     if size > media_limit(kind):
         return "skip:too_big"
-    async with MEDIA_SEM:
+    async with (SMALL_SEM if size <= SMALL_FILE else MEDIA_SEM):
         fd, path = tempfile.mkstemp(prefix="tgm-", suffix=".bin")
         os.close(fd)
         got = None
@@ -532,7 +534,9 @@ async def upgrade_round(a: Acct) -> str:
             log("media upgrade: a chat could not be read:", type(e).__name__)
             await asyncio.sleep(5)
             continue
-        for it, m in zip(its, msgs):
+        # the small ones first: a big video of the same account must not hold its photos back
+        size_of = lambda m: (getattr(getattr(m, "file", None), "size", 0) or 0) if m is not None else 0
+        for it, m in sorted(zip(its, msgs), key=lambda p: size_of(p[1])):
             if m is None:
                 skips.setdefault("gone", []).append(it["id"])
                 continue
