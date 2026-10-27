@@ -206,6 +206,7 @@ class Acct:
         self.up_done = 0
         self.up_nochat = set()     # chats whose messages could not be fetched (the library does not know them)
         self.last_sync = 0.0
+        self.last_ok = time.time()   # the last moment the connection was seen alive: what came after it may have been missed
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.synced = False        # the first complete copy of the personal chats has finished
 
@@ -741,15 +742,15 @@ def reply_id(msg):
     return getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
 
 
-async def copy_dialog(a: Acct, d, limit=None):
-    """The recent history of one personal chat, oldest first."""
+async def copy_dialog(a: Acct, d, limit=None, media_since=None):
+    """The recent history of one personal chat, oldest first. Messages newer than media_since come with their photos, videos and files at once."""
     msgs = []
     async for m in a.client.iter_messages(d.entity, limit=limit or BACKFILL_MESSAGES):
         if describe(m):
             msgs.append(m)
     for m in reversed(msgs):
         sender = await m.get_sender()
-        mk = media_kind(m) if BACKFILL_MEDIA else None
+        mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
         if mk and await upload_media(a, m, mk, {
             "tg_chat": str(d.id), "chat_kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
             "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
@@ -827,7 +828,7 @@ async def sync_recent(a: Acct):
             if not (d.unread_count or (d.date and d.date.timestamp() > recent)):
                 continue
             try:
-                await copy_dialog(a, d, limit=40)
+                await copy_dialog(a, d, limit=40, media_since=(a.last_sync or a.last_ok) - 600)
             except Exception as e:
                 log("recent sync skipped a chat:", repr(e)[:80])
             n += 1
@@ -1288,7 +1289,9 @@ async def main():
         # and fetch what was missed, so Telegram messages keep arriving live
         for a in live:
             try:
-                if not a.client.is_connected():
+                if a.client.is_connected():
+                    a.last_ok = time.time()
+                else:
                     await asyncio.wait_for(a.client.connect(), 40)
                     a.last_sync = 0
                     log("reconnected to Telegram for", a.uid)
