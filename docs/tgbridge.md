@@ -75,7 +75,7 @@ Every linked person is one permanent connection to Telegram inside the `tgbridge
 
 ## Limits
 
-* **Copied:** text, photos and voice messages (up to 25 MB each), videos and round videos (`BRIDGE_VIDEO_MAX_MB`, default 200; `BRIDGE_VIDEO=0` switches video off),
+* **Copied:** text, photos and voice messages (up to 25 MB each), videos and round videos (`BRIDGE_VIDEO_MAX_MB`, default 500; `BRIDGE_VIDEO=0` switches video off),
   music and documents (`BRIDGE_FILE_MAX_MB`, default 100). Programs and scripts (`.exe`, `.bat`, `.js` ...) are not copied, nor stickers, GIFs, polls: they arrive as a mark such as "[File]".
 * **Messages that are only a mark** ("[Photo]", "[File]" ...: the old history, an upload that failed while the server was down) get their file afterwards.
   A pass in the bridge asks the server for them, newest first, a few at a time, and puts the file into the message in place (`BRIDGE_UPGRADE=0` switches it off).

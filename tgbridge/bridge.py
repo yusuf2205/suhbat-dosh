@@ -40,7 +40,7 @@ RECENT_DAYS = 3        # the light pass looks only at chats with something new i
 # media: photos, voice messages, videos (BRIDGE_VIDEO=0 switches them off), music and files are copied
 MEDIA_MAX = int(os.environ.get("BRIDGE_MEDIA_MAX_MB", "25")) * 1024 * 1024
 VIDEO_ON = os.environ.get("BRIDGE_VIDEO") != "0"
-VIDEO_MAX = int(os.environ.get("BRIDGE_VIDEO_MAX_MB", "200")) * 1024 * 1024
+VIDEO_MAX = int(os.environ.get("BRIDGE_VIDEO_MAX_MB", "500")) * 1024 * 1024
 FILE_MAX = int(os.environ.get("BRIDGE_FILE_MAX_MB", "100")) * 1024 * 1024
 BACKFILL_MEDIA = os.environ.get("BACKFILL_MEDIA") == "1"   # also download the pictures while the first copy of the history runs (heavy)
 # the files of messages that are only a mark such as "[Фото]" (old history, uploads that failed) are fetched later, a few at a time, newest first

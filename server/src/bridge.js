@@ -540,7 +540,7 @@ bridgeIn.post('/bridge/in', (req, res) => {
 const MEDIA_KINDS = new Set(['image', 'voice', 'video', 'audio', 'file']);
 const MB = 1024 * 1024;
 const FILE_MAX = (Number(process.env.BRIDGE_FILE_MAX_MB) || 100) * MB;
-const VIDEO_MAX = (Number(process.env.BRIDGE_VIDEO_MAX_MB) || 200) * MB;
+const VIDEO_MAX = (Number(process.env.BRIDGE_VIDEO_MAX_MB) || 500) * MB;
 const MIN_FREE = (Number(process.env.BRIDGE_MIN_FREE_GB) || 5) * 1024 * MB;   // the copy of the old history stops when the disk gets this tight
 const freeBytes = () => { try { const f = fs.statfsSync(config.filesDir); return f.bavail * f.bsize; } catch { return Infinity; } };
 
