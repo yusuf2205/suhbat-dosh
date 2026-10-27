@@ -1284,6 +1284,18 @@ async def main():
         live = [a for a in ACCTS.values() if a.me]
         if not live:
             continue
+        # the library gives up after a few failed reconnects and then stays dead: bring every dropped connection back now
+        # and fetch what was missed, so Telegram messages keep arriving live
+        for a in live:
+            try:
+                if not a.client.is_connected():
+                    await asyncio.wait_for(a.client.connect(), 40)
+                    a.last_sync = 0
+                    log("reconnected to Telegram for", a.uid)
+                    if a.synced:
+                        asyncio.create_task(sync_recent(a))
+            except Exception as e:
+                log("reconnect failed:", type(e).__name__)
         per_tick = max(1, -(-len(live) // 30))
         for _ in range(per_tick):
             a = live[cursor % len(live)]

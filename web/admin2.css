@@ -97,6 +97,9 @@
 .abub-time { justify-self: end; font-size: .72rem; color: var(--muted); }
 .abub.mine .abub-time { color: rgba(23, 23, 26, .6); }
 .abub-img { max-width: 100%; max-height: 320px; border-radius: 14px; display: block; }
+.abub-vid { display: block; width: 320px; max-width: 100%; max-height: 360px; border-radius: 14px; background: #000; }
+.abub-dl { display: block; margin-top: 4px; font-size: .78rem; opacity: .75; }
+.abub:has(.abub-vid) { min-width: min(340px, 92%); }
 .abub-audio { width: 260px; max-width: 100%; height: 40px; display: block; }
 .abub:has(.abub-audio) { min-width: min(290px, 90%); }
 .abub-flag { font-size: .78rem; border-radius: 10px; padding: 2px 8px; justify-self: start; }
