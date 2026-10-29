@@ -50,7 +50,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -485,7 +485,7 @@ function messageNode(m, ctx, prev) {
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
-    h('div', { class: 'abub-time', title: fmtDT(m.created_at) }, m.edited_at ? 'изм. ' : '', clock(m.created_at))));
+    h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at))));
   return nodes;
 }
 
@@ -497,11 +497,40 @@ function locationLine(text) {
     h('a', { href: `https://www.openstreetmap.org/?mlat=${g[1]}&mlon=${g[2]}#map=16/${g[1]}/${g[2]}`, target: '_blank', rel: 'noopener' }, `${g[1]}, ${g[2]}`));
 }
 
+const CHAT_KINDS = [['', 'Всё'], ['image', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['voice', 'Голос и аудио'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
+
+/** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
+function openLightbox(imgs, start) {
+  let i = start;
+  const pic = h('img', { class: 'alb-img', alt: '' });
+  const cap = h('div', { class: 'alb-cap' });
+  const show = () => { pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; };
+  const close = () => { root.remove(); document.removeEventListener('keydown', key, true); };
+  const go = (d) => { i = (i + d + imgs.length) % imgs.length; show(); };
+  const key = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); } else if (e.key === 'ArrowRight') go(1); else if (e.key === 'ArrowLeft') go(-1);
+  };
+  const root = h('div', { class: 'alb', role: 'dialog', 'aria-modal': 'true', onclick: (e) => { if (e.target === root) close(); } },
+    h('button', { class: 'alb-btn alb-prev', type: 'button', 'aria-label': 'Назад', onclick: () => go(-1) }, '‹'),
+    pic,
+    h('button', { class: 'alb-btn alb-next', type: 'button', 'aria-label': 'Вперёд', onclick: () => go(1) }, '›'),
+    h('a', { class: 'alb-btn alb-open', href: '#', target: '_blank', rel: 'noopener', onclick: (e) => { e.currentTarget.href = imgs[i].src; } }, 'Открыть отдельно'),
+    h('button', { class: 'alb-btn alb-close', type: 'button', 'aria-label': 'Закрыть', onclick: close }, '✕'),
+    cap);
+  document.addEventListener('keydown', key, true);
+  document.body.append(root);
+  show();
+}
+
 async function openChat(id) {
   setTab('chats', false);
-  const [info, hist] = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?limit=100`)]);
+  const f = { q: '', kind: '', author: '', since: '', until: '' };
+  const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([, v]) => v !== '' && v !== undefined && v !== null)).toString();
+  const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?limit=100`)]);
+  const info = first[0];
+  let hist = first[1];
   const list = h('div', { class: 'aconv' });
-  const all = [...hist.messages];
+  let all = [...hist.messages];
   let more = hist.has_more;
   const ctx = {
     imported: info.chat.imported === 'tgbridge', import_me: info.chat.import_me, me: info.chat.owner_id || info.members[0]?.id,
@@ -509,10 +538,12 @@ async function openChat(id) {
   };
   const draw = () => {
     clear(list);
+    if (!all.length) list.append(h('p', { class: 'muted' }, 'Ничего не найдено'));
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
   };
+  const heading = h('h2');
+  const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${f.q || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
-  draw();
   // like a messenger: the conversation opens on its newest message, and loading older ones keeps the place being read
   let stick = true;
   const scroller = () => {
@@ -524,7 +555,7 @@ async function openChat(id) {
   };
   const toEnd = () => { list.lastElementChild?.scrollIntoView({ block: 'end' }); };
   moreBtn.onclick = async () => {
-    const r = await get(`/api/admin/chats/${id}/messages?limit=100&before=${all[0]?.id}`);
+    const r = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100, before: all[0]?.id })}`);
     const sc = scroller();
     const h0 = sc.scrollHeight; const top0 = sc.scrollTop;
     stick = false;
@@ -535,7 +566,59 @@ async function openChat(id) {
   };
   list.addEventListener('load', () => { if (stick) toEnd(); }, true);   // pictures change the height as they arrive
   for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { stick = false; }, { once: true, capture: true });
+  // a picture opens large, with the arrows, instead of a new tab
+  list.addEventListener('click', (e) => {
+    const img = e.target.closest?.('img.abub-img');
+    if (!img) return;
+    e.preventDefault();
+    const imgs = [...list.querySelectorAll('img.abub-img')];
+    openLightbox(imgs, imgs.indexOf(img));
+  });
+
+  // search and filters
+  const reload = async () => {
+    hist = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100 })}`);
+    all = [...hist.messages];
+    more = hist.has_more; moreBtn.hidden = !more;
+    paintHeading(); draw(); stick = true; toEnd();
+  };
+  let timer = null;
+  const later = () => { clearTimeout(timer); timer = setTimeout(reload, 350); };
+  const search = h('input', { class: 'input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); later(); } });
+  const kindSel = h('select', { class: 'input', 'aria-label': 'Тип', onchange: (e) => { f.kind = e.target.value; reload(); } }, CHAT_KINDS.map(([v, l]) => h('option', { value: v }, l)));
+  const authors = h('datalist', { id: `auth-${id}` }, (hist.authors || []).map((a) => h('option', { value: a })));
+  const author = h('input', { class: 'input', type: 'search', placeholder: 'Автор', list: `auth-${id}`, 'aria-label': 'Автор', oninput: (e) => { f.author = e.target.value.trim(); later(); } });
+  const day = (v, end) => (v ? new Date(`${v}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : '');
+  const since = h('input', { class: 'input', type: 'date', 'aria-label': 'С даты', onchange: (e) => { f.since = String(day(e.target.value, false)); reload(); } });
+  const until = h('input', { class: 'input', type: 'date', 'aria-label': 'По дату', onchange: (e) => { f.until = String(day(e.target.value, true)); reload(); } });
+  const clearBtn = h('button', { class: 'btn link', type: 'button', onclick: () => {
+    Object.assign(f, { q: '', kind: '', author: '', since: '', until: '' });
+    search.value = ''; kindSel.value = ''; author.value = ''; since.value = ''; until.value = '';
+    reload();
+  } }, 'Сбросить');
+  const exp = (format, label) => h('a', { class: 'btn secondary small', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; } }, label);
+  const tools = h('div', { class: 'toolbar achat-tools' }, search, kindSel, author, authors, since, until, clearBtn, h('span', { class: 'grow' }), exp('txt', 'Скачать .txt'), exp('html', 'Скачать .html'));
+
+  // live: new messages appear by themselves (when no filter is on); the view stays on the end if it was there
+  const live = setInterval(async () => {
+    if (!list.isConnected) { clearInterval(live); return; }
+    if (document.visibilityState !== 'visible' || f.q || f.kind || f.author || f.since || f.until) return;
+    try {
+      const last = [...all].reverse().find((m) => typeof m.id === 'number');
+      const r = await get(`/api/admin/chats/${id}/messages?after=${last ? last.id : 0}&limit=100`);
+      if (!r.messages.length) return;
+      const sc = scroller();
+      const atEnd = stick || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240;
+      for (const m of r.messages) { list.append(...messageNode(m, ctx, all.at(-1))); all.push(m); }
+      hist.total = (hist.total ?? 0) + r.messages.length;
+      paintHeading();
+      if (atEnd) toEnd();
+    } catch { /* the next tick retries */ }
+  }, 3000);
+
   const c = info.chat;
+  paintHeading();
+  draw();
   setView(
     h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('chats'); } }, '← Чаты')),
     h('div', { class: 'panel' }, h('h2', null, c.title || state.chats.get(id)?.title || `Чат #${id}`),
@@ -544,7 +627,7 @@ async function openChat(id) {
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, h('h2', null, `Переписка (${hist.messages.length}${more ? '+' : ''})`), moreBtn, list),
+    h('div', { class: 'panel' }, heading, tools, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),

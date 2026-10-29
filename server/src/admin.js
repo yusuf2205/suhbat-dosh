@@ -195,35 +195,103 @@ admin.get('/chats/:id', (req, res) => {
   res.json({ chat: { id: c.id, type: c.type, title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '' }, members });
 });
 
+// Filters of the admin's conversation view: text, kind, author, dates. Shared by the page and the export.
+const KIND_SQL = { image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
+function chatFilter(id, query) {
+  const where = ['m.chat_id = ?'];
+  const params = [id];
+  const text = String(query.q ?? '').trim().slice(0, 100);
+  if (text) { where.push("lc(m.text) LIKE ? ESCAPE '\\'"); params.push(`%${escapeLike(text.toLowerCase())}%`); }
+  const kind = String(query.kind ?? '');
+  if (kind) {
+    if (!KIND_SQL[kind]) throw new HttpError(400, 'bad_kind');
+    where.push(KIND_SQL[kind]);
+  }
+  const who = String(query.author ?? '').trim().slice(0, 60);
+  if (who) {
+    where.push("(lc(m.import_author) LIKE ? ESCAPE '\\' OR m.sender_id IN (SELECT id FROM users WHERE lc(name) LIKE ? ESCAPE '\\' OR lc(username) LIKE ? ESCAPE '\\'))");
+    const like = `%${escapeLike(who.toLowerCase())}%`;
+    params.push(like, like, like);
+  }
+  if (query.since) { where.push('m.created_at >= ?'); params.push(int(query.since, 'since', { min: 0 })); }
+  if (query.until) { where.push('m.created_at <= ?'); params.push(int(query.until, 'until', { min: 0 })); }
+  return { where, params, filtered: !!(text || kind || who || query.since || query.until) };
+}
+
+const adminMessage = (m, history = {}) => {
+  const s = m.sender_id ? getUser(m.sender_id) : null;
+  return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [] };
+};
+const editHistory = (chatId) => {
+  const history = {};
+  for (const e of q.all(`SELECT ts, target_id, details FROM audit_log WHERE action = 'message.edit' AND chat_id = ? ORDER BY id`, chatId)) (history[e.target_id] ||= []).push({ ts: e.ts, ...JSON.parse(e.details || '{}') });
+  return history;
+};
+
 // Full history of a chat, with who wrote each message and what happened to it afterwards.
+// ?before pages back; ?after is the live feed (no journal entry); ?q ?kind ?author ?since ?until narrow it.
 admin.get('/chats/:id/messages', (req, res) => {
   const id = int(req.params.id, 'id');
   if (!q.get('SELECT 1 AS x FROM chats WHERE id = ?', id)) throw new HttpError(404, 'not_found');
   const before = int(req.query.before, 'before', { optional: true });
+  const after = int(req.query.after, 'after', { optional: true });
   const limit = pageSize(req.query.limit);
-  if (before === undefined) audit(req.user.id, 'admin.view_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip });
-  const rows = q.all(
-    'SELECT * FROM messages WHERE chat_id = ? AND id < ? ORDER BY id DESC LIMIT ?', id, before ?? Number.MAX_SAFE_INTEGER, limit + 1,
-  );
-  const more = rows.length > limit;
-  const page = rows.slice(0, limit).reverse();
-  const history = {};
-  if (page.length) {
-    const edits = q.all(
-      `SELECT ts, target_id, details FROM audit_log WHERE action = 'message.edit' AND chat_id = ? ORDER BY id`, id,
-    );
-    for (const e of edits) (history[e.target_id] ||= []).push({ ts: e.ts, ...JSON.parse(e.details || '{}') });
+  const f = chatFilter(id, req.query);
+  if (before === undefined && after === undefined) {
+    audit(req.user.id, 'admin.view_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip, ...(f.filtered ? { details: { filter: { q: req.query.q || undefined, kind: req.query.kind || undefined, author: req.query.author || undefined } } } : {}) });
   }
-  const messages = page.map((m) => {
-    const out = messageOut(m);
-    const s = m.sender_id ? getUser(m.sender_id) : null;
-    return { ...out, sender: userRef(s), edits: history[String(m.id)] || [] };
+  if (after !== undefined) {
+    const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id > ? ORDER BY m.id LIMIT ?`, ...f.params, after, limit);
+    const history = rows.length ? editHistory(id) : {};
+    return res.json({ messages: rows.map((m) => adminMessage(m, history)), has_more: false, deleted: [] });
+  }
+  const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id < ? ORDER BY m.id DESC LIMIT ?`, ...f.params, before ?? Number.MAX_SAFE_INTEGER, limit + 1);
+  const page = rows.slice(0, limit).reverse();
+  const history = page.length ? editHistory(id) : {};
+  const out = { messages: page.map((m) => adminMessage(m, history)), has_more: rows.length > limit };
+  if (before === undefined) {
+    // messages that were deleted by their authors / admins are kept in the journal
+    out.deleted = q.all(`SELECT * FROM audit_log WHERE action = 'message.delete' AND chat_id = ? ORDER BY id DESC LIMIT 200`, id).map(auditOut);
+    out.authors = [...new Set([
+      ...q.all('SELECT DISTINCT import_author AS n FROM messages WHERE chat_id = ? AND import_author IS NOT NULL LIMIT 50', id).map((r) => r.n),
+      ...q.all('SELECT u.name AS n FROM users u WHERE u.id IN (SELECT DISTINCT sender_id FROM messages WHERE chat_id = ?)', id).map((r) => r.n),
+    ])].filter(Boolean).slice(0, 50);
+    out.total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
+  } else out.deleted = [];
+  res.json(out);
+});
+
+const KIND_LABEL = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', location: 'Геопозиция', call: 'Звонок', sticker: 'Стикер', poll: 'Опрос' };
+// The whole conversation (with the filters) as a text file or a page: for the record, or for sending to somebody.
+admin.get('/chats/:id/export', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const chat = q.get('SELECT * FROM chats WHERE id = ?', id);
+  if (!chat) throw new HttpError(404, 'not_found');
+  const format = req.query.format === 'html' ? 'html' : 'txt';
+  const f = chatFilter(id, req.query);
+  const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} ORDER BY m.id LIMIT 100000`, ...f.params);
+  audit(req.user.id, 'admin.export_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip, details: { format, messages: rows.length } });
+  const stamp = (t) => new Date(t).toISOString().replace('T', ' ').slice(0, 19);
+  const items = rows.map((m) => {
+    const who = m.import_author || getUser(m.sender_id)?.name || '—';
+    const what = m.kind === 'text' ? m.text : `[${KIND_LABEL[m.kind] || m.kind}]${m.text ? ` ${m.text}` : ''}`;
+    return { when: stamp(m.created_at), who, what: `${what}${m.tg_deleted ? ' (удалено в Телеграме)' : ''}` };
   });
-  // messages that were deleted by their authors / admins are kept in the journal
-  const deleted = q.all(
-    `SELECT * FROM audit_log WHERE action = 'message.delete' AND chat_id = ? ORDER BY id DESC LIMIT 200`, id,
-  ).map(auditOut);
-  res.json({ messages, has_more: more, deleted });
+  const title = chat.title || `Чат ${id}`;
+  const safe = encodeURIComponent(title.replace(/[^\p{L}\p{N} _-]+/gu, '').trim() || `chat-${id}`);
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${safe}.${format}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (format === 'txt') {
+    res.type('text/plain; charset=utf-8').send(`${title}\n${'='.repeat(Math.min(60, title.length))}\n\n${items.map((i) => `[${i.when}] ${i.who}: ${i.what}`).join('\n')}\n`);
+    return;
+  }
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  res.type('text/html; charset=utf-8').send(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>${esc(title)}</title>
+<style>body{font:15px/1.45 system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 12px;background:#fffaf0;color:#1d1d1f}.m{background:#fff;border-radius:14px;padding:8px 12px;margin:6px 0;box-shadow:0 1px 3px #0001}.w{font-weight:600;color:#8a6200}.t{color:#888;font-size:.8em;float:right}</style>
+<h1>${esc(title)}</h1><p>${items.length} сообщ.</p>
+${items.map((i) => `<div class="m"><span class="t">${esc(i.when)}</span><div class="w">${esc(i.who)}</div>${esc(i.what)}</div>`).join('\n')}
+</html>`);
 });
 
 admin.get('/audit', (req, res) => {

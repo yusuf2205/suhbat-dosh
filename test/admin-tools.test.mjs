@@ -129,3 +129,44 @@ test('ban, delete, invitations, broadcast, backups, system, call quality', async
   assert.ok(!bobChats.some((c) => c.id === chat.id));
   assert.equal((await call(root1.cookie, 'DELETE', `/api/admin/users/${root1.user.id}`)).status, 400);
 });
+
+test('the admin conversation view: filters, the live feed and the export are admin-only and leave a trace', async () => {
+  const root1 = await login('+998900000001', 'Root');
+  const ann = await login('+998900000011', 'Ann');
+  const ben = await login('+998900000012', 'Ben');
+  const chat = (await call(ann.cookie, 'POST', '/api/chats/direct', { user_id: ben.user.id })).data.chat;
+  const say = (who, text) => call(who.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text });
+  await say(ann, 'Meeting at NINE'); await say(ben, 'ok, see https://example.com/map'); await say(ann, 'bring the documents');
+  const url = (extra = '') => `/api/admin/chats/${chat.id}/messages?${extra}`;
+
+  const all = (await call(root1.cookie, 'GET', url())).data;
+  assert.equal(all.messages.length, 3);
+  assert.equal(all.total, 3);
+  assert.deepEqual([...all.authors].sort(), ['Ann', 'Ben']);
+  assert.deepEqual((await call(root1.cookie, 'GET', url('q=nine'))).data.messages.map((m) => m.text), ['Meeting at NINE']);   // any letter case
+  assert.equal((await call(root1.cookie, 'GET', url('kind=link'))).data.messages.length, 1);
+  assert.equal((await call(root1.cookie, 'GET', url('author=ben'))).data.messages.length, 1);
+  assert.equal((await call(root1.cookie, 'GET', url(`since=${Date.now() + 60000}`))).data.messages.length, 0);
+  assert.equal((await call(root1.cookie, 'GET', url('kind=nonsense'))).status, 400);
+
+  // the live feed: only what came after, and it is not a new "viewed the conversation" entry
+  const views = async () => (await call(root1.cookie, 'GET', '/api/admin/audit?action=admin.view_chat')).data.events.length;
+  const before = await views();
+  const lastId = all.messages.at(-1).id;
+  await say(ben, 'one more');
+  assert.deepEqual((await call(root1.cookie, 'GET', url(`after=${lastId}`))).data.messages.map((m) => m.text), ['one more']);
+  assert.equal(await views(), before);
+
+  // the export
+  const txt = await fetch(BASE + `/api/admin/chats/${chat.id}/export?format=txt`, { headers: { cookie: root1.cookie } });
+  assert.equal(txt.status, 200);
+  const body = await txt.text();
+  assert.ok(body.includes('Ann: Meeting at NINE') && body.includes('Ben: one more'));
+  const html = await fetch(BASE + `/api/admin/chats/${chat.id}/export?format=html`, { headers: { cookie: root1.cookie } });
+  assert.ok((await html.text()).includes('bring the documents'));
+  assert.equal((await call(root1.cookie, 'GET', '/api/admin/audit?action=admin.export_chat')).data.events.length, 2);
+  for (const who of [ann, ben]) {
+    assert.equal((await call(who.cookie, 'GET', url())).status, 403);
+    assert.equal((await fetch(BASE + `/api/admin/chats/${chat.id}/export`, { headers: { cookie: who.cookie } })).status, 403);
+  }
+});
