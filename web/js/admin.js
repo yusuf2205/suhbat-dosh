@@ -5,7 +5,58 @@ import { icon } from './icons.js';
 
 const root = document.getElementById('admin-root');
 const fmtDT = (ts) => (ts ? new Date(ts).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'medium' }) : '—');
-const fmtBytes = (n) => (n < 1048576 ? `${(n / 1024).toFixed(1)} КБ` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} МБ` : `${(n / 1073741824).toFixed(2)} ГБ`);
+const fmtBytes = (n) => (n < 1048576 ? `${(n / 1024).toFixed(1)} КБ` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} МБ` : n < 1099511627776 ? `${(n / 1073741824).toFixed(n < 107374182400 ? 1 : 0)} ГБ` : `${(n / 1099511627776).toFixed(1)} ТБ`);
+const fmtShort = (ts) => (ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
+/** "Chrome · Windows" instead of the whole User-Agent line. */
+function deviceName(ua) {
+  const u = String(ua || '');
+  if (!u) return '—';
+  const os = /Windows/.test(u) ? 'Windows' : /iPhone|iPad|iPod/.test(u) ? 'iOS' : /Android/.test(u) ? 'Android' : /Mac OS X|Macintosh/.test(u) ? 'macOS' : /CrOS/.test(u) ? 'ChromeOS' : /Linux/.test(u) ? 'Linux' : '';
+  const app = /SuhbatShell/.test(u) ? 'Приложение' : /Edg\//.test(u) ? 'Edge' : /OPR\//.test(u) ? 'Opera' : /Firefox\//.test(u) ? 'Firefox' : /Chrome\/|CriOS/.test(u) ? 'Chrome' : /Safari\//.test(u) ? 'Safari' : '';
+  return [app, os].filter(Boolean).join(' · ') || u.slice(0, 30);
+}
+
+// ---- dialogs and the Esc key: one rule everywhere, the nearest thing closes first
+/** A confirmation as a dialog (Esc or the backdrop cancels, Enter confirms the focused button), instead of the browser's confirm())). */
+function askConfirm(text, ok = 'Подтвердить', danger = true) {
+  return new Promise((resolve) => {
+    const done = (v) => { document.removeEventListener('keydown', key, true); box.remove(); resolve(v); };
+    const key = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+      else if (e.key === 'Tab') {   // focus stays inside the dialog
+        const bs = [...box.querySelectorAll('button')];
+        const i = bs.indexOf(document.activeElement);
+        e.preventDefault();
+        bs[(i + (e.shiftKey ? -1 : 1) + bs.length) % bs.length].focus();
+      }
+    };
+    const cancel = h('button', { class: 'btn secondary', type: 'button', onclick: () => done(false) }, 'Отмена');
+    const yes = h('button', { class: `btn${danger ? ' danger' : ''}`, type: 'button', onclick: () => done(true) }, ok);
+    const box = h('div', { class: 'adlg', role: 'alertdialog', 'aria-modal': 'true', onclick: (e) => { if (e.target === box) done(false); } },
+      h('div', { class: 'adlg-card' }, h('p', { class: 'adlg-text' }, text), h('div', { class: 'adlg-btns' }, cancel, yes)));
+    document.addEventListener('keydown', key, true);
+    document.body.append(box);
+    (danger ? cancel : yes).focus();   // a destructive question is answered "no" by a stray Enter
+  });
+}
+/** A short message at the bottom instead of alert(). */
+function notify(text, ms = 4500) {
+  const t = h('div', { class: 'atoast', role: 'status' }, text);
+  document.body.append(t);
+  setTimeout(() => t.remove(), ms);
+}
+/** Esc outside a dialog: close an open menu, then clear/leave a field, then step back out of a detail page. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const menu = document.querySelector('details.amenu[open]');
+  if (menu) { menu.open = false; return; }
+  const el = document.activeElement;
+  if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) {
+    if (el.value && el.type !== 'date' && el.tagName !== 'SELECT') { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); } else el.blur();
+    return;
+  }
+  document.querySelector('.crumb a')?.click();   // "← Назад" of a user or a conversation
+});
 
 async function get(url) {
   const r = await fetch(url, { credentials: 'same-origin' });
@@ -387,8 +438,8 @@ async function openUser(id) {
   const [d, ev] = await Promise.all([get(`/api/admin/users/${id}`), get(`/api/admin/audit?actor=${id}&limit=100`)]);
   const u = d.user;
   const run = (label, fn, after) => async () => {
-    if (label && !confirm(label)) return;
-    try { await fn(); await (after ? after() : openUser(id)); } catch (e) { alert(errMsg(e)); }
+    if (label && !(await askConfirm(label))) return;
+    try { await fn(); await (after ? after() : openUser(id)); } catch (e) { notify(errMsg(e)); }
   };
   const reasonBox = h('input', { class: 'input', placeholder: 'Причина блокировки (необязательно)', maxLength: 200 });
   const actions = h('div', { class: 'panel' }, h('h2', null, 'Управление аккаунтом'),
@@ -408,23 +459,23 @@ async function openUser(id) {
     h('div', { class: 'toolbar' }, qIn, h('button', { class: 'btn', type: 'button', onclick: run(null, () => send('PUT', `/api/admin/users/${id}/quota`, { mb: qIn.value === '' ? null : Number(qIn.value) })) }, 'Сохранить лимит')));
   setView(
     h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('users'); } }, '← Пользователи')),
-    h('div', { class: 'grid2' },
-      h('div', { class: 'panel' }, h('h2', null, u.name, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
-        u.avatar ? h('img', { src: u.avatar, alt: '', style: { width: '96px', height: '96px', borderRadius: '50%', objectFit: 'cover' } }) : '',
-        h('p', null, 'Телефон: ', h('b', { class: 'mono' }, u.phone)), h('p', null, 'Username: ', u.username ? `@${u.username}` : '—'),
-        h('p', null, 'Статус: ', u.status || '—'), h('p', null, 'О себе: ', u.bio || '—'),
-        h('p', null, 'Регистрация: ', fmtDT(u.created_at)), h('p', null, 'Последний визит: ', u.online ? 'в сети' : fmtDT(u.last_seen)),
-        h('p', { class: 'muted' }, `Приватность: фото — ${u.privacy.photo}, статус — ${u.privacy.status}, был(а) — ${u.privacy.last_seen}`),
-        d.blocks.length ? h('p', null, 'Заблокировал: ', d.blocks.map((b) => b.name).join(', ')) : ''),
+    h('div', { class: 'grid2 ud-grid' },
+      h('div', { class: 'panel ud-card' }, h('h2', null, u.name, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
+        u.avatar ? h('img', { class: 'ud-ava', src: u.avatar, alt: '' }) : '',
+        h('dl', { class: 'dl' },
+          h('dt', null, 'Телефон'), h('dd', { class: 'mono' }, u.phone), h('dt', null, 'Username'), h('dd', null, u.username ? `@${u.username}` : '—'),
+          h('dt', null, 'Статус'), h('dd', null, u.status || '—'), h('dt', null, 'О себе'), h('dd', null, u.bio || '—'),
+          h('dt', null, 'Регистрация'), h('dd', null, fmtDT(u.created_at)), h('dt', null, 'Последний визит'), h('dd', null, u.online ? 'в сети' : fmtDT(u.last_seen)),
+          h('dt', null, 'Приватность'), h('dd', { class: 'muted' }, `фото — ${u.privacy.photo}, статус — ${u.privacy.status}, был(а) — ${u.privacy.last_seen}`),
+          d.blocks.length ? [h('dt', null, 'Заблокировал'), h('dd', null, d.blocks.map((b) => b.name).join(', '))] : '')),
       h('div', { class: 'panel' }, h('h2', null, `Сессии (${d.sessions.length})`),
-        h('div', { class: 'tablewrap' }, h('table', { class: 't' },
-          h('thead', null, h('tr', null, ['Устройство', 'IP', 'Создана', 'Активность', ''].map((x) => h('th', null, x)))),
-          h('tbody', null, d.sessions.map((s) => h('tr', null, h('td', null, s.device.slice(0, 70) || '—'), h('td', { class: 'mono' }, s.ip),
-            h('td', { class: 'ev-time' }, fmtDT(s.created_at)), h('td', { class: 'ev-time' }, fmtDT(s.last_active)),
+        h('div', { class: 'tablewrap ud-sessions' }, h('table', { class: 't compact' },
+          h('thead', null, h('tr', null, ['Устройство', 'IP', 'Активность', ''].map((x) => h('th', null, x)))),
+          h('tbody', null, d.sessions.map((s) => h('tr', null, h('td', { title: s.device }, deviceName(s.device)), h('td', { class: 'mono' }, s.ip),
+            h('td', { class: 'ev-time', title: `создана ${fmtDT(s.created_at)}` }, fmtShort(s.last_active)),
             h('td', null, s.revoked ? h('span', { class: 'pill' }, 'завершена') : h('span', { class: 'pill ok' }, 'активна')))))))),
     ),
-    actions,
-    quotaPanel,
+    h('div', { class: 'grid2' }, actions, quotaPanel),
     h('div', { class: 'panel' }, h('h2', null, `Чаты (${d.chats.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Чат', 'Тип', 'Роль', 'Написал сообщений', 'Вступил'].map((x) => h('th', null, x)))),
@@ -477,7 +528,7 @@ function messageNode(m, ctx, prev) {
     m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', m.reply_to.text) : '',
     m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
     m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
-    m.file && (m.kind === 'voice' || m.kind === 'audio') ? h('audio', { class: 'abub-audio', controls: true, preload: 'none', src: `/api/admin/files/${m.file.id}` }) : '',
+    m.file && (m.kind === 'voice' || m.kind === 'audio') ? h('audio', { class: 'abub-audio', controls: true, preload: 'metadata', src: `/api/admin/files/${m.file.id}` }) : '',
     m.file && m.kind === 'video' ? h('div', { class: 'abub-video' }, h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
     m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
@@ -755,14 +806,14 @@ function bridgePanel(data) {
         h('td', null, c.title || '—'), h('td', null, h('span', { class: 'pill' }, KIND[c.kind] || c.kind)),
         h('td', null, String(c.messages)), h('td', { class: 'ev-time' }, c.last_at ? fmtDT(c.last_at) : '—'),
         h('td', null,
-          h('button', { class: 'btn secondary', type: 'button', title: 'Может ли человек отвечать в этом чате из приложения', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { two_way: !c.two_way }); load(); } catch (e) { alert(errMsg(e)); } } }, c.two_way ? 'Отвечает из приложения' : 'Только читает'), ' ',
+          h('button', { class: 'btn secondary', type: 'button', title: 'Может ли человек отвечать в этом чате из приложения', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { two_way: !c.two_way }); load(); } catch (e) { notify(errMsg(e)); } } }, c.two_way ? 'Отвечает из приложения' : 'Только читает'), ' ',
           h('button', { class: 'btn danger', type: 'button', title: 'Перестать копировать этот чат (то, что скопировано, останется)', onclick: async () => {
-            if (!confirm(`Перестать копировать «${c.title}»? Уже скопированное останется.`)) return;
-            try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { copy: false }); load(); } catch (e) { alert(errMsg(e)); }
+            if (!(await askConfirm(`Перестать копировать «${c.title}»? Уже скопированное останется.`))) return;
+            try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { copy: false }); load(); } catch (e) { notify(errMsg(e)); }
           } }, 'Не копировать'))));
       clear(cell).append(
         r.chats.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Вид', 'Сообщений', 'Последнее', ''].map((x) => h('th', null, x)))), h('tbody', null, rows))) : h('p', { class: 'muted' }, 'Чатов нет.'),
-        r.excluded ? h('p', null, `Снято с копирования личных чатов: ${r.excluded} `, h('button', { class: 'btn secondary', type: 'button', onclick: async () => { try { await send('POST', `/api/admin/bridge/${u.id}/restore`, {}); load(); } catch (e) { alert(errMsg(e)); } } }, 'Вернуть все')) : null);
+        r.excluded ? h('p', null, `Снято с копирования личных чатов: ${r.excluded} `, h('button', { class: 'btn secondary', type: 'button', onclick: async () => { try { await send('POST', `/api/admin/bridge/${u.id}/restore`, {}); load(); } catch (e) { notify(errMsg(e)); } } }, 'Вернуть все')) : null);
     };
     try { await load(); } catch (e) { clear(cell).append(h('span', { class: 'err' }, errMsg(e))); }
   };
@@ -770,20 +821,20 @@ function bridgePanel(data) {
     h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
     h('td', null, u.linked
       ? [h('span', { class: u.live && !u.live.connected ? 'pill' : 'pill ok' }, u.live && !u.live.connected ? 'нет связи' : 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
-          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются'), ' ',
+          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются'), ' ',
           h('button', { class: 'btn secondary', type: 'button', onclick: () => toggleChats(u, sub) }, 'Чаты')]
       : h('span', { class: 'muted' }, 'не подключён')),
-    h('td', null, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {
-      class: `btn ${u.allowed ? 'secondary' : 'danger'}`, type: 'button',
+    h('td', { class: 'br-actions' }, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {
+      class: `btn small ${u.allowed ? 'secondary' : 'danger'}`, type: 'button',
       onclick: async () => {
-        if (u.allowed && u.linked && !confirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`)) return;
-        try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
+        if (u.allowed && u.linked && !(await askConfirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`))) return;
+        try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); }
       },
-    }, u.allowed ? 'Запретить' : 'Разрешить'), u.linked ? [' ', h('button', {
-      class: 'btn danger', type: 'button', title: 'Отключить Телеграм этого человека и удалить скопированные чаты',
+    }, u.allowed ? 'Запретить' : 'Разрешить'), u.linked ? [h('button', {
+      class: 'btn small danger', type: 'button', title: 'Отключить Телеграм этого человека и удалить скопированные чаты',
       onclick: async () => {
-        if (!confirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`)) return;
-        try { await send('DELETE', `/api/admin/bridge/${u.id}`); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { alert(errMsg(e)); }
+        if (!(await askConfirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`))) return;
+        try { await send('DELETE', `/api/admin/bridge/${u.id}`); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); }
       },
     }, 'Удалить')] : ''])); return [main, sub]; }));
   draw(data.users);
@@ -838,7 +889,7 @@ async function viewAccess() {
     try {
       await send('POST', '/api/admin/invites', { note: note.value, max_uses: Number(uses.value) || 1, ttl_days: Number(days.value) || 0 });
       viewAccess().then(applyDynamicStyles);
-    } catch (e) { alert(errMsg(e)); }
+    } catch (e) { notify(errMsg(e)); }
   };
 
   const text = h('textarea', { class: 'input', rows: 4, maxLength: 2000, placeholder: 'Текст сообщения всем пользователям — придёт в чат «Suhbat-dosh»' });
@@ -846,7 +897,7 @@ async function viewAccess() {
   const sendMsg = h('span', { class: 'muted' });
   sendBtn.onclick = async () => {
     const v = text.value.trim();
-    if (!v || !confirm('Отправить это сообщение всем пользователям?')) return;
+    if (!v || !(await askConfirm('Отправить это сообщение всем пользователям?'))) return;
     sendBtn.disabled = true;
     try { const r = await send('POST', '/api/admin/broadcast', { text: v }); sendMsg.textContent = `Отправлено: ${r.sent}`; text.value = ''; } catch (e) { sendMsg.textContent = errMsg(e); }
     sendBtn.disabled = false;
@@ -929,7 +980,7 @@ function mirrorLine(m) {
 async function viewServer() {
   const [sys, bk, st] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups'), get('/api/admin/storage').catch(() => null)]);
   const n = sys.now;
-  const fmtUp = (s) => (s >= 86400 ? `${Math.floor(s / 86400)} д ${Math.floor((s % 86400) / 3600)} ч` : `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`);
+  const fmtUp = (s) => (s >= 86400 ? `${Math.floor(s / 86400)} д ${Math.floor((s % 86400) / 3600)} ч` : s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин` : `${Math.max(1, Math.floor(s / 60))} мин`);
   const used = n.disk_total ? Math.round(((n.disk_total - n.disk_free) / n.disk_total) * 100) : 0;
   const S = sys.series;
   const kpis = h('div', { class: 'kpis' },
@@ -937,7 +988,7 @@ async function viewServer() {
     kpi('grid', 'tone-blue', `${n.mem}%`, 'Память', `процесс: ${fmtBytes(n.rss)} из ${fmtBytes(n.mem_total)}`),
     kpi('disk', used > 90 ? 'tone-red' : 'tone-green', fmtBytes(n.disk_free), 'Свободно на диске', `занято ${used}% из ${fmtBytes(n.disk_total)}`),
     kpi('list', 'tone-violet', fmtBytes(n.db_bytes), 'База данных', `файлы: ${fmtBytes(n.files_bytes)}`),
-    kpi('trend', 'tone-green', fmtUp(n.uptime), 'Работает без перезапуска', `Node ${n.node}`));
+    kpi('trend', 'tone-green', fmtUp(n.uptime), 'Без перезапуска', `Node ${n.node}`));
 
   const names = { auto: 'авто', manual: 'вручную', 'pre-restore': 'перед восстановлением' };
   const rows = bk.backups.map((b) => h('tr', null,
@@ -947,17 +998,17 @@ async function viewServer() {
       h('a', { class: 'btn secondary', href: `/api/admin/backups/${encodeURIComponent(b.name)}` }, 'Скачать'), ' ',
       h('button', { class: 'btn secondary', type: 'button', title: 'Открыть копию отдельно и проверить: цела ли база, есть ли в ней данные и файлы', onclick: async (e) => {
         e.currentTarget.disabled = true;
-        try { const v = (await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/verify`, {})).verify; alert(v.ok ? `Копия в порядке.\nПользователей: ${v.counts.users}, чатов: ${v.counts.chats}, сообщений: ${v.counts.messages}, файлов: ${v.counts.files}.${v.files_missing === 0 ? '\nВсе файлы есть во внешней копии.' : ''}` : `Проблемы:\n${v.problems.join('\n')}`); viewServer().then(applyDynamicStyles); } catch (err) { alert(errMsg(err)); }
+        try { const v = (await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/verify`, {})).verify; notify(v.ok ? `Копия в порядке.\nПользователей: ${v.counts.users}, чатов: ${v.counts.chats}, сообщений: ${v.counts.messages}, файлов: ${v.counts.files}.${v.files_missing === 0 ? '\nВсе файлы есть во внешней копии.' : ''}` : `Проблемы:\n${v.problems.join('\n')}`); viewServer().then(applyDynamicStyles); } catch (err) { notify(errMsg(err)); }
       } }, 'Проверить'), ' ',
       h('button', { class: 'btn secondary', type: 'button', onclick: async () => {
-        if (!confirm(`Восстановить базу из «${b.name}»? Сервер перезапустится, изменения после этой копии будут потеряны (перед этим создаётся ещё одна копия).`)) return;
-        try { await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/restore`, { confirm: true }); alert('Перезапуск… обновите страницу через несколько секунд.'); } catch (e) { alert(errMsg(e)); }
+        if (!(await askConfirm(`Восстановить базу из «${b.name}»? Сервер перезапустится, изменения после этой копии будут потеряны (перед этим создаётся ещё одна копия).`))) return;
+        try { await send('POST', `/api/admin/backups/${encodeURIComponent(b.name)}/restore`, { confirm: true }); notify('Перезапуск… обновите страницу через несколько секунд.'); } catch (e) { notify(errMsg(e)); }
       } }, 'Восстановить'), ' ',
-      h('button', { class: 'btn danger', type: 'button', onclick: async () => { if (confirm('Удалить копию?')) { await send('DELETE', `/api/admin/backups/${encodeURIComponent(b.name)}`); viewServer().then(applyDynamicStyles); } } }, 'Удалить'))));
+      h('button', { class: 'btn danger', type: 'button', onclick: async () => { if ((await askConfirm('Удалить копию?'))) { await send('DELETE', `/api/admin/backups/${encodeURIComponent(b.name)}`); viewServer().then(applyDynamicStyles); } } }, 'Удалить'))));
   const make = h('button', { class: 'btn', type: 'button' }, 'Создать копию сейчас');
   make.onclick = async () => {
     make.disabled = true;
-    try { await send('POST', '/api/admin/backups', {}); viewServer().then(applyDynamicStyles); } catch (e) { alert(errMsg(e)); make.disabled = false; }
+    try { await send('POST', '/api/admin/backups', {}); viewServer().then(applyDynamicStyles); } catch (e) { notify(errMsg(e)); make.disabled = false; }
   };
 
   const turn = n.turn || {};
@@ -1033,7 +1084,7 @@ async function viewReports() {
         h('td', null, status === 'open' ? [
           h('button', { class: 'btn secondary', type: 'button', onclick: async () => { await send('POST', `/api/admin/reports/${x.id}/resolve`, { action: 'dismiss' }); draw(); } }, 'Отклонить'), ' ',
           h('button', { class: 'btn secondary', type: 'button', onclick: async () => { await send('POST', `/api/admin/reports/${x.id}/resolve`, { action: 'delete' }); draw(); } }, 'Удалить сообщение'), ' ',
-          h('button', { class: 'btn danger', type: 'button', onclick: async () => { if (confirm('Заблокировать автора?')) { await send('POST', `/api/admin/reports/${x.id}/resolve`, { action: 'ban' }); draw(); } } }, 'Заблокировать'),
+          h('button', { class: 'btn danger', type: 'button', onclick: async () => { if ((await askConfirm('Заблокировать автора?'))) { await send('POST', `/api/admin/reports/${x.id}/resolve`, { action: 'ban' }); draw(); } } }, 'Заблокировать'),
         ] : h('span', { class: 'muted' }, { dismiss: 'отклонена', delete: 'сообщение удалено', ban: 'автор заблокирован' }[x.resolution] || x.resolution || ''))))
       : h('tr', null, h('td', { colSpan: 6, class: 'muted' }, status === 'open' ? 'Новых жалоб нет' : 'Обработанных жалоб нет'))))));
   };

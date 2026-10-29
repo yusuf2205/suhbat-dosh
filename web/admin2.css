@@ -149,3 +149,77 @@
 .mtr.wide { grid-template-columns: 150px 1fr 120px; }
 .mtr.wide b { text-align: right; font-size: .82rem; white-space: nowrap; }
 .br-sub > td { background: var(--surface-2); padding: 10px 14px; }
+
+/* ===== compact density: less scrolling, the same things within reach ===== */
+.adm-main { padding: 16px 22px 32px; }
+.adm-head { margin-bottom: 12px; }
+.adm-head h1 { font-size: 1.45rem; }
+.adm-head p { margin-top: 2px; font-size: .88rem; }
+.adm-date { padding: 6px 12px; font-size: .84rem; }
+.panel { padding: 14px 16px; margin-bottom: 12px; border-radius: 18px; }
+.panel h2, .panel-head h2 { font-size: .98rem; margin-bottom: 8px; }
+.panel-head { margin-bottom: 8px; }
+.panel, .kpi, .tablewrap { border-radius: 18px; }
+.row-2, .row-3 { gap: 12px; margin-bottom: 12px; align-items: start; }
+.grid2 { gap: 12px; align-items: start; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.kpi { padding: 10px 12px; gap: 10px; border-radius: 16px; }
+.kpi:hover { transform: translateY(-1px); }
+.kpi-ico { width: 38px; height: 38px; border-radius: 12px; }
+.kpi-label { font-size: .76rem; }
+.kpi-val { font-size: 1.28rem; white-space: nowrap; }
+.kpi-hint { font-size: .72rem; }
+.adm-hero { padding: 14px 20px; border-radius: 22px; margin-bottom: 12px; gap: 12px; }
+.adm-hero h2 { font-size: 1.2rem; }
+.hero-hi, .hero-date { font-size: .82rem; }
+.hero-num { min-width: 96px; padding: 8px 12px; border-radius: 16px; }
+.hero-num b { font-size: 1.3rem; }
+.hero-num span { font-size: .72rem; }
+.att-row { padding: 8px 10px; border-radius: 14px; }
+.att-ico { width: 30px; height: 30px; border-radius: 10px; }
+.svc-grid { gap: 6px; margin-bottom: 10px; }
+.svc { padding: 8px 10px; border-radius: 12px; }
+.mtrs { gap: 6px; }
+.feed { max-height: 280px; }
+.feed-row { padding: 6px 4px; }
+.adm-nav button { min-height: 40px; padding: 8px 12px; border-radius: 14px; gap: 10px; }
+.adm-side-card { padding: 10px 12px; }
+@media (min-width: 901px) { .adm-side { border-radius: 24px; } }
+
+/* tables: tighter rows, the header stays in view inside a scrolling frame */
+.tablewrap { max-height: 64vh; overflow: auto; }
+table.t th { position: sticky; top: 0; z-index: 1; padding: 8px 10px; }
+table.t td { padding: 8px 10px; }
+table.t { font-size: .88rem; }
+table.t.compact td { vertical-align: middle; }
+
+/* a user */
+.ud-grid { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); }
+.ud-ava { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 8px; }
+.dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; margin: 0; font-size: .9rem; }
+.dl dt { color: var(--muted); }
+.dl dd { margin: 0; overflow-wrap: anywhere; }
+.ud-sessions { max-height: 280px; }
+@media (max-width: 900px) { .ud-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* the Telegram bridge: the buttons of a row sit together on one line */
+.br-actions { white-space: nowrap; text-align: right; }
+.br-actions .btn + .btn { margin-left: 6px; }
+.btn.small { min-height: 32px; padding: 0 12px; font-size: .84rem; border-radius: 16px; }
+td .btn.secondary.small + .btn.secondary.small { margin-left: 6px; }
+
+/* every control shows where the focus is */
+.btn:focus-visible, .chip:focus-visible, .kpi:focus-visible, .att-row:focus-visible, .adm-nav button:focus-visible, .abub-copy:focus-visible, .ajump:focus-visible, summary:focus-visible { outline: 2px solid var(--yel, #fbc700); outline-offset: 2px; }
+.btn, .chip, .kpi, .att-row, .adm-nav button { cursor: pointer; }
+.btn:active, .chip:active, .att-row:active { transform: scale(.98); }
+
+/* the confirmation dialog (Esc cancels) and the toast */
+.adlg { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .45); animation: adlg-in .12s both; }
+.adlg-card { width: min(420px, 100%); padding: 20px; border-radius: 20px; background: var(--surface, #fff); box-shadow: 0 24px 60px rgba(0, 0, 0, .35); }
+.adlg-text { margin: 0 0 16px; line-height: 1.45; white-space: pre-line; }
+.adlg-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.atoast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 510; max-width: min(520px, 92vw); padding: 10px 16px; border-radius: 14px; background: var(--ink, #17171a); color: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .3); white-space: pre-line; animation: adlg-in .15s both; }
+@keyframes adlg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.atoast { animation-name: atoast-in; }
+@keyframes atoast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .adlg, .atoast { animation: none; } }
