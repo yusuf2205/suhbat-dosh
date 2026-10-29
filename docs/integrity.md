@@ -1,6 +1,6 @@
 # The daily check that everything is recorded
 
-Every day at **14:00 Tashkent time** (`INTEGRITY_AT`, `INTEGRITY_TZ`) the server checks by itself that nothing is lost. It does not need any device:
+Every night at **02:30 Tashkent time** (`INTEGRITY_AT`, `INTEGRITY_TZ`) the server checks by itself that nothing is lost. It does not need any device:
 the phones and computers of the people may be switched off or without internet. A day that was missed because the server was down at that
 time is made up for as soon as it is back.
 

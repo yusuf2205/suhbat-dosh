@@ -1,4 +1,4 @@
-// The daily check that everything is recorded and nothing is lost. It runs on the server at a fixed time (14:00 by default),
+// The daily check that everything is recorded and nothing is lost. It runs on the server at a fixed time (02:30 by default, night),
 // whether the people are online or not: it does not need a single device. It checks the database, the files on the disk,
 // the search index, scheduled messages, unfinished uploads, the backups, the free space and the Telegram copies (the bridge is asked
 // to catch up on whatever it missed). Every run is kept; a problem is reported to the administrator.

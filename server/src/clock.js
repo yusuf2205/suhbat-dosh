@@ -1,5 +1,5 @@
 // The time of day in the administrator's zone (the daily check runs at a fixed hour there, not in the server's UTC).
-export const AT = () => process.env.INTEGRITY_AT || '14:00';
+export const AT = () => process.env.INTEGRITY_AT || '02:30';
 export const TZ = () => process.env.INTEGRITY_TZ || 'Asia/Tashkent';
 
 /** The date and the time of day in the administrator's time zone: { day: '2026-10-30', hm: '14:00' }. */

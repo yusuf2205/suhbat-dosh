@@ -2,6 +2,7 @@
 import { h, clear } from './dom.js';
 import './ripple.js';
 import { icon } from './icons.js';
+import { qrCanvas } from './qr.js';
 
 const root = document.getElementById('admin-root');
 const fmtDT = (ts) => (ts ? new Date(ts).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'medium' }) : '—');
@@ -15,6 +16,11 @@ function deviceName(ua) {
   const app = /SuhbatShell/.test(u) ? 'Приложение' : /Edg\//.test(u) ? 'Edge' : /OPR\//.test(u) ? 'Opera' : /Firefox\//.test(u) ? 'Firefox' : /Chrome\/|CriOS/.test(u) ? 'Chrome' : /Safari\//.test(u) ? 'Safari' : '';
   return [app, os].filter(Boolean).join(' · ') || u.slice(0, 30);
 }
+
+// ---- one sound at a time: starting a voice message or a video stops the one that was playing
+document.addEventListener('play', (e) => {
+  for (const m of document.querySelectorAll('audio, video')) if (m !== e.target && !m.paused) m.pause();
+}, true);
 
 // ---- dialogs and the Esc key: one rule everywhere, the nearest thing closes first
 /** A confirmation as a dialog (Esc or the backdrop cancels, Enter confirms the focused button), instead of the browser's confirm())). */
@@ -101,7 +107,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)', 'admin.integrity_run': 'запустил проверку записи данных (админ)',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)', 'admin.integrity_run': 'запустил проверку записи данных (админ)', 'admin.export_data': 'выгрузил данные (админ)', 'admin.export_link': 'создал ссылку на выгрузку (админ)', 'admin.export_revoke': 'отозвал ссылку на выгрузку (админ)', 'export.download': 'скачали выгрузку по ссылке',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -436,6 +442,89 @@ async function viewUsers() {
       h('thead', null, h('tr', null, ['Имя', 'Username', 'Телефон', 'Был(а) / в сети', 'Сообщений', 'Чатов', 'Сессий', 'Файлы', 'Регистрация'].map((x) => h('th', null, x)))), body)));
 }
 
+// ---------------------------------------------------------------- exports of messages: download at once or hand out a link with limits
+const FORMAT_CHOICES = [['zip-media', 'Архив ZIP с файлами', { format: 'zip', media: true }], ['zip', 'Архив ZIP (только переписка)', { format: 'zip', media: false }], ['html', 'Страница (.html)', { format: 'html' }], ['txt', 'Текст (.txt)', { format: 'txt' }], ['json', 'Данные (.json)', { format: 'json' }]];
+const TTL_CHOICES = [['1', '1 час'], ['24', '1 день'], ['168', '7 дней'], ['720', '30 дней'], ['2160', '90 дней']];
+const COUNT_CHOICES = [['1', 'один раз'], ['3', '3 раза'], ['10', '10 раз'], ['', 'без ограничения']];
+const linkUrl = (token) => `${location.origin}/x/${token}`;
+const LINK_STATUS = { active: ['ok', 'действует'], expired: ['', 'срок вышел'], used: ['', 'скачано'], revoked: ['warn', 'отозвана'] };
+
+/** The window of an export: what to give, in which form, and for how long/how many times/with which password. `scope`: 'chat' or 'user'. */
+function openExportDialog({ scope, id, title }) {
+  const done = () => { document.removeEventListener('keydown', key, true); box.remove(); };
+  const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(); } };
+  const sel = (label, choices, value) => h('label', { class: 'xd-f' }, h('span', null, label), h('select', { class: 'as-select' }, choices.map(([v, l]) => h('option', { value: v, selected: v === value }, l))));
+  const fmt = sel('Что выдать', FORMAT_CHOICES.map(([v, l]) => [v, l]), 'zip-media');
+  const ttl = sel('Ссылка действует', TTL_CHOICES, '24');
+  const cnt = sel('Скачать можно', COUNT_CHOICES, '3');
+  const since = h('input', { class: 'as-date', type: 'date', 'aria-label': 'С даты' });
+  const until = h('input', { class: 'as-date', type: 'date', 'aria-label': 'По дату' });
+  const pass = h('input', { class: 'input', type: 'text', placeholder: 'Пароль (необязательно)', autocomplete: 'off', maxLength: 100, 'aria-label': 'Пароль' });
+  const note = h('input', { class: 'input', placeholder: 'Заметка для себя (необязательно)', maxLength: 200, 'aria-label': 'Заметка' });
+  const val = (label) => label.querySelector('select').value;
+  const spec = () => {
+    const c = FORMAT_CHOICES.find((x) => x[0] === val(fmt))[2];
+    const day = (v, end) => (v ? String(new Date(`${v}T${end ? '23:59:59.999' : '00:00:00'}`).getTime()) : '');
+    return { scope, scope_id: id, format: c.format, media: !!c.media, since: day(since.value, false), until: day(until.value, true) };
+  };
+  const body = h('div', { class: 'xd-body' });
+  const err = h('div', { class: 'err', role: 'alert' });
+  const form = () => {
+    clear(body).append(
+      h('h3', null, 'Выгрузка'), h('p', { class: 'muted' }, title),
+      fmt,
+      h('div', { class: 'xd-f' }, h('span', null, 'За период (необязательно)'), h('div', { class: 'row' }, since, h('span', { class: 'at-lab' }, '—'), until)),
+      h('div', { class: 'xd-split' }, ttl, cnt), pass, note, err,
+      h('div', { class: 'adlg-btns xd-btns' },
+        h('button', { class: 'btn secondary', type: 'button', onclick: done }, 'Закрыть'),
+        h('a', { class: 'btn secondary', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/exports/now?${new URLSearchParams(spec())}`; } }, 'Скачать сейчас'),
+        h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+          e.currentTarget.disabled = true; err.textContent = '';
+          try { const r = await send('POST', '/api/admin/exports', { ...spec(), hours: Number(val(ttl)), max_downloads: val(cnt) === '' ? null : Number(val(cnt)), password: pass.value, note: note.value }); created(r.link); } catch (x) { err.textContent = errMsg(x); e.currentTarget.disabled = false; }
+        } }, 'Создать ссылку')));
+  };
+  const created = (l) => {
+    const url = linkUrl(l.token);
+    const field = h('input', { class: 'input xd-url', readOnly: true, value: url, 'aria-label': 'Ссылка', onfocus: (e) => e.target.select() });
+    const copy = h('button', { class: 'btn', type: 'button', onclick: async (e) => { try { await navigator.clipboard.writeText(url); e.currentTarget.textContent = 'Скопировано ✓'; } catch { field.select(); } } }, 'Копировать');
+    clear(body).append(
+      h('h3', null, 'Ссылка готова'), h('p', { class: 'muted' }, l.title),
+      h('div', { class: 'row xd-row' }, field, copy),
+      h('div', { class: 'xd-qr' }, qrCanvas(url, 150, { logo: false, animate: false })),
+      h('p', { class: 'muted' }, `Действует до ${fmtDT(l.expires_at)} · скачать ${l.max_downloads === null ? 'можно сколько угодно раз' : `можно ${l.max_downloads} ${l.max_downloads === 1 ? 'раз' : 'раза'}`}${l.password ? ' · нужен пароль' : ''}. Ссылку можно отозвать в разделе «Доступ и рассылка».`),
+      h('div', { class: 'adlg-btns' }, h('button', { class: 'btn', type: 'button', onclick: () => { done(); if (state.tab === 'access') setTab('access'); } }, 'Готово')));
+    field.select();
+  };
+  const box = h('div', { class: 'adlg', role: 'dialog', 'aria-modal': 'true', onclick: (e) => { if (e.target === box) done(); } }, h('div', { class: 'adlg-card xd' }, body));
+  document.addEventListener('keydown', key, true);
+  document.body.append(box);
+  form();
+}
+
+/** The links that were handed out: what, until when, how many times used; copy the address, revoke. */
+async function exportsPanel() {
+  const box = h('section', { class: 'panel' });
+  async function paint() {
+    let d;
+    try { d = await get('/api/admin/exports'); } catch { clear(box).append(h('p', { class: 'muted' }, 'Не удалось получить список')); return; }
+    clear(box).append(h('h2', null, icon('download', 18), 'Ссылки на выгрузки'),
+      h('p', { class: 'muted' }, 'Выгрузка сообщений чата или всего, что написал пользователь, отдаётся ссылкой с ограничениями: сколько действует, сколько раз можно скачать, пароль. Создаётся на странице чата или пользователя, кнопка «Выгрузить».'),
+      d.links.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't compact' },
+        h('thead', null, h('tr', null, ['Что', 'Вид', 'Скачано', 'Действует до', 'Статус', ''].map((x) => h('th', null, x)))),
+        h('tbody', null, d.links.map((l) => h('tr', null,
+          h('td', null, h('b', null, l.title), l.note ? h('small', { class: 'muted' }, ` · ${l.note}`) : null),
+          h('td', null, `${l.format.toUpperCase()}${l.media ? ' + файлы' : ''}${l.password ? ' 🔒' : ''}`),
+          h('td', null, `${l.downloads}${l.max_downloads === null ? '' : ` из ${l.max_downloads}`}`),
+          h('td', { class: 'ev-time' }, fmtShort(l.expires_at)),
+          h('td', null, h('span', { class: `pill ${LINK_STATUS[l.status][0]}` }, LINK_STATUS[l.status][1])),
+          h('td', { class: 'br-actions' },
+            l.status === 'active' ? h('button', { class: 'btn small secondary', type: 'button', onclick: async (e) => { try { await navigator.clipboard.writeText(linkUrl(l.token)); e.currentTarget.textContent = '✓'; } catch { notify(linkUrl(l.token), 9000); } } }, 'Копировать') : null,
+            l.status === 'active' ? h('button', { class: 'btn small danger-o', type: 'button', onclick: async () => { if (!(await askConfirm(`Отозвать ссылку «${l.title}»? Она сразу перестанет работать.`, 'Отозвать'))) return; try { await send('DELETE', `/api/admin/exports/${l.id}`); } catch (e) { notify(errMsg(e)); } paint(); } }, 'Отозвать') : null)))))) : h('p', { class: 'muted' }, 'Ссылок пока нет.'));
+  }
+  await paint();
+  return box;
+}
+
 /** A question with a text field (a reason): resolves to the text ('' if left empty) or null when cancelled. Esc cancels, Enter confirms. */
 function askText(text, label, ok = 'Подтвердить') {
   return new Promise((resolve) => {
@@ -482,6 +571,7 @@ async function showUser(id) {
           u.banned_at ? h('span', { class: 'pill warn', title: u.ban_reason || '' }, 'заблокирован') : null))),
     h('div', { class: 'ud-actions' },
       act('list', 'Журнал', 'secondary', () => { state.preset = { actor: id }; setTab('journal'); }, 'Действия этого пользователя в журнале'),
+      act('download', 'Выгрузить', 'secondary', () => openExportDialog({ scope: 'user', id, title: `Всё, что написал ${u.name}: в личных чатах, группах и каналах` }), 'Скачать сообщения пользователя или дать ссылку на них'),
       act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
       u.is_bot ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
       h('span', { class: 'ud-sp' }),
@@ -659,6 +749,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([k, v]) => k !== 'meaning' && v !== '' && v !== undefined && v !== null)).toString();
   const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?${focus ? `around=${focus}` : 'limit=100'}`)]);
   const info = first[0];
+  const c0 = info.chat;
   let hist = first[1];
   const list = h('div', { class: 'aconv' });
   let all = [...hist.messages];
@@ -788,7 +879,8 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   }
   const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
   const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip solid', title: 'Скачать переписку (с учётом фильтров)' }, '⬇ Скачать'),
-    h('div', { class: 'amenu-list' }, exportLink('txt', 'Текст (.txt)'), exportLink('html', 'Страница (.html)')));
+    h('div', { class: 'amenu-list' }, exportLink('txt', 'Текст (.txt)'), exportLink('html', 'Страница (.html)'),
+      h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('details').open = false; openExportDialog({ scope: 'chat', id, title: c0.title || state.chats.get(id)?.title || `Чат #${id}` }); } }, 'Архив с файлами, ссылка…')));
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
   const tools = h('div', { class: 'achat-tools' },
     h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), exportMenu),
@@ -1045,6 +1137,7 @@ async function viewAccess() {
       h('p', { class: 'muted' }, `Сколько человек может быть в одном звонке или комнате (от 2 до ${st.gcall_max_top ?? 25}). Каждый участник отправляет своё видео всем остальным, поэтому при больших значениях нужен быстрый интернет у людей и на сервере TURN. Действует для новых входов, идущие звонки не прерываются.`),
       h('div', { class: 'toolbar' }, gcIn, gcSave, gcMsg)),
     bridgePanel(br),
+    await exportsPanel(),
     h('div', { class: 'panel' }, h('h2', null, icon('lock', 18), 'Вход администратора'),
       h('p', { class: 'muted' }, cred.has_password
         ? `Включён вход по логину «${cred.login}» и паролю. Код из SMS для этого аккаунта больше не принимается.`

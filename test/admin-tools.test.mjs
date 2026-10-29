@@ -267,3 +267,74 @@ test('the daily check: finds a lost file, repairs the search index, keeps the hi
     assert.deepEqual(localClock(Date.UTC(2026, 9, 30, 20, 30)), { day: '2026-10-31', hm: '01:30' });
   }
 });
+
+test('exports: a ZIP with the files, a link with limits and a password, one for a chat and one for a person, revoking, and the journal', async () => {
+  const { readZip } = await import('../web/js/zip.js');
+  const root1 = await login('+998900000001', 'Root');
+  const ada = await login('+998900000051', 'Ada');
+  const bek = await login('+998900000052', 'Bek');
+  const cat = await login('+998900000053', 'Cat');
+  const dm = (await call(ada.cookie, 'POST', '/api/chats/direct', { user_id: bek.user.id })).data.chat;
+  const grp = (await call(ada.cookie, 'POST', '/api/chats', { type: 'group', title: 'Команда', member_ids: [bek.user.id, cat.user.id] })).data.chat;
+  await call(ada.cookie, 'POST', `/api/chats/${dm.id}/messages`, { text: 'личное от Ады' });
+  await call(bek.cookie, 'POST', `/api/chats/${dm.id}/messages`, { text: 'ответ Бека' });
+  await call(ada.cookie, 'POST', `/api/chats/${grp.id}/messages`, { text: 'в группе от Ады' });
+  await call(cat.cookie, 'POST', `/api/chats/${grp.id}/messages`, { text: 'в группе от Кати' });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await fetch(`${BASE}/api/chats/${grp.id}/files?name=${encodeURIComponent('схема.png')}`, { method: 'POST', headers: { cookie: ada.cookie, 'content-type': 'image/png' }, body: png });
+
+  // the administrator only
+  assert.equal((await call(ada.cookie, 'POST', '/api/admin/exports', { scope: 'chat', scope_id: dm.id })).status, 403);
+  assert.equal((await call(ada.cookie, 'GET', `/api/admin/exports/now?scope=chat&scope_id=${dm.id}&format=txt`)).status, 403);
+
+  // a link for the group: a ZIP with the files, two downloads, a password
+  const made = await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'chat', scope_id: grp.id, format: 'zip', media: true, hours: 24, max_downloads: 2, password: 'sesame1', note: 'для проверки' });
+  assert.equal(made.status, 201);
+  const token = made.data.link.token;
+  assert.equal(made.data.link.status, 'active');
+  const landing = await fetch(`${BASE}/x/${token}`);
+  assert.equal(landing.status, 200);
+  assert.ok((await landing.text()).includes('Команда'));
+  const get = (pw) => fetch(`${BASE}/x/${token}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ p: pw }) });
+  assert.equal((await get('wrong')).status, 403);
+  const ok1 = await get('sesame1');
+  assert.equal(ok1.status, 200);
+  assert.equal(ok1.headers.get('content-type'), 'application/zip');
+  const zip = Buffer.from(await ok1.arrayBuffer());
+  const entries = await readZip(new File([zip], 'x.zip'));
+  const names = [...entries.keys()];
+  for (const n of ['messages.html', 'messages.txt', 'messages.json', 'README.txt']) assert.ok(names.includes(n), n);
+  assert.ok(names.some((n) => n.startsWith('files/') && n.endsWith('схема.png')), 'the picture is in the archive');
+  const txt = await (await entries.get('messages.txt').file()).text();
+  assert.ok(txt.includes('в группе от Ады') && txt.includes('в группе от Кати'), txt);
+  assert.ok(!txt.includes('личное от Ады'), 'the other chat is not in it');
+  assert.equal((await get('sesame1')).status, 200);
+  assert.equal((await get('sesame1')).status, 410, 'the third time the link is used up');
+  assert.equal((await fetch(`${BASE}/x/${token}`)).status, 410);
+
+  // everything one person wrote, in every chat, as JSON, by a link without a password; then revoked
+  const mine = await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'user', scope_id: ada.user.id, format: 'json', hours: 1 });
+  const tok2 = mine.data.link.token;
+  const j = await fetch(`${BASE}/x/${tok2}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
+  assert.equal(j.status, 200);
+  const data = await j.json();
+  const texts = data.chats.flatMap((c) => c.messages.map((m) => m.text));
+  assert.ok(texts.includes('личное от Ады') && texts.includes('в группе от Ады'));
+  assert.ok(!texts.includes('ответ Бека') && !texts.includes('в группе от Кати'), 'only what she wrote');
+  assert.equal(data.chats.length, 2);
+  const list = (await call(root1.cookie, 'GET', '/api/admin/exports')).data.links;
+  assert.equal(list.find((l) => l.token === tok2).downloads, 1);
+  assert.equal((await call(root1.cookie, 'DELETE', `/api/admin/exports/${list.find((l) => l.token === tok2).id}`)).status, 200);
+  assert.equal((await fetch(`${BASE}/x/${tok2}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' })).status, 410);
+
+  // the direct download, a text of one personal chat
+  const direct = await fetch(`${BASE}/api/admin/exports/now?scope=chat&scope_id=${dm.id}&format=txt`, { headers: { cookie: root1.cookie } });
+  assert.equal(direct.status, 200);
+  const dtxt = await direct.text();
+  assert.ok(dtxt.includes('личное от Ады') && dtxt.includes('ответ Бека'));
+  assert.equal((await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'chat', scope_id: 999999 })).status, 404);
+
+  // everything is in the journal
+  const ev = (await call(root1.cookie, 'GET', '/api/admin/audit?limit=200')).data.events.map((e) => e.action);
+  for (const a of ['admin.export_link', 'admin.export_data', 'admin.export_revoke', 'export.download']) assert.ok(ev.includes(a), a);
+});

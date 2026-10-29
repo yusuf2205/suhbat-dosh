@@ -16,6 +16,7 @@ import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
 import { embedderReady, rankByMeaning } from './semantic.js';
 import { integrityState, lastRuns, runIntegrity } from './integrity.js';
+import { FORMATS, createLink, describeScope, listLinks, revokeLink, streamExport } from './exports.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
@@ -273,6 +274,30 @@ admin.get('/chats/:id/messages', (req, res) => {
     out.total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
   } else out.deleted = [];
   res.json(out);
+});
+
+// Exports of messages: download at once, or hand out a link with limits (time, number of downloads, password); links can be revoked.
+const exportSpec = (src) => ({
+  scope: src.scope === 'user' ? 'user' : 'chat', scope_id: int(src.scope_id ?? src.id, 'scope_id'), format: FORMATS[src.format] ? src.format : 'zip', media: src.media === true || src.media === '1',
+  since: src.since ? int(src.since, 'since', { min: 0 }) : null, until: src.until ? int(src.until, 'until', { min: 0 }) : null,
+});
+admin.get('/exports', (_req, res) => res.json({ links: listLinks() }));
+admin.get('/exports/now', async (req, res) => {
+  const spec = exportSpec(req.query);
+  const about = describeScope(spec.scope, spec.scope_id);
+  audit(req.user.id, 'admin.export_data', { target_type: spec.scope, target_id: String(spec.scope_id), chat_id: spec.scope === 'chat' ? spec.scope_id : null, ip: req.ip, details: { title: about.title, format: spec.format, media: spec.media } });
+  await streamExport(res, spec);
+});
+admin.post('/exports', (req, res) => {
+  const l = createLink(req.user.id, req.body || {});
+  audit(req.user.id, 'admin.export_link', { target_type: l.scope, target_id: String(l.scope_id), chat_id: l.scope === 'chat' ? l.scope_id : null, ip: req.ip, details: { title: l.title, format: l.format, media: l.media, expires_at: l.expires_at, max_downloads: l.max_downloads, password: l.password } });
+  res.status(201).json({ link: l });
+});
+admin.delete('/exports/:id', (req, res) => {
+  const id = int(req.params.id, 'id');
+  revokeLink(id);
+  audit(req.user.id, 'admin.export_revoke', { target_type: 'export', target_id: String(id), ip: req.ip });
+  res.json({ ok: true });
 });
 
 // The daily check that everything is recorded: the last runs, and a button to run it now.

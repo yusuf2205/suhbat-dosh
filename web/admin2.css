@@ -299,3 +299,17 @@ table.t.health td { overflow-wrap: anywhere; }
 .integ-day { width: 14px; height: 14px; border-radius: 4px; background: #22b573; }
 .integ-day.warn { background: #f59e0b; } .integ-day.bad { background: #d6453d; }
 
+/* the export window */
+.adlg-card.xd { width: min(480px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.xd-body { display: grid; gap: 10px; }
+.xd-body h3 { margin: 0; }
+.xd-f { display: grid; gap: 4px; font-size: .88rem; }
+.xd-f > span { color: var(--muted); }
+.xd-f .row { display: flex; align-items: center; gap: 8px; }
+.xd-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.xd-btns { flex-wrap: wrap; }
+.xd-row { display: flex; gap: 8px; }
+.xd-url { flex: 1; min-width: 0; font-size: .85rem; }
+.xd-qr { display: grid; place-items: center; padding: 6px; }
+@media (max-width: 520px) { .xd-split { grid-template-columns: 1fr; } }
+
