@@ -508,7 +508,7 @@ async function exportsPanel() {
     let d;
     try { d = await get('/api/admin/exports'); } catch { clear(box).append(h('p', { class: 'muted' }, 'Не удалось получить список')); return; }
     clear(box).append(h('h2', null, icon('download', 18), 'Ссылки на выгрузки'),
-      h('p', { class: 'muted' }, 'Выгрузка сообщений чата или всего, что написал пользователь, отдаётся ссылкой с ограничениями: сколько действует, сколько раз можно скачать, пароль. Создаётся на странице чата или пользователя, кнопка «Выгрузить».'),
+      h('p', { class: 'muted' }, 'Выгрузка одного сообщения, сообщений чата или всего, что написал пользователь, отдаётся ссылкой с ограничениями: сколько действует, сколько раз можно скачать, пароль. Создаётся там, где вы смотрите переписку: у сообщения кнопка ⇪, на странице чата меню «Скачать», на странице пользователя «Выгрузить».'),
       d.links.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't compact' },
         h('thead', null, h('tr', null, ['Что', 'Вид', 'Скачано', 'Действует до', 'Статус', ''].map((x) => h('th', null, x)))),
         h('tbody', null, d.links.map((l) => h('tr', null,
@@ -704,7 +704,7 @@ function messageNode(m, ctx, prev) {
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
-    h('div', { class: 'abub-act' }, h('button', { class: 'abub-copy', type: 'button', 'data-what': 'text', title: 'Копировать текст', 'aria-label': 'Копировать текст' }, '⧉'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'id', title: 'Копировать номер', 'aria-label': 'Копировать номер' }, '№')),
+    h('div', { class: 'abub-act' }, h('button', { class: 'abub-copy', type: 'button', 'data-what': 'export', title: 'Скачать это сообщение или дать ссылку на него', 'aria-label': 'Скачать это сообщение или дать ссылку' }, '⇪'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'text', title: 'Копировать текст', 'aria-label': 'Копировать текст' }, '⧉'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'id', title: 'Копировать номер', 'aria-label': 'Копировать номер' }, '№')),
     h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at))));
   return nodes;
 }
@@ -714,7 +714,7 @@ function locationLine(text) {
   const g = /^geo:(-?[\d.]+),(-?[\d.]+)/.exec(String(text || ''));
   if (!g) return h('div', { class: 'abub-text' }, text);
   return h('div', { class: 'abub-text' }, '\u{1F4CD} Геопозиция: ',
-    h('a', { href: `https://www.openstreetmap.org/?mlat=${g[1]}&mlon=${g[2]}#map=16/${g[1]}/${g[2]}`, target: '_blank', rel: 'noopener' }, `${g[1]}, ${g[2]}`));
+    h('a', { href: `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, `${g[1]}, ${g[2]}`), ' ', h('small', { class: 'muted' }, 'Яндекс Карты'));
 }
 
 const CHAT_KINDS = [['', 'Всё'], ['image', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['voice', 'Голос и аудио'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
@@ -892,6 +892,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const btn = e.target.closest?.('button.abub-copy');
     if (!btn) return;
     const bub = btn.closest('.abub');
+    if (btn.dataset.what === 'export') {   // one message: download it, or hand out a link to it
+      const who = bub.querySelector('.abub-who')?.textContent;
+      openExportDialog({ scope: 'message', id: Number(bub.dataset.id), title: `Сообщение №${bub.dataset.id}${who ? ` · ${who}` : ''}` });
+      return;
+    }
     const text = btn.dataset.what === 'id' ? `№${bub.dataset.id}` : [...bub.querySelectorAll('.abub-text')].map((x) => x.textContent).join('\n');
     try { await navigator.clipboard.writeText(text); btn.textContent = '✓'; } catch { btn.textContent = '!'; }
     setTimeout(() => { btn.textContent = btn.dataset.what === 'id' ? '№' : '⧉'; }, 1200);

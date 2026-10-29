@@ -25,6 +25,12 @@ function chatName(c) {
 
 /** The title of an export and its scope, or a 404 when there is nothing like it. */
 export function describeScope(scope, id) {
+  if (scope === 'message') {
+    const m = q.get('SELECT m.id, m.kind, m.chat_id, c.e2e, c.title FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ?', id);
+    if (!m) throw new HttpError(404, 'not_found');
+    if (m.kind === 'secret' || m.e2e) throw new HttpError(400, 'not_exportable');   // the server cannot read it
+    return { title: `Сообщение №${m.id} · ${chatName(q.get('SELECT * FROM chats WHERE id = ?', m.chat_id))}`, kind: 'сообщение' };
+  }
   if (scope === 'chat') {
     const c = q.get('SELECT * FROM chats WHERE id = ?', id);
     if (!c) throw new HttpError(404, 'not_found');
@@ -44,7 +50,7 @@ function* messagesOf({ scope, scope_id: id, since, until }) {
   for (;;) {
     const where = [`m.id > ?`, `m.kind != 'secret'`, `c.e2e = 0`];
     const params = [last];
-    if (scope === 'chat') { where.push('m.chat_id = ?'); params.push(id); } else { where.push('m.sender_id = ?'); params.push(id); }
+    if (scope === 'chat') { where.push('m.chat_id = ?'); params.push(id); } else if (scope === 'message') { where.push('m.id = ?'); params.push(id); } else { where.push('m.sender_id = ?'); params.push(id); }
     if (since) { where.push('m.created_at >= ?'); params.push(since); }
     if (until) { where.push('m.created_at <= ?'); params.push(until); }
     const rows = q.all(`SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE ${where.join(' AND ')} ORDER BY m.id LIMIT 500`, ...params);
@@ -166,7 +172,7 @@ const link = (r) => ({
 });
 
 export function createLink(adminId, b) {
-  const scope = b.scope === 'user' ? 'user' : 'chat';
+  const scope = b.scope === 'user' ? 'user' : b.scope === 'message' ? 'message' : 'chat';
   const scopeId = int(b.scope_id, 'scope_id');
   const about = describeScope(scope, scopeId);
   const format = FORMATS[b.format] ? b.format : 'zip';

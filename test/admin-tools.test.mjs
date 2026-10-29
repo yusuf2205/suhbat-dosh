@@ -338,3 +338,33 @@ test('exports: a ZIP with the files, a link with limits and a password, one for 
   const ev = (await call(root1.cookie, 'GET', '/api/admin/audit?limit=200')).data.events.map((e) => e.action);
   for (const a of ['admin.export_link', 'admin.export_data', 'admin.export_revoke', 'export.download']) assert.ok(ev.includes(a), a);
 });
+
+test('exports: one message, by a link or at once, with its file', async () => {
+  const { readZip } = await import('../web/js/zip.js');
+  const root1 = await login('+998900000001', 'Root');
+  const eli = await login('+998900000061', 'Eli');
+  const fay = await login('+998900000062', 'Fay');
+  const chat = (await call(eli.cookie, 'POST', '/api/chats/direct', { user_id: fay.user.id })).data.chat;
+  const m1 = (await call(eli.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'первое сообщение' })).data.message;
+  await call(eli.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'второе сообщение' });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const withFile = (await (await fetch(`${BASE}/api/chats/${chat.id}/files?name=foto.png&caption=${encodeURIComponent('подпись')}`, { method: 'POST', headers: { cookie: eli.cookie, 'content-type': 'image/png' }, body: png })).json()).message;
+
+  // at once: only that message
+  const now = await fetch(`${BASE}/api/admin/exports/now?scope=message&scope_id=${m1.id}&format=txt`, { headers: { cookie: root1.cookie } });
+  assert.equal(now.status, 200);
+  const txt = await now.text();
+  assert.ok(txt.includes('первое сообщение') && !txt.includes('второе сообщение'));
+  // a link to a message with a picture: the archive holds that message and its file
+  const l = (await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: withFile.id, format: 'zip', media: true, hours: 1, max_downloads: 1 })).data.link;
+  assert.ok(l.title.startsWith(`Сообщение №${withFile.id}`));
+  const dl = await fetch(`${BASE}/x/${l.token}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' });
+  assert.equal(dl.status, 200);
+  const entries = await readZip(new File([Buffer.from(await dl.arrayBuffer())], 'm.zip'));
+  assert.ok([...entries.keys()].some((n) => n.startsWith('files/') && n.endsWith('foto.png')));
+  const body = await (await entries.get('messages.txt').file()).text();
+  assert.ok(body.includes('подпись') && !body.includes('первое сообщение'));
+  assert.equal((await fetch(`${BASE}/x/${l.token}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' })).status, 410);
+  assert.equal((await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: 99999999 })).status, 404);
+  assert.equal((await call(eli.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: m1.id })).status, 403);
+});

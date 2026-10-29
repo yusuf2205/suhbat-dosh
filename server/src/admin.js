@@ -278,7 +278,7 @@ admin.get('/chats/:id/messages', (req, res) => {
 
 // Exports of messages: download at once, or hand out a link with limits (time, number of downloads, password); links can be revoked.
 const exportSpec = (src) => ({
-  scope: src.scope === 'user' ? 'user' : 'chat', scope_id: int(src.scope_id ?? src.id, 'scope_id'), format: FORMATS[src.format] ? src.format : 'zip', media: src.media === true || src.media === '1',
+  scope: src.scope === 'user' ? 'user' : src.scope === 'message' ? 'message' : 'chat', scope_id: int(src.scope_id ?? src.id, 'scope_id'), format: FORMATS[src.format] ? src.format : 'zip', media: src.media === true || src.media === '1',
   since: src.since ? int(src.since, 'since', { min: 0 }) : null, until: src.until ? int(src.until, 'until', { min: 0 }) : null,
 });
 admin.get('/exports', (_req, res) => res.json({ links: listLinks() }));
