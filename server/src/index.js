@@ -141,6 +141,12 @@ const moduleRoute = (dir) => (req, res, next) => {
   return sendVersioned(res, file, 'application/javascript; charset=utf-8', 'js');
 };
 app.get('/js/:f', moduleRoute(path.join(webDir, 'js')));
+// every module of this build, so the service worker can keep the whole app for offline starts (not only the entry script)
+const shellFiles = (dir, prefix) => fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => `${prefix}/${f}?v=${BUILD_ID}`);
+app.get('/shell.json', (_req, res) => {
+  res.setHeader('Cache-Control', NO_CACHE);
+  res.json([...shellFiles(path.join(webDir, 'js'), '/js'), ...shellFiles(sharedDir, '/shared')]);
+});
 app.get('/shared/:f', moduleRoute(sharedDir));
 app.get('/downloads/:name', (req, res, next) => {
   // only files that appear in the listing (no path traversal, no stray files)

@@ -513,12 +513,28 @@ async function openChat(id) {
   };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
   draw();
+  // like a messenger: the conversation opens on its newest message, and loading older ones keeps the place being read
+  let stick = true;
+  const scroller = () => {
+    for (let p = list.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {   // the body's own overflow belongs to the viewport
+      const o = getComputedStyle(p).overflowY;
+      if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+    }
+    return document.scrollingElement;
+  };
+  const toEnd = () => { list.lastElementChild?.scrollIntoView({ block: 'end' }); };
   moreBtn.onclick = async () => {
     const r = await get(`/api/admin/chats/${id}/messages?limit=100&before=${all[0]?.id}`);
+    const sc = scroller();
+    const h0 = sc.scrollHeight; const top0 = sc.scrollTop;
+    stick = false;
     all.unshift(...r.messages);
     moreBtn.hidden = !r.has_more;
     draw();
+    sc.scrollTop = top0 + (sc.scrollHeight - h0);
   };
+  list.addEventListener('load', () => { if (stick) toEnd(); }, true);   // pictures change the height as they arrive
+  for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { stick = false; }, { once: true, capture: true });
   const c = info.chat;
   setView(
     h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('chats'); } }, '← Чаты')),
@@ -537,6 +553,7 @@ async function openChat(id) {
           h('td', null, e.details?.author ? userLink(e.details.author) : '—'), h('td', { class: 'ev-time' }, fmtDT(e.details?.sent_at)),
           h('td', null, e.details?.text || (e.details?.file ? `[файл ${e.details.file.name}]` : '')))))))) : '',
   );
+  requestAnimationFrame(() => { toEnd(); setTimeout(() => { if (stick) toEnd(); }, 300); });
 }
 
 async function viewJournal() {

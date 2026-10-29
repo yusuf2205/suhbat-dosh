@@ -1,9 +1,18 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v122';
+const CACHE = 'suhbat-shell-v123';
 const SHELL = ['/', '/styles.css?v=20', '/splash.css?v=3', '/design2.css?v=14', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    await c.addAll(SHELL);
+    // all modules of the build too: otherwise a start without a network works only after a second online visit
+    try {
+      const list = await (await fetch('/shell.json', { cache: 'no-store' })).json();
+      await Promise.allSettled(list.map((u) => c.add(u)));
+    } catch { /* the shell alone is still cached */ }
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
