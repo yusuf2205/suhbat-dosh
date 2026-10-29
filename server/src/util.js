@@ -34,6 +34,14 @@ export function str(v, field, { min = 0, max = 1000, optional = false } = {}) {
   return s;
 }
 
+/** A length in seconds: a recorder reports 4.37, the whole second is stored. Anything that is not a plausible length is left out. */
+export function seconds(v, max = 24 * 3600) {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(max, Math.round(n));
+}
+
 export function int(v, field, { min = 1, max = Number.MAX_SAFE_INTEGER, optional = false } = {}) {
   if (v === undefined || v === null || v === '') {
     if (optional) return undefined;

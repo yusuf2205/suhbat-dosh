@@ -926,11 +926,12 @@ async function startRecording(hs) {
     const r = rec;
     if (!r || r.mr !== mr || r.state === 'discard') return;
     const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
-    const duration = r.duration;
+    const heard = r.duration;
+    const duration = Math.round(heard);   // the server keeps whole seconds
     const wave = encodeWave(r.peaks);
     const chatId = r.chatId;
     closeRecorder(false);
-    if (duration < 0.7) return; // an accidental touch is not a message
+    if (heard < 0.7) return; // an accidental touch is not a message
     if (blob.size < 500) { showMediaProblem({ name: 'EmptyRecording', message: `${blob.size} bytes in ${Math.round(duration)} s` }); return; } // the microphone gave no sound at all
     const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
     await uploadFile(chatId, blob, `voice.${ext}`, { voice: true, duration, waveform: wave });

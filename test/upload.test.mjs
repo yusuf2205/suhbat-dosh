@@ -82,3 +82,23 @@ test('chunked upload resumes from what the server has', async () => {
   const again = await call(A.cookie, 'POST', `/api/chats/${chat.id}/uploads`, { name: 'big.bin', size: data.length, client_id: 'client-12345678' });
   assert.equal(again.data.done, true);
 });
+
+test('a voice recording reports a fractional length (4.37 s): the upload is accepted and the whole second is kept', async () => {
+  const A = await user('+998900002201', 'Vera');
+  const B = await user('+998900002202', 'Vlad');
+  const chat = (await call(A.cookie, 'POST', '/api/chats/direct', { user_id: B.user.id })).data.chat;
+  // the beginning of an MP4 audio file, as an iPhone records it
+  const m4a = Buffer.concat([Buffer.from([0, 0, 0, 0x1c]), Buffer.from('ftypM4A '), Buffer.alloc(40, 1)]);
+  const init = await call(A.cookie, 'POST', `/api/chats/${chat.id}/uploads`, { name: 'voice.m4a', size: m4a.length, client_id: 'voice-client-1', voice: true, duration: 4.37, waveform: 'AAECAwQFBgcICQoLDA0O' });
+  assert.equal(init.status, 201);
+  const id = init.data.upload_id;
+  await call(A.cookie, 'PUT', `/api/uploads/${id}?offset=0`, m4a, { 'content-type': 'application/octet-stream' });
+  const done = await call(A.cookie, 'POST', `/api/uploads/${id}/complete`);
+  assert.equal(done.status, 201);
+  assert.equal(done.data.message.kind, 'voice');
+  assert.equal(done.data.message.duration, 4);
+  // the one-request way as well
+  const one = await call(A.cookie, 'POST', `/api/chats/${chat.id}/files?name=voice2.m4a&voice=1&duration=7.9&client_id=voice-client-2`, m4a, { 'content-type': 'application/octet-stream' });
+  assert.equal(one.status, 201);
+  assert.equal(one.data.message.duration, 8);
+});

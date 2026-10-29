@@ -4,7 +4,7 @@
 import express from 'express';
 import { config } from './config.js';
 import { q, tx } from './db.js';
-import { HttpError, int, now, rateLimit, rid, str } from './util.js';
+import { HttpError, int, now, rateLimit, rid, seconds, str } from './util.js';
 import { chatOut, requireMember } from './service.js';
 import { emit } from './realtime.js';
 import { assertQuota } from './safety.js';
@@ -91,7 +91,7 @@ importer.post('/import/telegram/:id/file', async (req, res) => {
   const name = checkName(str(String(req.query.name ?? 'file'), 'name', { min: 1, max: 200 }));
   const caption = clean(req.query.caption, LIMITS.TEXT_MAX);
   const voice = req.query.voice === '1';
-  const duration = int(req.query.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null;
+  const duration = seconds(req.query.duration) ?? null;
   const reply = int(req.query.reply_to, 'reply_to', { optional: true });
   const fid = rid(16);
   const dest = filePath(fid);

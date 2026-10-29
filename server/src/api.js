@@ -9,7 +9,7 @@ import {
   CHAT_TYPES, EVENTS, LIMITS, PRIVACY_VALUES, REACTIONS,
 } from '../../shared/contracts.js';
 import {
-  HttpError, escapeLike, hmac, int, log, normalizePhone, now, oneOf, parseCookies, rateLimit, rid, safeEqual,
+  HttpError, escapeLike, hmac, int, log, normalizePhone, now, oneOf, parseCookies, rateLimit, rid, safeEqual, seconds,
   sha256, str,
 } from './util.js';
 import { dropSession, emit, isOnline } from './realtime.js';
@@ -1520,7 +1520,7 @@ api.post('/chats/:id/uploads', (req, res) => {
   q.run(
     'INSERT INTO uploads (id, user_id, chat_id, client_id, name, size, caption, voice, duration, reply_to, waveform, once, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
     uid, req.user.id, id, clientId, name, size, str(String(b.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX }), b.voice ? 1 : 0,
-    int(b.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, b.once === true ? 1 : 0, now(), now(),
+    seconds(b.duration) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, b.once === true ? 1 : 0, now(), now(),
   );
   q.run('UPDATE uploads SET topic_id = ? WHERE id = ?', topicFor(req, chat, requireMember(id, req.user.id), int(b.reply_to, 'reply_to', { optional: true }) ?? null), uid);
   fs.writeFileSync(partPath(uid), '');
@@ -1614,7 +1614,7 @@ api.post('/chats/:id/files', async (req, res) => {
   const caption = str(String(req.query.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX });
   const clientId = req.query.client_id ? str(String(req.query.client_id), 'client_id', { min: 8, max: 64 }) : null;
   const voice = req.query.voice === '1';
-  const duration = int(req.query.duration, 'duration', { min: 0, max: 24 * 3600, optional: true }) ?? null;
+  const duration = seconds(req.query.duration) ?? null;
   const replyTo = int(req.query.reply_to, 'reply_to', { optional: true }) ?? null;
   const wf = typeof req.query.waveform === 'string' && /^[A-Za-z0-9_-]{8,140}$/.test(req.query.waveform) ? req.query.waveform : null;
   if (clientId) {
