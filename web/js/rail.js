@@ -1,3 +1,4 @@
+import { featureOn } from './features.js';
 import { h, clear } from './dom.js';
 import { t } from './i18n.js';
 import { S, fire, isMuted, on, savePrefs } from './state.js';
@@ -58,8 +59,8 @@ function item(id, ico, label, { onclick, active, soon, dot } = {}) {
   return b;
 }
 
-const DEFAULT_PINS = ['calendar', 'tasks'];
-const pins = () => (Array.isArray(S.prefs.railPins) ? S.prefs.railPins : DEFAULT_PINS);
+const DEFAULT_PINS = [];
+const pins = () => (Array.isArray(S.prefs.railPins) ? S.prefs.railPins : DEFAULT_PINS).filter(featureOn);
 
 /** Everything beyond the four main places; each can be pinned to the rail from the "More" window. */
 function tools() {
@@ -72,7 +73,7 @@ function tools() {
     ...(nearbyAvailable() ? [{ id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: openNearby }] : []),
     { id: 'archive', ico: 'archive', label: t('nav.archive'), onclick: () => setView('archive'), active: S.view === 'archive' },
     { id: 'settings', ico: 'settings', label: t('nav.settings'), onclick: openSettings },
-  ];
+  ].filter((x) => featureOn(x.id));
 }
 
 function togglePin(id) {

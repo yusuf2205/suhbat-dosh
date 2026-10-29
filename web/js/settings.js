@@ -1,4 +1,5 @@
 // Settings, laid out like Telegram: a list of sections with icons; each opens its own page with a back arrow.
+import { featureOn } from './features.js';
 import { setAutoAll } from './autotr.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { LIMITS, PRIVACY_VALUES } from '/shared/contracts.js';
@@ -238,9 +239,9 @@ export function openSettings() {
         heading(t('st.sec_quick')),
         group(
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
-          row('edit', t('sn.title'), { onclick: () => { m.close(); openSelfNotes(); } }),
-          row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
-          row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
+          featureOn('selfnotes') && row('edit', t('sn.title'), { onclick: () => { m.close(); openSelfNotes(); } }),
+          featureOn('calendar') && row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
+          featureOn('tasks') && row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } })),
         heading(t('st.sec_account')),
         group(
@@ -254,19 +255,19 @@ export function openSettings() {
           row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
           row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
           row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
-          row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
-          row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
+          featureOn('focus') && row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
+          featureOn('digest') && row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
         heading(t('st.sec_people')),
         group(
-          row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
-          row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
+          featureOn('stories') && row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
+          featureOn('stories') && row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
           row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
           row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
           row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
           row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } })),
         heading(t('st.sec_data')),
         group(
-          row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
+          featureOn('storage') && row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
           row('mic', t('mc.title'), { hint: t('mc.row_hint'), onclick: () => { m.close(); openMediaCheck(); } }),
           row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
           row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),

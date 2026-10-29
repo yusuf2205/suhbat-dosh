@@ -1,3 +1,4 @@
+import { featureOn } from './features.js';
 import { snapGet, snapSet } from './snap.js';
 import { canCompress, compressImage } from './imgcompress.js';
 import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
@@ -556,7 +557,7 @@ function renderComposer() {
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
-      { label: t('task.new'), onClick: () => openTaskCreate(S.active) },
+      ...(featureOn('tasks') ? [{ label: t('task.new'), onClick: () => openTaskCreate(S.active) }] : []),
       { label: t('deal.new'), onClick: () => openDealCreate(S.active) },
       { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
@@ -1552,7 +1553,7 @@ function messageMenu(anchor, m) {
   if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') items.push({ label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
     if (!mine) items.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
-    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push({ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }, { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push(...(featureOn('tasks') ? [{ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
     items.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
@@ -1760,8 +1761,8 @@ function chatMoreMenu(anchor) {
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
     { label: t('sched.title'), onClick: () => openScheduled(c.id) },
     { label: t('theme.title'), onClick: () => openChatTheme(c) },
-    ...(!isSecret(c) ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
-    { label: t('task.title'), onClick: () => openTasks() },
+    ...(!isSecret(c) && featureOn('digest') ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
+    ...(featureOn('tasks') ? [{ label: t('task.title'), onClick: () => openTasks() }] : []),
     ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
       if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
       setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages(); renderHeader();

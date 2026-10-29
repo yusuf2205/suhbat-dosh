@@ -1,5 +1,6 @@
 // Quick search and commands (Ctrl+K, or pull the chat list down on a phone): one field to open a chat or a person,
 // find a message, or run an action, all from the keyboard.
+import { featureOn } from './features.js';
 import { h, clear, debounce } from './dom.js';
 import { t } from './i18n.js';
 import { S, chatTitle, fire } from './state.js';
@@ -55,7 +56,8 @@ function actions() {
       ['digest.title', 'list', lazy('./digest.js', 'openDigest', c.id)],
     );
   }
-  return list.map(([key, ico, run]) => ({ type: 'action', label: t(key), ico, run }));
+  const feature = { 'task.title': 'tasks', 'sn.title': 'selfnotes', 'focus.title': 'focus', 'digest.all_title': 'digest', 'room.title_all': 'rooms', 'ev.calendar': 'calendar', 'st.storage': 'storage' };
+  return list.filter(([key]) => !feature[key] || featureOn(feature[key])).map(([key, ico, run]) => ({ type: 'action', label: t(key), ico, run }));
 }
 
 export function openPalette() {

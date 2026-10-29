@@ -1,3 +1,4 @@
+import { featureOn } from './features.js';
 import { tgOnline } from './tgpresence.js';
 import { notifyBar } from './notifybar.js';
 import { justSwiped, swipeLeft } from './swipe.js';
@@ -105,7 +106,7 @@ export function mount(sidebar) {
   clear(el).append(
     (heroEl = h('div', { class: 'hero' },
     h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), searchBtn, composeBtn),
-    h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, storiesBar())))),
+    h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, featureOn('stories') ? storiesBar() : null)))),
     tabsEl, netEl, notifyBar(), listEl, nav, fab,
   );
 
