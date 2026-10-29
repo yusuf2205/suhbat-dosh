@@ -485,6 +485,7 @@ function messageNode(m, ctx, prev) {
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
+    h('div', { class: 'abub-act' }, h('button', { class: 'abub-copy', type: 'button', 'data-what': 'text', title: 'Копировать текст', 'aria-label': 'Копировать текст' }, '⧉'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'id', title: 'Копировать номер', 'aria-label': 'Копировать номер' }, '№')),
     h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at))));
   return nodes;
 }
@@ -612,28 +613,57 @@ async function openChat(id) {
   });
 
   // search and filters
+  const active = () => !!(f.q || f.kind || f.author || f.since || f.until);
   const reload = async () => {
     hist = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100 })}`);
     all = [...hist.messages];
     more = hist.has_more; moreBtn.hidden = !more;
-    paintHeading(); draw(); stick = true; toEnd();
+    paintHeading(); paintTools(); draw(); stick = true; toEnd();
   };
   let timer = null;
   const later = () => { clearTimeout(timer); timer = setTimeout(reload, 350); };
-  const search = h('input', { class: 'input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); later(); } });
-  const kindSel = h('select', { class: 'input', 'aria-label': 'Тип', onchange: (e) => { f.kind = e.target.value; reload(); } }, CHAT_KINDS.map(([v, l]) => h('option', { value: v }, l)));
-  const authors = h('datalist', { id: `auth-${id}` }, (hist.authors || []).map((a) => h('option', { value: a })));
-  const author = h('input', { class: 'input', type: 'search', placeholder: 'Автор', list: `auth-${id}`, 'aria-label': 'Автор', oninput: (e) => { f.author = e.target.value.trim(); later(); } });
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); paintTools(); later(); } });
+  const chips = CHAT_KINDS.map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(v === ''), onclick: () => { f.kind = v; reload(); } }, l));
+  const authorSel = h('select', { class: 'as-select', 'aria-label': 'Автор', onchange: (e) => { f.author = e.target.value; reload(); } },
+    h('option', { value: '' }, 'Все авторы'), (hist.authors || []).map((a) => h('option', { value: a }, a)));
   const day = (v, end) => (v ? new Date(`${v}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : '');
-  const since = h('input', { class: 'input', type: 'date', 'aria-label': 'С даты', onchange: (e) => { f.since = String(day(e.target.value, false)); reload(); } });
-  const until = h('input', { class: 'input', type: 'date', 'aria-label': 'По дату', onchange: (e) => { f.until = String(day(e.target.value, true)); reload(); } });
-  const clearBtn = h('button', { class: 'btn link', type: 'button', onclick: () => {
+  const since = h('input', { class: 'as-date', type: 'date', 'aria-label': 'С даты', onchange: (e) => { f.since = String(day(e.target.value, false)); reload(); } });
+  const until = h('input', { class: 'as-date', type: 'date', 'aria-label': 'По дату', onchange: (e) => { f.until = String(day(e.target.value, true)); reload(); } });
+  const clearBtn = h('button', { class: 'chip reset', type: 'button', hidden: true, onclick: () => {
     Object.assign(f, { q: '', kind: '', author: '', since: '', until: '' });
-    search.value = ''; kindSel.value = ''; author.value = ''; since.value = ''; until.value = '';
+    search.value = ''; authorSel.value = ''; since.value = ''; until.value = '';
     reload();
-  } }, 'Сбросить');
-  const exp = (format, label) => h('a', { class: 'btn secondary small', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; } }, label);
-  const tools = h('div', { class: 'toolbar achat-tools' }, search, kindSel, author, authors, since, until, clearBtn, h('span', { class: 'grow' }), exp('txt', 'Скачать .txt'), exp('html', 'Скачать .html'));
+  } }, '✕ Сбросить');
+  function paintTools() {
+    chips.forEach((b, i) => b.setAttribute('aria-pressed', String(CHAT_KINDS[i][0] === f.kind)));
+    clearBtn.hidden = !active();
+  }
+  const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
+  const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip solid', title: 'Скачать переписку (с учётом фильтров)' }, '⬇ Скачать'),
+    h('div', { class: 'amenu-list' }, exportLink('txt', 'Текст (.txt)'), exportLink('html', 'Страница (.html)')));
+  document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
+  const tools = h('div', { class: 'achat-tools' },
+    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), exportMenu),
+    h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips)),
+    h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn));
+
+  // a message: copy its text or its number; and a way back to the newest
+  list.addEventListener('click', async (e) => {
+    const btn = e.target.closest?.('button.abub-copy');
+    if (!btn) return;
+    const bub = btn.closest('.abub');
+    const text = btn.dataset.what === 'id' ? `№${bub.dataset.id}` : [...bub.querySelectorAll('.abub-text')].map((x) => x.textContent).join('\n');
+    try { await navigator.clipboard.writeText(text); btn.textContent = '✓'; } catch { btn.textContent = '!'; }
+    setTimeout(() => { btn.textContent = btn.dataset.what === 'id' ? '№' : '⧉'; }, 1200);
+  });
+  const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { stick = true; toEnd(); } }, '↓');
+  document.body.append(jump);
+  const showJump = () => {
+    if (!list.isConnected) { jump.remove(); return; }
+    const sc = scroller();
+    jump.hidden = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 500;
+  };
+  window.addEventListener('scroll', function jumpScroll() { if (!list.isConnected) { window.removeEventListener('scroll', jumpScroll); jump.remove(); return; } showJump(); }, { passive: true });
 
   // live: new messages appear by themselves (when no filter is on); the view stays on the end if it was there
   const live = setInterval(async () => {
