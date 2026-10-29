@@ -558,7 +558,7 @@ function renderComposer() {
       { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
       { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
       ...(featureOn('tasks') ? [{ label: t('task.new'), onClick: () => openTaskCreate(S.active) }] : []),
-      { label: t('deal.new'), onClick: () => openDealCreate(S.active) },
+      ...(featureOn('deals') ? [{ label: t('deal.new'), onClick: () => openDealCreate(S.active) }] : []),
       { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
@@ -1554,7 +1554,7 @@ function messageMenu(anchor, m) {
   if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') more.push({ icon: 'checks', label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
     if (!mine) more.push({ icon: 'flag', label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
-    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) more.push(...(featureOn('tasks') ? [{ icon: 'tasks', label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { icon: 'check', label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) more.push(...(featureOn('tasks') ? [{ icon: 'tasks', label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), ...(featureOn('deals') ? [{ icon: 'check', label: t('deal.make'), onClick: () => openDealCreate(c.id, m) }] : []));
     more.push({ icon: 'bell', label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ icon: 'selectc', label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
