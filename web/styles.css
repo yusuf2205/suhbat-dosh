@@ -2173,4 +2173,8 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .auth-card.wide > .qrlogin-side { grid-column: 2; grid-row: 1 / span 9; align-self: center; display: grid; gap: 8px; justify-items: center; text-align: center; padding-left: 30px; border-left: 1px solid var(--line); }
 .qrlogin-side .qrlogin-steps { text-align: left; font-size: .84rem; padding-left: 18px; margin: 4px 0 0; }
 @media (max-width: 899px) { .auth-card.wide { display: block; width: min(420px, 100%); } }
+/* the QR code is renewed by itself: a bar runs down under it, then a fresh code appears */
+.qr-timer { width: 220px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 10px auto 0; }
+.qr-timer i { display: block; height: 100%; border-radius: 3px; background: var(--brand); transform-origin: left center; animation: qr-drain linear forwards; }
+@keyframes qr-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 

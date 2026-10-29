@@ -22,33 +22,45 @@ export function qrLoginPanel(onDone) {
   const status = h('p', { class: 'muted qrlogin-status', role: 'status' });
   let alive = true;
   let timer = 0;
+  let gen = 0;       // a newer code replaces the older one together with its waiting loop
+  let until = 0;
 
-  async function fresh() {
-    box.replaceChildren(h('div', { class: 'qrlogin-wait' }, t('viewer.loading')));
-    status.textContent = '';
+  /** A new code. When the old one runs out this is called by itself: the person sees the bar run down and a fresh code appear, never an "expired" page. */
+  async function fresh(auto = false) {
+    const mine = ++gen;
+    clearTimeout(timer);
+    if (!auto) { box.replaceChildren(h('div', { class: 'qrlogin-wait' }, t('viewer.loading'))); status.textContent = ''; }
     let s;
-    try { s = await api('POST', '/api/auth/qr/start'); } catch (e) { status.textContent = e.status === 0 ? t('net.offline') : errText(e.code); box.replaceChildren(retry()); return; }
-    if (!alive) return;
-    box.replaceChildren(qrCanvas(qrLink(s.token), 220), s.code ? h('div', { class: 'qrlogin-code', title: t('qrl.code_hint') }, h('small', { class: 'muted' }, t('qrl.code_label')), h('b', null, `${s.code.slice(0, 4)} ${s.code.slice(4)}`)) : null);
+    try { s = await api('POST', '/api/auth/qr/start'); } catch (e) { if (mine !== gen) return; status.textContent = e.status === 0 ? t('net.offline') : errText(e.code); box.replaceChildren(retry()); return; }
+    if (!alive || mine !== gen) return;
+    const total = Math.max(10_000, s.expires_in - 3000);
+    const bar = h('i');
+    bar.style.animationDuration = `${total}ms`;
+    box.replaceChildren(qrCanvas(qrLink(s.token), 220), h('div', { class: 'qr-timer', role: 'progressbar', 'aria-label': t('qrl.waiting') }, bar),
+      s.code ? h('div', { class: 'qrlogin-code', title: t('qrl.code_hint') }, h('small', { class: 'muted' }, t('qrl.code_label')), h('b', null, `${s.code.slice(0, 4)} ${s.code.slice(4)}`)) : null);
     status.textContent = t('qrl.waiting');
-    const until = Date.now() + s.expires_in - 3000;
+    until = Date.now() + total;
     const tick = async () => {
-      if (!alive) return;
-      if (Date.now() > until) { box.replaceChildren(retry()); status.textContent = t('qrl.expired'); return; }
+      if (!alive || mine !== gen) return;
+      if (Date.now() > until) { fresh(true); return; }
       try {
         const r = await api('GET', `/api/auth/qr/poll?token=${encodeURIComponent(s.token)}&secret=${encodeURIComponent(s.secret)}`);
+        if (mine !== gen) return;
         if (r.status === 'approved') { alive = false; onDone(r.user); return; }
         if (r.status === 'denied') { box.replaceChildren(retry()); status.textContent = errText(r.reason); return; }
-        if (r.status === 'expired') { box.replaceChildren(retry()); status.textContent = t('qrl.expired'); return; }
+        if (r.status === 'expired') { fresh(true); return; }
       } catch { /* a short network gap: the next tick tries again */ }
       timer = setTimeout(tick, 2000);
     };
     timer = setTimeout(tick, 1500);
   }
+  // a tab that was in the background wakes up with an old code: replace it at once
+  const wake = () => { if (alive && document.visibilityState === 'visible' && until && Date.now() > until - 2000) fresh(true); };
+  document.addEventListener('visibilitychange', wake);
   const retry = () => h('button', { class: 'btn secondary', type: 'button', onclick: () => fresh() }, t('qrl.refresh'));
 
   fresh();
-  return { node: h('div', { class: 'qrlogin' }, box, status, h('ol', { class: 'qrlogin-steps' }, h('li', null, t('qrl.step1')), h('li', null, t('qrl.step2')), h('li', null, t('qrl.step3')))), stop() { alive = false; clearTimeout(timer); } };
+  return { node: h('div', { class: 'qrlogin' }, box, status, h('ol', { class: 'qrlogin-steps' }, h('li', null, t('qrl.step1')), h('li', null, t('qrl.step2')), h('li', null, t('qrl.step3')))), stop() { alive = false; clearTimeout(timer); document.removeEventListener('visibilitychange', wake); } };
 }
 
 /** "Edge on Windows" out of a User-Agent string. */
