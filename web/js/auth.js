@@ -4,6 +4,8 @@ import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs } from './state.js';
 import { api } from './net.js';
 import { qrLoginPanel } from './qrlogin.js';
+/** A computer (a wide screen with a mouse): the QR code is on the sign-in screen at once, nothing to look for. */
+const wideScreen = () => matchMedia('(min-width: 900px) and (hover: hover)').matches;
 
 /** Invitation code from a link like /?invite=CODE (kept for the sign-up that follows). */
 function inviteCode() {
@@ -39,6 +41,7 @@ export async function showLogin(root, { onLoggedIn }) {
 
   function draw(message = '') {
     qrPanel?.stop(); qrPanel = null;
+    card.classList.remove('wide');
     const err = h('div', { class: 'err', role: 'alert' }, message);
     clear(card).append(h('img', { class: 'auth-logo', src: '/icon.svg?v=2', alt: '' }),
       h('h1', null, t(step === 'register' || step === 'regcode' ? 'login.reg_title' : 'login.title')));
@@ -63,7 +66,7 @@ export async function showLogin(root, { onLoggedIn }) {
       h('p', { class: 'muted' }, t('login.sub_pw')),
       field('lg', t('login.login'), user), field('pw', t('login.password'), pass),
       err, btn),
-      h('button', { class: 'btn secondary qr-signin', type: 'button', style: { width: '100%', marginTop: '10px' }, onclick: () => { step = 'qr'; draw(); } }, icon('qr', 20), h('span', null, t('qrl.signin'))),
+      ...(wideScreen() ? [(() => { card.classList.add('wide'); return h('div', { class: 'qrlogin-side' }, h('b', null, t('qrl.signin')), (qrPanel = qrLoginPanel(onLoggedIn)).node); })()] : [h('button', { class: 'btn secondary qr-signin', type: 'button', style: { width: '100%', marginTop: '10px' }, onclick: () => { step = 'qr'; draw(); } }, icon('qr', 20), h('span', null, t('qrl.signin')))]),
       h('button', { class: 'btn secondary', type: 'button', style: { width: '100%', marginTop: '10px' }, onclick: () => { step = 'register'; draw(); } }, t('login.signup')),
       ...(providers.email ? [link(t('login.forgot'), 'email')] : []));
       (login ? pass : user).focus();

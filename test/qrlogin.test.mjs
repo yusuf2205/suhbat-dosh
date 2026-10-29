@@ -57,3 +57,19 @@ test('an unknown code cannot be approved', async () => {
   const phone = await call('', 'POST', '/api/auth/register', { name: 'Qr2', username: 'qr_user2', password: 'longenough1' });
   assert.equal((await call(phone.cookie, 'POST', '/api/auth/qr/approve', { token: 'nope-nope-nope-nope' })).status, 404);
 });
+
+test('a computer without a camera: the phone types the short code instead of scanning', async () => {
+  const phone = await call('', 'POST', '/api/auth/register', { name: 'Qr3', username: 'qr_user3', password: 'longenough1' });
+  const st = (await call('', 'POST', '/api/auth/qr/start')).data;
+  assert.match(st.code, /^\d{8}$/);
+  const typed = `${st.code.slice(0, 4)} ${st.code.slice(4)}`;   // as the screen shows it, with a space
+  const info = await call(phone.cookie, 'GET', `/api/auth/qr/info?code=${encodeURIComponent(typed)}`);
+  assert.equal(info.status, 200);
+  assert.equal(info.data.token, st.token);
+  assert.equal((await call('', 'POST', '/api/auth/qr/approve', { code: st.code })).status, 401);   // only a signed-in phone
+  assert.equal((await call(phone.cookie, 'POST', '/api/auth/qr/approve', { code: '00000000' })).status, 404);
+  assert.equal((await call(phone.cookie, 'POST', '/api/auth/qr/approve', { code: typed })).status, 200);
+  const ok = await call('', 'GET', `/api/auth/qr/poll?token=${st.token}&secret=${st.secret}`);
+  assert.equal(ok.data.status, 'approved');
+  assert.equal(ok.data.user.username, 'qr_user3');
+});

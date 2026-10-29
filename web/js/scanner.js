@@ -30,15 +30,24 @@ function usernameFrom(text) {
 }
 
 export function openScanner() {
-  if (!navigator.mediaDevices?.getUserMedia) { toast(t('call.insecure'), 5000); return; }
+  const hasCamera = !!navigator.mediaDevices?.getUserMedia;
   const video = h('video', { class: 'scan-video', playsInline: true, muted: true, autoplay: true });
   video.muted = true;
   const hint = h('p', { class: 'muted', style: { textAlign: 'center' } }, t('scan.hint'));
   let stream = null;
   let alive = true;
-  const m = modal({ title: t('scan.title'), className: 'scan-modal', body: [h('div', { class: 'scan-frame' }, video, h('i', { class: 'scan-corners' })), hint], onClose: () => { alive = false; stream?.getTracks().forEach((x) => x.stop()); } });
+  const codeBox = h('input', { class: 'input scan-code', inputMode: 'numeric', autocomplete: 'off', maxLength: 9, placeholder: '0000 0000', 'aria-label': t('qrl.code_label') });
+  const codeGo = () => {
+    const digits = codeBox.value.replace(/\D/g, '');
+    if (digits.length !== 8) { codeBox.focus(); return; }
+    alive = false; m.close(); approveQrLogin({ code: digits });
+  };
+  codeBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); codeGo(); } });
+  const manual = h('div', { class: 'scan-manual' }, h('small', { class: 'muted' }, t('qrl.type_code')), h('div', { class: 'row' }, codeBox, h('button', { class: 'btn', type: 'button', onclick: codeGo }, t('qrl.code_go'))));
+  const m = modal({ title: t('scan.title'), className: 'scan-modal', body: [h('div', { class: 'scan-frame' }, video, h('i', { class: 'scan-corners' })), hint, manual], onClose: () => { alive = false; stream?.getTracks().forEach((x) => x.stop()); } });
 
   (async () => {
+    if (!hasCamera) { hint.textContent = t('call.cam_denied'); return; }
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false });
     } catch { hint.textContent = t('call.cam_denied'); return; }

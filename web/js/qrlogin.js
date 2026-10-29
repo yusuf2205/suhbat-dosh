@@ -29,7 +29,7 @@ export function qrLoginPanel(onDone) {
     let s;
     try { s = await api('POST', '/api/auth/qr/start'); } catch (e) { status.textContent = e.status === 0 ? t('net.offline') : errText(e.code); box.replaceChildren(retry()); return; }
     if (!alive) return;
-    box.replaceChildren(qrCanvas(qrLink(s.token), 240));
+    box.replaceChildren(qrCanvas(qrLink(s.token), 220), s.code ? h('div', { class: 'qrlogin-code', title: t('qrl.code_hint') }, h('small', { class: 'muted' }, t('qrl.code_label')), h('b', null, `${s.code.slice(0, 4)} ${s.code.slice(4)}`)) : null);
     status.textContent = t('qrl.waiting');
     const until = Date.now() + s.expires_in - 3000;
     const tick = async () => {
@@ -60,9 +60,10 @@ function deviceName(ua) {
 }
 
 /** On the signed-in phone: ask before letting the other screen in. */
-export async function approveQrLogin(token) {
+export async function approveQrLogin(tokenOrCode) {
   let info;
-  try { info = await api('GET', `/api/auth/qr/info?token=${encodeURIComponent(token)}`); } catch (e) { toast(e.code === 'qr_expired' || e.status === 404 ? t('qrl.expired') : errText(e.code)); return; }
+  const asCode = typeof tokenOrCode === 'object';
+  try { info = await api('GET', `/api/auth/qr/info?${asCode ? `code=${encodeURIComponent(tokenOrCode.code)}` : `token=${encodeURIComponent(tokenOrCode)}`}`); } catch (e) { toast(e.code === 'qr_expired' || e.status === 404 ? t('qrl.expired') : errText(e.code)); return; }
   const dev = deviceName(info.device);
   const m = modal({
     title: t('qrl.approve_title'),
@@ -74,7 +75,7 @@ export async function approveQrLogin(token) {
         h('button', { class: 'btn secondary', type: 'button', style: { flex: 1 }, onclick: () => m.close() }, t('common.cancel')),
         h('button', { class: 'btn', type: 'button', style: { flex: 1 }, onclick: async (e) => {
           e.currentTarget.disabled = true;
-          try { await api('POST', '/api/auth/qr/approve', { token }); toast(t('qrl.approved')); m.close(); } catch (ex) { toast(ex.code === 'qr_expired' ? t('qrl.expired') : errText(ex.code)); m.close(); }
+          try { await api('POST', '/api/auth/qr/approve', asCode ? { code: tokenOrCode.code } : { token: tokenOrCode }); toast(t('qrl.approved')); m.close(); } catch (ex) { toast(ex.code === 'qr_expired' ? t('qrl.expired') : errText(ex.code)); m.close(); }
         } }, t('qrl.allow'))),
     ],
   });

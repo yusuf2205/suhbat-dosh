@@ -2161,4 +2161,16 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .menu button.mi .ico { flex: none; color: var(--muted); }
 .menu button.mi.danger .ico { color: var(--danger); }
 .menu button.mi .mi-label { min-width: 0; }
+.qrlogin-or { text-align: center; margin: 14px 0 8px; }
+.qrlogin-code { display: grid; justify-items: center; gap: 2px; margin-top: 8px; }
+.qrlogin-code b { font-size: 1.5rem; letter-spacing: .14em; font-variant-numeric: tabular-nums; }
+.scan-manual { display: grid; gap: 6px; margin-top: 10px; }
+.scan-manual .row { display: flex; gap: 8px; }
+.scan-code { flex: 1; text-align: center; font-size: 1.2rem; letter-spacing: .12em; }
+/* a computer: the password form on the left, the QR code to scan on the right, both in sight at once */
+.auth-card.wide { width: min(780px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 36px; align-items: start; }
+.auth-card.wide > * { grid-column: 1; }
+.auth-card.wide > .qrlogin-side { grid-column: 2; grid-row: 1 / span 9; align-self: center; display: grid; gap: 8px; justify-items: center; text-align: center; padding-left: 30px; border-left: 1px solid var(--line); }
+.qrlogin-side .qrlogin-steps { text-align: left; font-size: .84rem; padding-left: 18px; margin: 4px 0 0; }
+@media (max-width: 899px) { .auth-card.wide { display: block; width: min(420px, 100%); } }
 
