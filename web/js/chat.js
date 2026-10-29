@@ -1759,18 +1759,18 @@ function chatMoreMenu(anchor) {
       : { label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
     { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
-    { label: t('sched.title'), onClick: () => openScheduled(c.id) },
-    { label: t('theme.title'), onClick: () => openChatTheme(c) },
+    ...(featureOn('scheduled') ? [{ label: t('sched.title'), onClick: () => openScheduled(c.id) }] : []),
+    ...(featureOn('chattheme') ? [{ label: t('theme.title'), onClick: () => openChatTheme(c) }] : []),
     ...(!isSecret(c) && featureOn('digest') ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
     ...(featureOn('tasks') ? [{ label: t('task.title'), onClick: () => openTasks() }] : []),
     ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
       if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
       setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages(); renderHeader();
     } }] : []),
-    ...(c.type === 'direct' || c.my_role !== 'member' ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
-    { label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) },
+    ...(featureOn('autodelete') && (c.type === 'direct' || c.my_role !== 'member') ? [{ label: `${t('ttl.title')}: ${ttlLabel(c.ttl)}`, onClick: () => ttlMenu(anchor, c) }] : []),
+    ...(featureOn('chatsound') ? [{ label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) }] : []),
     ...(c.type === 'group' ? [
-      ...(!c.imported ? [{ label: t('room.title'), onClick: () => joinGroupCall(c.id, false, { room: true }) }] : []),
+      ...(!c.imported && featureOn('rooms') ? [{ label: t('room.title'), onClick: () => joinGroupCall(c.id, false, { room: true }) }] : []),
       { label: t('gcall.audio'), onClick: () => joinGroupCall(c.id, false) },
       { label: t('gcall.video'), onClick: () => joinGroupCall(c.id, true) },
     ] : []),
@@ -1778,7 +1778,7 @@ function chatMoreMenu(anchor) {
     { label: t('media.title'), onClick: () => openMediaPanel(c.id) },
     { label: t('chat.select_msgs'), onClick: () => enterSelect(null) },
     { label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
-    { label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) },
+    ...(featureOn('chatexport') ? [{ label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) }] : []),
     ...(lockedChat(c) ? [] : [{ label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) }]),
   ];
   if (isSecret(c)) items.unshift({ label: t('secret.title'), onClick: () => showSecretInfo(c) });
