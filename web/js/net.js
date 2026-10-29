@@ -96,8 +96,9 @@ export function wsSend(obj) {
   return true;
 }
 
-export function sendTyping(chatId) {
-  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: CLIENT_EVENTS.TYPING, chat_id: chatId }));
+/** "I am writing" (no action), or what else is going on: 'voice' / 'video' / 'file'; 'stop' ends it at once. */
+export function sendTyping(chatId, action) {
+  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: CLIENT_EVENTS.TYPING, chat_id: chatId, ...(action ? { action } : {}) }));
 }
 
 window.addEventListener('online', () => {

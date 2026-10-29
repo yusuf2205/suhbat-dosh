@@ -44,5 +44,5 @@ export const EVENTS = {
   CALL_ENDED: 'call.ended',
 };
 
-// Client -> server WebSocket messages: { type: 'typing', chat_id }
+// Client -> server WebSocket messages: { type: 'typing', chat_id, action? } (action: 'voice' | 'video' | 'file' | 'stop'; none = writing text)
 export const CLIENT_EVENTS = { TYPING: 'typing', PING: 'ping' };

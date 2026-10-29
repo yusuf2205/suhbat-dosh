@@ -436,15 +436,22 @@ export function renderGroupCallBar(c = activeChat()) {
 function typingUsers(c) {
   return [...(S.typing.get(c.id)?.keys() ?? [])];
 }
+/** What the others are doing now: the most telling activity wins (a voice message over typing). */
+function typingAction(c) {
+  const acts = [...(S.typingAct.get(c.id)?.values() ?? [])];
+  return ['voice', 'video', 'file'].find((a) => acts.includes(a)) || 'typing';
+}
+const ACT_TEXT = { typing: 'chat.typing', voice: 'chat.rec_voice', video: 'chat.rec_video', file: 'chat.sending_file' };
 function subtitleLive(c) {
   return typingUsers(c).length > 0 || (c.type === 'direct' && c.peer?.online);
 }
 function subtitle(c) {
   const typers = typingUsers(c);
   if (typers.length) {
-    if (c.type === 'direct') return t('chat.typing');
+    const act = typingAction(c);
+    if (c.type === 'direct') return t(ACT_TEXT[act]);
     const names = typers.map((id) => shownName(c, id, S.users.get(id)?.name)).filter(Boolean);
-    return `${names.join(', ')} ${typers.length > 1 ? t('chat.typing_many') : t('chat.typing')}`;
+    return `${names.join(', ')} ${typers.length > 1 && act === 'typing' ? t('chat.typing_many') : t(ACT_TEXT[act])}`;
   }
   if (c.type === 'direct' && !c.saved) {
     if (c.peer?.is_bot) return t('bots.label');
@@ -554,7 +561,11 @@ function renderComposer() {
       { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
-        const r = await recordVideoNote();
+        let ping = 0;
+        const r = await recordVideoNote({ onRecording: (on) => {   // the other side sees "recording a video…" while the circle is recorded
+          clearInterval(ping);
+          if (on) { sendTyping(chatId, 'video'); ping = setInterval(() => sendTyping(chatId, 'video'), 2500); } else sendTyping(chatId, 'stop');
+        } });
         if (r) uploadFile(chatId, r.blob, `circle.${r.ext}`, { duration: r.duration });
       } },
     ].filter((it, i) => !(isSecret(c) && i > 0))) }, icon('plus', 22)),
@@ -824,6 +835,11 @@ async function uploadFile(chatId, blob, name, { voice = false, duration = null, 
   replyTo = null;
   renderComposer();
   const task = enqueueUpload({ userId: S.me.id, chatId: c.id, blob: sendBlob, name: sendName, opts, id: uuid() });
+  if (!voice && !secret) {
+    // "sending a file…" for the other side while it travels (a voice message has its own sign)
+    const live = new Set(['preparing', 'uploading', 'queued', 'waiting']);
+    const ping = setInterval(() => { if (!live.has(task.state)) { clearInterval(ping); sendTyping(c.id, 'stop'); } else if (task.state === 'uploading') sendTyping(c.id, 'file'); }, 2500);
+  }
   // the message appears at once, with its progress card
   bucket(c.id).list.push(pendingUploadMessage(task));
   if (S.active === c.id) { renderMessages(); scrollBottom(); }
@@ -951,6 +967,7 @@ async function startRecording(hs) {
   rec.timer = setInterval(() => {
     if (!rec || rec.mr !== mr) return;
     rec.duration = (Date.now() - rec.started) / 1000;
+    if (Date.now() - (rec.pinged || 0) > 2500) { rec.pinged = Date.now(); sendTyping(rec.chatId, 'voice'); }
     if (rec.analyser) {
       rec.analyser.getByteTimeDomainData(rec.buf);
       let peak = 0;
@@ -982,8 +999,10 @@ function updateRecBar() {
   if (time) time.textContent = formatDuration(rec.duration);
   const bars = view.recbar.querySelectorAll('.rec-wave i');
   const tail = rec.peaks.slice(-bars.length);
+  const now = Date.now();
   bars.forEach((el, i) => {
-    const v = tail[i - (bars.length - tail.length)];
+    // no measured loudness (an iPhone records without an audio graph): a lively wave, only for the eyes, never stored
+    const v = rec.analyser ? tail[i - (bars.length - tail.length)] : 0.18 + 0.5 * Math.abs(Math.sin(now / 170 + i * 0.55)) * (0.65 + 0.35 * Math.sin(now / 470 + i * 0.3));
     el.style.height = `${Math.round(4 + (v ?? 0) * 26)}px`;
   });
 }
@@ -1003,6 +1022,7 @@ function closeRecorder(rerender = true) {
   rec = null;
   holdState = null;
   clearInterval(r.timer);
+  if (r.pinged) sendTyping(r.chatId, 'stop');
   r.state = 'discard';
   try { if (r.mr.state !== 'inactive') r.mr.stop(); } catch { /* ignore */ }
   r.stream.getTracks().forEach((tr) => tr.stop());
@@ -1156,7 +1176,14 @@ function renderMessages() {
     want.push(entry);
   }
   if (typingUsers(c).length) {
-    want.push(keyed('typing', () => h('div', { class: 'msg in typing-row' }, h('div', { class: 'bubble typing-dots', 'aria-label': t('chat.typing') }, h('span'), h('span'), h('span')))));
+    const act = typingAction(c);
+    // the picture says what is going on: dots (writing), an equalizer (a voice message), a red dot (a video), arrows (a file)
+    want.push(keyed(`typing-${act}`, () => h('div', { class: 'msg in typing-row' },
+      h('div', { class: `bubble typing-dots act-${act}`, 'aria-label': t(ACT_TEXT[act]) },
+        act === 'voice' ? [icon('mic', 16), h('span', { class: 'eq' }, h('i'), h('i'), h('i'), h('i'), h('i'))]
+          : act === 'video' ? [h('span', { class: 'rec-live' }), h('span', { class: 'act-label' }, t('chat.rec_video'))]
+            : act === 'file' ? [h('span', { class: 'up-arrows' }, h('i'), h('i'), h('i'))]
+              : [h('span'), h('span'), h('span')]))));
   }
   // reconcile without detaching unchanged nodes (keeps audio/video playing)
   const list = view.list;

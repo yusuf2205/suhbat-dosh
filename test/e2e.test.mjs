@@ -197,6 +197,13 @@ test('full messenger flow', async (t) => {
   await t.test('typing indicator', async () => {
     alice.ws.send(JSON.stringify({ type: 'typing', chat_id: chat.id }));
     await bob.waitFor('typing', (e) => e.user_id === alice.user.id);
+    // what the person is doing travels along: a voice message, a video, a file; anything else counts as writing
+    alice.ws.send(JSON.stringify({ type: 'typing', chat_id: chat.id, action: 'voice' }));
+    assert.equal((await bob.waitFor('typing', (e) => e.user_id === alice.user.id && e.action === 'voice')).action, 'voice');
+    alice.ws.send(JSON.stringify({ type: 'typing', chat_id: chat.id, action: 'stop' }));
+    await bob.waitFor('typing', (e) => e.user_id === alice.user.id && e.action === 'stop');
+    alice.ws.send(JSON.stringify({ type: 'typing', chat_id: chat.id, action: '<script>' }));
+    await bob.waitFor('typing', (e) => e.user_id === alice.user.id && e.action === 'typing');
   });
 
   await t.test('edit, react, reply, pin, delete', async () => {

@@ -76,7 +76,7 @@ export function attach(server, h) {
         return;
       }
       if (m?.type === CLIENT_EVENTS.PING) ws.send('{"type":"pong"}');
-      else if (m?.type === CLIENT_EVENTS.TYPING && Number.isInteger(m.chat_id)) hooks.onTyping(ws.userId, m.chat_id);
+      else if (m?.type === CLIENT_EVENTS.TYPING && Number.isInteger(m.chat_id)) hooks.onTyping(ws.userId, m.chat_id, m.action);
       else if (typeof m?.type === 'string' && m.type.startsWith('call.')) hooks.onSignal?.(ws.userId, m);
       else if (typeof m?.type === 'string' && m.type.startsWith('gcall.')) hooks.onGroupSignal?.(ws.userId, m);
     });

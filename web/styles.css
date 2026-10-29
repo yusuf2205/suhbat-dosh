@@ -2137,3 +2137,22 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
   .msg .bubble .msg-text, .msg .bubble .linkify { -webkit-user-select: none; user-select: none; }
 }
 .send-btn { -webkit-touch-callout: none; }
+/* what the other person is doing: a voice message (an equalizer), a round video (a red dot), a file (arrows) */
+.typing-dots.act-voice, .typing-dots.act-video, .typing-dots.act-file { gap: 8px; padding: 10px 16px; color: var(--brand-text); }
+.typing-dots.act-voice span, .typing-dots.act-video span, .typing-dots.act-file span { width: auto; height: auto; border-radius: 0; background: none; animation: none; }
+.typing-dots .eq, .typing-dots.act-voice .eq { display: inline-flex; align-items: center; gap: 3px; width: auto; height: 20px; }
+.eq i { width: 3px; height: 100%; border-radius: 2px; background: currentColor; transform: scaleY(.25); animation: eq-bar .9s infinite ease-in-out; }
+.eq i:nth-child(2) { animation-delay: .12s; } .eq i:nth-child(3) { animation-delay: .24s; } .eq i:nth-child(4) { animation-delay: .36s; } .eq i:nth-child(5) { animation-delay: .48s; }
+@keyframes eq-bar { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
+.rec-live { display: inline-block !important; width: 10px !important; height: 10px !important; border-radius: 50% !important; background: var(--danger) !important; animation: pulse 1s infinite !important; }
+.act-label { font-size: .85rem; color: var(--muted); }
+.up-arrows { display: inline-flex; gap: 2px; }
+.up-arrows i { font-style: normal; font-weight: 800; animation: up-arrow 1s infinite ease-in-out; }
+.up-arrows i::before { content: '91'; }
+.up-arrows i:nth-child(2) { animation-delay: .15s; } .up-arrows i:nth-child(3) { animation-delay: .3s; }
+@keyframes up-arrow { 0%, 100% { transform: translateY(3px); opacity: .35; } 50% { transform: translateY(-3px); opacity: 1; } }
+/* the microphone breathes while a voice message is recorded */
+.composer.recording .send-btn { animation: rec-ring 1.3s infinite; }
+@keyframes rec-ring { 0% { box-shadow: 0 0 0 0 rgba(214, 69, 61, .55); } 100% { box-shadow: 0 0 0 16px rgba(214, 69, 61, 0); } }
+@media (prefers-reduced-motion: reduce) { .eq i, .up-arrows i, .composer.recording .send-btn { animation: none; } .eq i { transform: scaleY(.7); } }
+

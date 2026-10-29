@@ -218,6 +218,7 @@ async function onWs(ev) {
         if (!here) c.unread += 1;
         // typing indicator ends when the message lands
         S.typing.get(c.id)?.delete(m.sender_id);
+        S.typingAct.get(c.id)?.delete(m.sender_id);
       }
       upsert(c.id, m);
       notify(c, m);
@@ -279,8 +280,12 @@ async function onWs(ev) {
     case EVENTS.TYPING: {
       let map = S.typing.get(ev.chat_id);
       if (!map) S.typing.set(ev.chat_id, (map = new Map()));
+      let acts = S.typingAct.get(ev.chat_id);
+      if (!acts) S.typingAct.set(ev.chat_id, (acts = new Map()));
       clearTimeout(map.get(ev.user_id));
-      map.set(ev.user_id, setTimeout(() => { map.delete(ev.user_id); renderTyping(); }, 4500));
+      if (ev.action === 'stop') { map.delete(ev.user_id); acts.delete(ev.user_id); renderTyping(); break; }
+      acts.set(ev.user_id, ev.action || 'typing');
+      map.set(ev.user_id, setTimeout(() => { map.delete(ev.user_id); acts.delete(ev.user_id); renderTyping(); }, 4500));
       if (!S.users.has(ev.user_id)) {
         api('GET', `/api/users/${ev.user_id}`).then((r) => { S.users.set(r.user.id, r.user); renderTyping(); }).catch(() => {});
       }

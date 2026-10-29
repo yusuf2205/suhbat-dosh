@@ -232,9 +232,11 @@ attach(server, {
     q.run('UPDATE users SET last_seen = ? WHERE id = ?', now(), userId);
     broadcastPresence(userId);
   },
-  onTyping(userId, chatId) {
+  onTyping(userId, chatId, action) {
     if (!membership(chatId, userId)) return;
-    emit(memberIds(chatId).filter((x) => x !== userId), { type: EVENTS.TYPING, chat_id: chatId, user_id: userId });
+    // what the person is doing: writing, recording a voice message or a round video, sending a file; "stop" ends it at once
+    const act = ['voice', 'video', 'file', 'stop'].includes(action) ? action : 'typing';
+    emit(memberIds(chatId).filter((x) => x !== userId), { type: EVENTS.TYPING, chat_id: chatId, user_id: userId, action: act });
   },
 });
 

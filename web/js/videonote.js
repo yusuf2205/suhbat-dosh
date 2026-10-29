@@ -16,7 +16,7 @@ function pickMime() {
 }
 
 /** Opens the recorder. Resolves with { blob, ext, duration } or null when cancelled. */
-export function recordVideoNote() {
+export function recordVideoNote({ onRecording } = {}) {
   return new Promise((resolve) => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast(t('voice.unsupported')); resolve(null); return; }
     let stream = null;
@@ -48,6 +48,7 @@ export function recordVideoNote() {
     function end(value) {
       if (finished) return;
       finished = true;
+      onRecording?.(false);
       clearInterval(timer);
       try { if (mr && mr.state !== 'inactive') { mr.onstop = null; mr.stop(); } } catch { /* ignore */ }
       stopStream();
@@ -83,6 +84,7 @@ export function recordVideoNote() {
       try { mr = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 1_000_000, audioBitsPerSecond: 64_000 }); } catch (e) { showMediaProblem(e, 'call.no_media'); end(null); return; }
       mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       mr.onstop = () => {
+        onRecording?.(false);
         clearInterval(timer);
         const type = mr.mimeType || mime || 'video/webm';
         const blob = new Blob(chunks, { type });
@@ -101,6 +103,7 @@ export function recordVideoNote() {
       };
       started = Date.now();
       mr.start(500);
+      onRecording?.(true);
       recBtn.classList.add('on');
       hint.textContent = t('vnote.tap_stop');
       timer = setInterval(() => {

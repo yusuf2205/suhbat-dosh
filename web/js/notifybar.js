@@ -52,7 +52,7 @@ export function notifyBar() {
         } else p.action.run();
       } }, p.action.label)
       : null;
-    clear(bar).append(h('span', { class: 'notify-text' }, `\u{1F514} ${p.text}`), act, h('button', { class: 'btn link', type: 'button', onclick: () => { snooze(); bar.hidden = true; } }, t('nb.later')));
+    clear(bar).append(...[h('span', { class: 'notify-text' }, `\u{1F514} ${p.text}`), act, h('button', { class: 'btn link', type: 'button', onclick: () => { snooze(); bar.hidden = true; } }, t('nb.later'))].filter(Boolean));
     bar.hidden = false;
   }
   update();

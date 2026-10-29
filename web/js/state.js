@@ -8,6 +8,7 @@ export const S = {
   members: new Map(),      // chatId -> [{ user, role, can_send, banned }]
   users: new Map(),        // userId -> public user (cache for sender names)
   typing: new Map(),       // chatId -> Map(userId -> timeoutId)
+  typingAct: new Map(),    // chatId -> Map(userId -> 'typing' | 'voice' | 'video' | 'file')
   build: null,             // build id of the client currently running
   net: 'connecting',       // connecting | online | offline
   view: 'chats',           // chats | contacts | archive
