@@ -64,19 +64,25 @@ export function startIndexer() {
   setTimeout(tick, 1500).unref();
 }
 
-semantic.get('/search/semantic', async (req, res) => {
-  if (!rateLimit(`sem:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'slow_down');
-  const term = str(String(req.query.q ?? ''), 'q', { min: 3, max: 200 });
-  const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
+/**
+ * The messages closest in meaning to a question: [{ score, id }], best first. `userId` limits it to what that person may read;
+ * without it everything is searched (the administrator's console, which writes its own journal entry).
+ */
+export async function rankByMeaning(term, { chatId, userId, limit = 20 } = {}) {
   if (!(await embedderAvailable())) throw new HttpError(503, 'semantic_unavailable');
   let qv;
   try { [qv] = await embed([term], 'query'); } catch { throw new HttpError(502, 'semantic_failed'); }
-  const rows = q.all(
-    `SELECT e.message_id AS id, e.vec FROM embeddings e JOIN messages m ON m.id = e.message_id
-     JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
-     WHERE m.id > mb.cleared_before ${chatId !== undefined ? 'AND m.chat_id = ?' : ''}`,
-    ...(chatId !== undefined ? [req.user.id, chatId] : [req.user.id]),
-  );
+  const rows = userId !== undefined
+    ? q.all(
+      `SELECT e.message_id AS id, e.vec FROM embeddings e JOIN messages m ON m.id = e.message_id
+       JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
+       WHERE m.id > mb.cleared_before ${chatId !== undefined ? 'AND m.chat_id = ?' : ''}`,
+      ...(chatId !== undefined ? [userId, chatId] : [userId]),
+    )
+    : q.all(
+      `SELECT e.message_id AS id, e.vec FROM embeddings e JOIN messages m ON m.id = e.message_id ${chatId !== undefined ? 'WHERE m.chat_id = ?' : ''}`,
+      ...(chatId !== undefined ? [chatId] : []),
+    );
   const scored = [];
   for (const r of rows) {
     const v = fromBlob(r.vec);
@@ -86,12 +92,20 @@ semantic.get('/search/semantic', async (req, res) => {
     scored.push([dot, r.id]);
   }
   scored.sort((a, b) => b[0] - a[0]);
+  return { ranked: scored.slice(0, limit).map(([score, id]) => ({ score: Math.round(score * 1000) / 1000, id })), indexed: rows.length };
+}
+
+semantic.get('/search/semantic', async (req, res) => {
+  if (!rateLimit(`sem:${req.user.id}`, 30, 60_000)) throw new HttpError(429, 'slow_down');
+  const term = str(String(req.query.q ?? ''), 'q', { min: 3, max: 200 });
+  const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
+  const { ranked, indexed } = await rankByMeaning(term, { chatId, userId: req.user.id });
   const out = [];
-  for (const [score, id] of scored.slice(0, 20)) {
+  for (const { score, id } of ranked) {
     const m = q.get('SELECT * FROM messages WHERE id = ?', id);
-    if (m) out.push({ score: Math.round(score * 1000) / 1000, message: messageOut(m) });
+    if (m) out.push({ score, message: messageOut(m) });
   }
-  res.json({ results: out, indexed: rows.length, at: now() });
+  res.json({ results: out, indexed, at: now() });
 });
 
 semantic.get('/search/semantic/status', async (req, res) => {

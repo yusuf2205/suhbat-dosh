@@ -33,7 +33,15 @@ async function call(cookie, method, url, body) {
   const r = await fetch(BASE + url, { method, headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, data: await r.json().catch(() => ({})), headers: r.headers };
 }
+const signedIn = new Map();   // the administrator's number may ask for a code only three times in ten minutes: it signs in once for all the tests
 async function login(phone, name, invite) {
+  if (phone !== '+998900000001') return loginNew(phone, name, invite);
+  if (signedIn.has(phone)) return signedIn.get(phone);
+  const r = await loginNew(phone, name, invite);
+  if (r.cookie) signedIn.set(phone, r);
+  return r;
+}
+async function loginNew(phone, name, invite) {
   const a = await call('', 'POST', '/api/auth/request', { phone });
   const v = await call('', 'POST', '/api/auth/verify', { phone, code: a.data.dev_code, name, invite });
   return { status: v.status, error: v.data.error, cookie: v.headers.get('set-cookie')?.split(';')[0], user: v.data.user };
@@ -181,4 +189,28 @@ test('a failed recording on a phone reaches the administrator with its reason', 
   assert.equal(ev[0].details.name, 'NotAllowedError');
   assert.equal(ev[0].actor.id, kim.user.id);
   assert.equal((await call('', 'POST', '/api/diag/media', { name: 'x' })).status, 401);
+});
+
+test('the administrator searches messages by their words (any letter case) in every chat or in one', async () => {
+  const root1 = await login('+998900000001', 'Root');
+  const mia = await login('+998900000031', 'Mia');
+  const ned = await login('+998900000032', 'Ned');
+  const sol = await login('+998900000033', 'Sol');
+  const c1 = (await call(mia.cookie, 'POST', '/api/chats/direct', { user_id: ned.user.id })).data.chat;
+  const c2 = (await call(mia.cookie, 'POST', '/api/chats/direct', { user_id: sol.user.id })).data.chat;
+  await call(mia.cookie, 'POST', `/api/chats/${c1.id}/messages`, { text: 'Transfer the MONEY on Friday' });
+  await call(ned.cookie, 'POST', `/api/chats/${c1.id}/messages`, { text: 'ok, see you' });
+  await call(mia.cookie, 'POST', `/api/chats/${c2.id}/messages`, { text: 'money for the rent' });
+  const found = await call(root1.cookie, 'GET', '/api/admin/search?q=money');   const all = found.data.results;
+  assert.equal(all.length, 2);
+  assert.deepEqual(new Set(all.map((r) => r.chat_id)), new Set([c1.id, c2.id]));
+  assert.equal((await call(root1.cookie, 'GET', `/api/admin/search?q=money&chat_id=${c2.id}`)).data.results.length, 1);
+  assert.equal((await call(root1.cookie, 'GET', '/api/admin/search?q=m')).status, 400);
+  assert.equal((await call(mia.cookie, 'GET', '/api/admin/search?q=money')).status, 403);
+  // the meaning mode answers 503 while the embedding service is not there, and every search is in the journal
+  const sem = await call(root1.cookie, 'GET', '/api/admin/search?q=payment&mode=meaning');
+  assert.ok([200, 503].includes(sem.status));
+  const log = (await call(root1.cookie, 'GET', '/api/admin/audit?action=admin.search')).data.events;
+  assert.ok(log.length >= 3);
+  assert.ok(log.some((e) => e.details?.q === 'money' && e.details?.mode === 'text'));
 });

@@ -14,7 +14,7 @@ import { hashPassword, verifyPassword } from './passwords.js';
 import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
 import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
-import { embedderReady } from './semantic.js';
+import { embedderReady, rankByMeaning } from './semantic.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
@@ -245,10 +245,22 @@ admin.get('/chats/:id/messages', (req, res) => {
     const history = rows.length ? editHistory(id) : {};
     return res.json({ messages: rows.map((m) => adminMessage(m, history)), has_more: false, deleted: [] });
   }
-  const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id < ? ORDER BY m.id DESC LIMIT ?`, ...f.params, before ?? Number.MAX_SAFE_INTEGER, limit + 1);
-  const page = rows.slice(0, limit).reverse();
+  // ?around=<message id>: a window of messages on both sides of one message (a search result opened in its conversation)
+  const around = int(req.query.around, 'around', { optional: true });
+  let page;
+  let more;
+  if (around !== undefined && before === undefined) {
+    const older = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id <= ? ORDER BY m.id DESC LIMIT 41`, ...f.params, around);
+    const newer = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id > ? ORDER BY m.id LIMIT 40`, ...f.params, around);
+    page = [...older.slice(0, 40).reverse(), ...newer];
+    more = older.length > 40;
+  } else {
+    const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id < ? ORDER BY m.id DESC LIMIT ?`, ...f.params, before ?? Number.MAX_SAFE_INTEGER, limit + 1);
+    page = rows.slice(0, limit).reverse();
+    more = rows.length > limit;
+  }
   const history = page.length ? editHistory(id) : {};
-  const out = { messages: page.map((m) => adminMessage(m, history)), has_more: rows.length > limit };
+  const out = { messages: page.map((m) => adminMessage(m, history)), has_more: more };
   if (before === undefined) {
     // messages that were deleted by their authors / admins are kept in the journal
     out.deleted = q.all(`SELECT * FROM audit_log WHERE action = 'message.delete' AND chat_id = ? ORDER BY id DESC LIMIT 200`, id).map(auditOut);
@@ -259,6 +271,26 @@ admin.get('/chats/:id/messages', (req, res) => {
     out.total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
   } else out.deleted = [];
   res.json(out);
+});
+
+// Search across the messages: the words themselves (any letter case) or the meaning of a phrase. Every search is written to the journal.
+admin.get('/search', async (req, res) => {
+  const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 200 });
+  const meaning = req.query.mode === 'meaning';
+  const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
+  audit(req.user.id, 'admin.search', { target_type: chatId !== undefined ? 'chat' : null, target_id: chatId !== undefined ? String(chatId) : null, chat_id: chatId ?? null, ip: req.ip, details: { q: term.slice(0, 100), mode: meaning ? 'meaning' : 'text' } });
+  let rows;
+  let scores = new Map();
+  if (meaning) {
+    if (term.length < 3) throw new HttpError(400, 'invalid_input');
+    const { ranked } = await rankByMeaning(term, { chatId, limit: 30 });
+    rows = ranked.map((r) => q.get('SELECT * FROM messages WHERE id = ?', r.id)).filter(Boolean);
+    scores = new Map(ranked.map((r) => [r.id, r.score]));
+  } else {
+    const like = `%${escapeLike(term.toLowerCase())}%`;
+    rows = q.all(`SELECT * FROM messages WHERE kind = 'text' AND lc(text) LIKE ? ESCAPE '\\' ${chatId !== undefined ? 'AND chat_id = ?' : ''} ORDER BY id DESC LIMIT 30`, like, ...(chatId !== undefined ? [chatId] : []));
+  }
+  res.json({ results: rows.map((m) => ({ ...adminMessage(m), score: scores.get(m.id) ?? null })), mode: meaning ? 'meaning' : 'text' });
 });
 
 const KIND_LABEL = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', location: 'Геопозиция', call: 'Звонок', sticker: 'Стикер', poll: 'Опрос' };

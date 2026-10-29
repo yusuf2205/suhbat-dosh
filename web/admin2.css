@@ -260,4 +260,8 @@ td .btn.secondary.small + .btn.secondary.small { margin-left: 6px; }
   .ud-act span { display: none; }
   .ud-act { padding: 0 12px; }
 }
+.abub-score { justify-self: start; font-size: .7rem; padding: 1px 8px; border-radius: 999px; background: rgba(0, 0, 0, .08); }
+@keyframes abub-hl { 0%, 60% { box-shadow: 0 0 0 4px rgba(251, 199, 0, .85); } 100% { box-shadow: 0 1px 4px rgba(0, 0, 0, .06); } }
+.abub.abub-hl { animation: abub-hl 2.6s ease-out; }
+.ud-chat.find .ud-cm small:nth-of-type(1) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 

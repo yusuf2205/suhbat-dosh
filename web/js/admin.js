@@ -101,7 +101,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -153,6 +153,7 @@ function describe(ev) {
     case 'call.quality':
       out.push(h('div', null, `RTT ${d.rtt_ms ?? '—'} мс (макс ${d.rtt_max_ms ?? '—'}) · потери ${d.loss_pct ?? '—'}% · джиттер ${d.jitter_ms ?? '—'} мс · ${d.width ?? '?'}×${d.height ?? '?'}@${d.fps ?? '?'} · ${d.kbps_in ?? '—'}/${d.kbps_out ?? '—'} кбит/с · ${d.codec || '?'}${d.relay ? ' · через TURN' : ' · напрямую'} · режим ${d.quality_mode || '—'} · переподключений ${d.reconnects ?? 0}`));
       break;
+    case 'admin.search': out.push(h('div', null, `«${d.q || ''}» · ${d.mode === 'meaning' ? 'по смыслу' : 'по словам'}`)); break;
     case 'client.media_error': out.push(h('div', null, `${d.where || ''}: ${d.name || ''}${d.message ? ` — ${d.message}` : ''}${d.mime ? ` (${d.mime})` : ''}`), h('div', { class: 'muted' }, deviceName(d.ua))); break;
     case 'call.end': out.push(h('div', null, `${d.video ? 'видео' : 'аудио'} · ${d.status}${d.duration ? ` · ${d.duration} с` : ''}`)); break;
     default:
@@ -457,9 +458,9 @@ const fold = (title, count, ...body) => h('details', { class: 'panel fold' },
   h('summary', null, h('span', { class: 'fold-t' }, title), count !== null && count !== undefined ? h('span', { class: 'fold-n' }, String(count)) : null, h('span', { class: 'fold-go', 'aria-hidden': 'true' }, icon('chevron', 18))),
   h('div', { class: 'fold-body' }, ...body));
 
-async function openUser(id) {
-  setTab('users', false);
-  const [d, ev] = await Promise.all([get(`/api/admin/users/${id}`), get(`/api/admin/audit?actor=${id}&limit=100`)]);
+async function showUser(id) {
+  showTab('users', false);
+  const d = await get(`/api/admin/users/${id}`);
   const u = d.user;
   const run = (label, fn, after) => async () => {
     if (label && !(await askConfirm(label))) return;
@@ -479,6 +480,7 @@ async function openUser(id) {
           u.online ? h('span', { class: 'pill ok' }, 'в сети') : h('span', { class: 'pill' }, `был(а) ${fmtShort(u.last_seen)}`),
           u.banned_at ? h('span', { class: 'pill warn', title: u.ban_reason || '' }, 'заблокирован') : null))),
     h('div', { class: 'ud-actions' },
+      act('list', 'Журнал', 'secondary', () => { state.preset = { actor: id }; setTab('journal'); }, 'Действия этого пользователя в журнале'),
       act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
       u.is_bot ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
       h('span', { class: 'ud-sp' }),
@@ -494,7 +496,7 @@ async function openUser(id) {
   // chats: the most useful part, right under the top
   const typeName = { direct: 'личный', group: 'группа', channel: 'канал' };
   const chatsPanel = h('section', { class: 'panel' }, h('h2', null, `Чаты · ${d.chats.length}`),
-    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', onclick: () => openChat(c.id, () => openUser(id)) },
+    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', onclick: () => openChat(c.id) },
       h('span', { class: `ud-ci ${c.type}`, 'aria-hidden': 'true' }, (c.title || '#').slice(0, 1).toUpperCase()),
       h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || `#${c.id}`),
         h('small', { class: 'muted ellipsis' }, `${typeName[c.type] || c.type}${c.role && c.role !== 'member' ? ` · ${c.role}` : ''} · с ${fmtShort(c.joined_at)}`)),
@@ -524,18 +526,19 @@ async function openUser(id) {
         h('td', { class: 'ev-time', title: `создана ${fmtDT(s.created_at)}` }, fmtShort(s.last_active)),
         h('td', null, s.revoked ? h('span', { class: 'pill' }, 'завершена') : h('span', { class: 'pill ok' }, 'активна'))))))));
 
-  const journal = fold('Журнал действий', ev.events.length, eventsTable(ev.events));
-
   setView(
-    h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('users'); } }, '← Пользователи')),
-    head, chatsPanel, profile, sessions, storage, journal,
+    backCrumb('#/users', '← Пользователи'),
+    head, chatsPanel, profile, sessions, storage,
   );
 }
 
 async function viewChats() {
   const { chats } = await loadDirectories();
   const body = h('tbody');
-  const search = h('input', { class: 'input', type: 'search', placeholder: 'Название чата или имя собеседника' });
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Название чата или слова из сообщений', 'aria-label': 'Поиск' });
+  let mode = 'text';
+  const modeChips = [['text', 'По словам'], ['meaning', '✨ По смыслу']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === mode), onclick: () => { mode = k; modeChips.forEach((b, i) => b.setAttribute('aria-pressed', String(i === (k === 'text' ? 0 : 1)))); findMessages(); } }, l));
+  const found = h('section', { class: 'panel', hidden: true });
   const draw = () => {
     const t = search.value.trim().toLowerCase();
     clear(body).append(...chats.filter((c) => !t || (c.title || '').toLowerCase().includes(t)).map((c) =>
@@ -545,11 +548,38 @@ async function viewChats() {
         h('td', null, String(c.members)), h('td', null, String(c.messages)),
         h('td', null, c.owner ? c.owner.name : '—'), h('td', { class: 'ev-time' }, fmtDT(c.last_message_at)))));
   };
-  search.addEventListener('input', draw);
+  // messages: by the words, or by meaning
+  let seq = 0;
+  async function findMessages() {
+    const term = search.value.trim();
+    const mine = ++seq;
+    if (term.length < (mode === 'meaning' ? 3 : 2)) { found.hidden = true; return; }
+    found.hidden = false;
+    clear(found).append(h('p', { class: 'muted' }, 'Ищу…'));
+    let r;
+    try { r = await get(`/api/admin/search?mode=${mode}&q=${encodeURIComponent(term)}`); } catch (e) {
+      if (mine !== seq) return;
+      clear(found).append(h('p', { class: 'muted' }, e.status === 503 || /503|semantic_unavailable/.test(String(e.message)) ? 'Поиск по смыслу сейчас недоступен: служба не запущена. Работает поиск по словам.' : errMsg(e)));
+      return;
+    }
+    if (mine !== seq) return;
+    clear(found).append(h('h2', null, `Сообщения · ${r.results.length}`),
+      r.results.length ? h('div', { class: 'ud-chats' }, r.results.map((m) => h('button', { class: 'ud-chat find', type: 'button', onclick: () => openChat(m.chat_id, m.id) },
+        h('span', { class: 'ud-cm' },
+          h('b', { class: 'ellipsis' }, state.chats.get(m.chat_id)?.title || `#${m.chat_id}`),
+          h('small', { class: 'ellipsis' }, m.text),
+          h('small', { class: 'muted ellipsis' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`)),
+        m.score != null ? h('span', { class: 'ud-cn', title: 'насколько близко по смыслу' }, `${Math.round(m.score * 100)}%`) : null,
+        h('span', { class: 'ud-go', 'aria-hidden': 'true' }, icon('chevron', 16))))) : h('p', { class: 'muted' }, 'Ничего не найдено'));
+  }
+  let timer = 0;
+  search.addEventListener('input', () => { draw(); clearTimeout(timer); timer = setTimeout(findMessages, 450); });
   draw();
-  setView(h('div', { class: 'toolbar' }, search),
+  setView(h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
+    found,
     h('div', { class: 'panel tablewrap' }, h('table', { class: 't' },
       h('thead', null, h('tr', null, ['Чат', 'Тип', 'Участников', 'Сообщений', 'Владелец', 'Последняя активность'].map((x) => h('th', null, x)))), body)));
+  search.focus();
 }
 
 const DAY_FMT = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -569,6 +599,7 @@ function messageNode(m, ctx, prev) {
   const showName = !sameAuthor && (!mine || ctx.group);
   const name = m.sender && !ctx.imported ? userLink(m.sender.id) : h('b', null, authorOf(m));
   nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}`, dataset: { id: String(m.id) } },
+    m.score != null ? h('div', { class: 'abub-score', title: 'насколько близко по смыслу' }, `${Math.round(m.score * 100)}%`) : '',
     showName ? h('div', { class: 'abub-who' }, name) : '',
     m.forward_from ? h('div', { class: 'abub-quote' }, `Переслано от ${m.forward_from}`) : '',
     m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', m.reply_to.text) : '',
@@ -620,11 +651,12 @@ function openLightbox(imgs, start) {
   show();
 }
 
-async function openChat(id, back = null) {   // back: where the crumb and Esc lead (the user page we came from)
-  setTab(back ? 'users' : 'chats', false);
-  const f = { q: '', kind: '', author: '', since: '', until: '' };
-  const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([, v]) => v !== '' && v !== undefined && v !== null)).toString();
-  const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?limit=100`)]);
+async function showChat(id, focus = null) {   // focus: a message to scroll to (a search result)
+  showTab(state.tab === 'users' ? 'users' : 'chats', false);
+  const f = { q: '', kind: '', author: '', since: '', until: '', meaning: false };
+  let jumpMode = !!focus;   // a part of the conversation around a message, or search results: the live feed is off
+  const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([k, v]) => k !== 'meaning' && v !== '' && v !== undefined && v !== null)).toString();
+  const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?${focus ? `around=${focus}` : 'limit=100'}`)]);
   const info = first[0];
   let hist = first[1];
   const list = h('div', { class: 'aconv' });
@@ -711,7 +743,24 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
 
   // search and filters
   const active = () => !!(f.q || f.kind || f.author || f.since || f.until);
+  const meaningBtn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', title: 'Искать по смыслу, а не по словам: «деньги» найдёт и «перевод на карту»', onclick: () => { f.meaning = !f.meaning; paintTools(); if (f.q) reload(); } }, '✨ По смыслу');
   const reload = async () => {
+    if (f.meaning && f.q.length >= 3) {
+      // by meaning: the closest messages first, whatever words they use
+      try {
+        const r = await get(`/api/admin/search?mode=meaning&q=${encodeURIComponent(f.q)}&chat_id=${id}`);
+        all = r.results.map((x) => ({ ...x, score: x.score }));
+        hist = { ...hist, total: all.length };
+        more = false; moreBtn.hidden = true; jumpMode = true;
+        paintHeading(); paintTools(); draw(); stick = false;
+        list.closest('.panel')?.scrollIntoView({ block: 'start' });
+      } catch (e) {
+        notify(e.status === 503 || /503|semantic_unavailable/.test(String(e.message)) ? 'Поиск по смыслу сейчас недоступен: служба не запущена. Работает поиск по словам.' : errMsg(e));
+        f.meaning = false; paintTools();
+      }
+      return;
+    }
+    jumpMode = false;
     hist = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100 })}`);
     all = [...hist.messages];
     more = hist.has_more; moreBtn.hidden = !more;
@@ -727,12 +776,13 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
   const since = h('input', { class: 'as-date', type: 'date', 'aria-label': 'С даты', onchange: (e) => { f.since = String(day(e.target.value, false)); reload(); } });
   const until = h('input', { class: 'as-date', type: 'date', 'aria-label': 'По дату', onchange: (e) => { f.until = String(day(e.target.value, true)); reload(); } });
   const clearBtn = h('button', { class: 'chip reset', type: 'button', hidden: true, onclick: () => {
-    Object.assign(f, { q: '', kind: '', author: '', since: '', until: '' });
+    Object.assign(f, { q: '', kind: '', author: '', since: '', until: '', meaning: false });
     search.value = ''; authorSel.value = ''; since.value = ''; until.value = '';
     reload();
   } }, '✕ Сбросить');
   function paintTools() {
     chips.forEach((b, i) => b.setAttribute('aria-pressed', String(CHAT_KINDS[i][0] === f.kind)));
+    meaningBtn.setAttribute('aria-pressed', String(f.meaning));
     clearBtn.hidden = !active();
   }
   const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
@@ -741,7 +791,7 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
   const tools = h('div', { class: 'achat-tools' },
     h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), exportMenu),
-    h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips)),
+    h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
     h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn));
 
   // a message: copy its text or its number; and a way back to the newest
@@ -753,7 +803,7 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
     try { await navigator.clipboard.writeText(text); btn.textContent = '✓'; } catch { btn.textContent = '!'; }
     setTimeout(() => { btn.textContent = btn.dataset.what === 'id' ? '№' : '⧉'; }, 1200);
   });
-  const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { stick = true; toEnd(); } }, '↓');
+  const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { if (jumpMode) { if (focus) go(`#/chat/${id}`); else reload(); } else { stick = true; toEnd(); } } }, '↓');
   document.body.append(jump);
   const showJump = () => {
     if (!list.isConnected) { jump.remove(); return; }
@@ -765,7 +815,7 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
   // live: new messages appear by themselves (when no filter is on); the view stays on the end if it was there
   const live = setInterval(async () => {
     if (!list.isConnected) { clearInterval(live); return; }
-    if (document.visibilityState !== 'visible' || f.q || f.kind || f.author || f.since || f.until) return;
+    if (document.visibilityState !== 'visible' || jumpMode || f.q || f.kind || f.author || f.since || f.until) return;
     try {
       const last = [...all].reverse().find((m) => typeof m.id === 'number');
       const r = await get(`/api/admin/chats/${id}/messages?after=${last ? last.id : 0}&limit=100`);
@@ -783,7 +833,7 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
   paintHeading();
   draw();
   setView(
-    h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (back) back(); else setTab('chats'); } }, back ? '← Назад' : '← Чаты')),
+    backCrumb('#/chats', '← Чаты'),
     h('div', { class: 'panel' }, h('h2', null, c.title || state.chats.get(id)?.title || `Чат #${id}`),
       h('p', { class: 'muted' }, `${c.type} · создан ${fmtDT(c.created_at)}${c.description ? ` · ${c.description}` : ''}`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
@@ -799,6 +849,15 @@ async function openChat(id, back = null) {   // back: where the crumb and Esc le
           h('td', null, e.details?.author ? userLink(e.details.author) : '—'), h('td', { class: 'ev-time' }, fmtDT(e.details?.sent_at)),
           h('td', null, e.details?.text || (e.details?.file ? `[файл ${e.details.file.name}]` : '')))))))) : '',
   );
+  if (focus) {
+    // a search result: the conversation opens on that message and marks it
+    stick = false;
+    requestAnimationFrame(() => {
+      const el = bubbleOf(focus);
+      if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('abub-hl'); setTimeout(() => el.classList.remove('abub-hl'), 2600); }
+    });
+    return;
+  }
   requestAnimationFrame(() => { toEnd(); setTimeout(() => { if (stick) toEnd(); }, 300); });
 }
 
@@ -810,6 +869,7 @@ async function viewJournal() {
     [['message', 'Сообщения'], ['profile', 'Профиль'], ['auth', 'Вход/выход'], ['chat', 'Чаты'], ['user', 'Блокировки/регистрации'], ['session', 'Сессии'], ['admin', 'Действия админа']]
       .map(([v, l]) => h('option', { value: v }, l)));
   if (state.preset?.action) action.value = state.preset.action;
+  if (state.preset?.actor) actor.value = String(state.preset.actor);
   state.preset = null;
   const since = h('input', { class: 'input', type: 'datetime-local', 'aria-label': 'С' });
   const until = h('input', { class: 'input', type: 'datetime-local', 'aria-label': 'По' });
@@ -1183,12 +1243,45 @@ let navEl;
 let titleEl;
 let subEl;
 
-function setTab(tab, render = true) {
+function showTab(tab, render = true) {
   state.tab = tab;
   navEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === tab)));
   titleEl.textContent = TABS[tab][0];
   subEl.textContent = TABS[tab][2];
   if (render) VIEWS[tab]().then(applyDynamicStyles).catch((e) => setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)));
+}
+
+// ---------------------------------------------------------------- navigation: every screen has an address, so "Back" (the browser, the phone) steps out of it
+const depth = () => history.state?.d ?? 0;
+/** Open an address; the same one again only redraws it (after a change). */
+function go(hash) {
+  if (location.hash === hash) return route();
+  history.pushState({ d: depth() + 1 }, '', hash);
+  return route();
+}
+async function route() {
+  const hsh = location.hash || '#/overview';
+  const u = /^#\/user\/(\d+)$/.exec(hsh);
+  const c = /^#\/chat\/(\d+)(?:\/(\d+))?$/.exec(hsh);
+  const t = /^#\/([a-z]+)$/.exec(hsh);
+  try {
+    if (u) await showUser(Number(u[1]));
+    else if (c) await showChat(Number(c[1]), c[2] ? Number(c[2]) : null);
+    else showTab(t && TABS[t[1]] ? t[1] : 'overview');
+  } catch (e) { setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)); }
+}
+window.addEventListener('popstate', route);
+const setTab = (tab) => go(`#/${tab}`);
+const openUser = (id) => go(`#/user/${id}`);
+const openChat = (id, focus) => go(`#/chat/${id}${focus ? `/${focus}` : ''}`);
+function startRouting() {
+  history.replaceState({ d: 0 }, '', location.hash || '#/overview');
+  route();
+}
+/** "← Back": one step back through what was opened (the same as the browser's Back); a way to the list when this page was opened directly. */
+function backCrumb(fallback, label) {
+  const inside = depth() > 0;
+  return h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (depth() > 0) history.back(); else go(fallback); } }, inside ? '← Назад' : label));
 }
 
 /** Administrator sign-in: login + password (no SMS code). */
@@ -1248,6 +1341,6 @@ async function boot() {
     h('div', { class: 'adm-main' },
       h('header', { class: 'adm-head' }, h('div', null, titleEl, subEl), h('div', { class: 'adm-head-r' }, clock)),
       view)));
-  setTab('overview');
+  startRouting();
 }
 boot();
