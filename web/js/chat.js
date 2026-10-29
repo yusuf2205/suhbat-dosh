@@ -1511,6 +1511,7 @@ function messageMenu(anchor, m) {
   const c = activeChat();
   const mine = m.sender_id === S.me.id;
   const items = [];
+  const more = [];   // rarely needed: under "More"
   if (m.pending || m.failed) {
     items.push({
       label: t('msg.delete'), danger: true, onClick: () => {
@@ -1524,14 +1525,14 @@ function messageMenu(anchor, m) {
   if (c.can_post) {
     items.push({ label: t('msg.reply'), onClick: () => { replyTo = m; editing = null; renderComposer(); view.ta.focus(); } });
   }
-  if (m.replies > 0 && typeof m.id === 'number') items.push({ label: `${t('msg.thread')} (${m.replies})`, onClick: () => openThread(m, c) });
-  if (Object.keys(m.reactions || {}).length) items.push({ label: t('react.who'), onClick: () => openReactors(m) });
+  if (m.replies > 0 && typeof m.id === 'number') more.push({ label: `${t('msg.thread')} (${m.replies})`, onClick: () => openThread(m, c) });
+  if (Object.keys(m.reactions || {}).length) more.push({ label: t('react.who'), onClick: () => openReactors(m) });
   if (m.text) items.push({ label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
-  if (m.text && m.kind === 'text') items.push({ label: t('msg.translate'), onClick: () => translateMessage(m) });
+  if (m.text && m.kind === 'text') more.push({ label: t('msg.translate'), onClick: () => translateMessage(m) });
   items.push({ label: t('msg.forward'), onClick: () => openForward(m) });
   if (!isSecret(c) && typeof m.id === 'number' && !c.saved && m.kind !== 'call') {
     // bookmark = a copy in "Saved messages"
-    items.push({ label: t('msg.bookmark'), onClick: async () => {
+    more.push({ label: t('msg.bookmark'), onClick: async () => {
       try {
         const saved = (await api('POST', '/api/chats/saved')).chat;
         S.chats.set(saved.id, saved);
@@ -1541,20 +1542,20 @@ function messageMenu(anchor, m) {
     } });
   }
   if (m.file && !isSecret(c) && typeof m.id === 'number') {
-    if (c.saved) items.push({ label: t('sv.share'), onClick: () => shareMessageFile(m) });
-    if (mine) items.push({ label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
+    if (c.saved) more.push({ label: t('sv.share'), onClick: () => shareMessageFile(m) });
+    if (mine) more.push({ label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
   }
   if (m.file) {
     items.push({ label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });
   }
   if (m.kind === 'image' && m.file && navigator.clipboard?.write && window.ClipboardItem) {
-    items.push({ label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
+    more.push({ label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
   }
-  if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') items.push({ label: t('readers.title'), onClick: () => openReaders(m) });
+  if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') more.push({ label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
-    if (!mine) items.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
-    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) items.push(...(featureOn('tasks') ? [{ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
-    items.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
+    if (!mine) more.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) more.push(...(featureOn('tasks') ? [{ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
+    more.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
   if (mine && c.can_post && !lockedChat(c) && (m.kind === 'text' || m.file)) {
@@ -1580,8 +1581,7 @@ function messageMenu(anchor, m) {
     });
   }
   if ((mine || (c.type !== 'direct' && adminLike)) && !lockedChat(c)) {
-    // right under the reactions / reply / copy rows, so it is visible without scrolling the menu
-    items.splice(Math.min(items.length, 3), 0, {
+    items.push({
       label: t('msg.delete'), danger: true, onClick: async () => {
         if (await confirmDialog(t('msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true })) {
           api('DELETE', `/api/messages/${m.id}`).catch((e) => toast(errText(e.code)));
@@ -1589,6 +1589,7 @@ function messageMenu(anchor, m) {
       },
     });
   }
+  if (more.length) items.push({ label: t('msg.more_actions'), onClick: () => popMenu(anchor, more) });
   popMenu(anchor, items);
 }
 
@@ -1776,7 +1777,6 @@ function chatMoreMenu(anchor) {
     ] : []),
     { label: t('chat.profile'), onClick: toggleInfo },
     { label: t('media.title'), onClick: () => openMediaPanel(c.id) },
-    { label: t('chat.select_msgs'), onClick: () => enterSelect(null) },
     { label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
     ...(featureOn('chatexport') ? [{ label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) }] : []),
     ...(lockedChat(c) ? [] : [{ label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) }]),

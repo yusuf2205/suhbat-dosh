@@ -188,7 +188,7 @@ export function popMenu(anchor, items) {
     if (!el.contains(e.target)) { closeMenu(); document.removeEventListener('mousedown', off, true); }
   };
   setTimeout(() => document.addEventListener('mousedown', off, true), 0);
-  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeMenu(); anchor.focus?.(); } });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); anchor.focus?.(); } });   // Esc closes the menu only, never the chat behind it
 }
 
 // ---------------------------------------------------------------- misc

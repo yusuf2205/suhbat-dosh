@@ -526,7 +526,7 @@ document.addEventListener('keydown', (e) => {
     const i = ids.indexOf(S.active);
     const next = e.key === 'ArrowDown' ? Math.min(ids.length - 1, i + 1) : Math.max(0, i === -1 ? 0 : i - 1);
     openChat(ids[next]);
-  } else if (e.key === 'Escape' && S.active && !document.querySelector('.overlay, .menu, .call-overlay, .once-view')) {
+  } else if (e.key === 'Escape' && !e.defaultPrevented && S.active && !document.querySelector('.overlay, .menu, .call-overlay, .once-view')) {
     if (document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value) return;
     closeChat();
   }
