@@ -107,7 +107,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)', 'admin.integrity_run': 'запустил проверку записи данных (админ)', 'admin.export_data': 'выгрузил данные (админ)', 'admin.export_link': 'создал ссылку на выгрузку (админ)', 'admin.export_revoke': 'отозвал ссылку на выгрузку (админ)', 'export.download': 'скачали выгрузку по ссылке',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)', 'admin.integrity_run': 'запустил проверку записи данных (админ)', 'admin.export_data': 'выгрузил данные (админ)', 'admin.export_link': 'создал ссылку на выгрузку (админ)', 'admin.export_revoke': 'отозвал ссылку на выгрузку (админ)', 'export.download': 'скачали выгрузку по ссылке', 'export.view': 'открыли ссылку на выгрузку', 'admin.export_extend': 'продлил ссылку на выгрузку (админ)',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -446,17 +446,26 @@ async function viewUsers() {
 const FORMAT_CHOICES = [['zip-media', 'Архив ZIP с файлами', { format: 'zip', media: true }], ['zip', 'Архив ZIP (только переписка)', { format: 'zip', media: false }], ['html', 'Страница (.html)', { format: 'html' }], ['txt', 'Текст (.txt)', { format: 'txt' }], ['json', 'Данные (.json)', { format: 'json' }]];
 const TTL_CHOICES = [['1', '1 час'], ['24', '1 день'], ['168', '7 дней'], ['720', '30 дней'], ['2160', '90 дней']];
 const COUNT_CHOICES = [['1', 'один раз'], ['3', '3 раза'], ['10', '10 раз'], ['', 'без ограничения']];
+const VIEW_CHOICES = [['', 'без ограничения'], ['1', 'один раз'], ['3', '3 раза'], ['10', '10 раз']];
 const linkUrl = (token) => `${location.origin}/x/${token}`;
-const LINK_STATUS = { active: ['ok', 'действует'], expired: ['', 'срок вышел'], used: ['', 'скачано'], revoked: ['warn', 'отозвана'] };
+const LINK_STATUS = { active: ['ok', 'действует'], expired: ['', 'срок вышел'], used: ['', 'использована'], revoked: ['warn', 'отозвана'] };
 
 /** The window of an export: what to give, in which form, and for how long/how many times/with which password. `scope`: 'chat' or 'user'. */
 function openExportDialog({ scope, id, title }) {
   const done = () => { document.removeEventListener('keydown', key, true); box.remove(); };
   const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(); } };
   const sel = (label, choices, value) => h('label', { class: 'xd-f' }, h('span', null, label), h('select', { class: 'as-select' }, choices.map(([v, l]) => h('option', { value: v, selected: v === value }, l))));
-  const fmt = sel('Что выдать', FORMAT_CHOICES.map(([v, l]) => [v, l]), 'zip-media');
+  const fmt = sel('Как скачать', FORMAT_CHOICES.map(([v, l]) => [v, l]), scope === 'message' ? 'zip-media' : 'zip-media');
   const ttl = sel('Ссылка действует', TTL_CHOICES, '24');
-  const cnt = sel('Скачать можно', COUNT_CHOICES, '3');
+  const cnt = sel('Скачать можно', COUNT_CHOICES, '');
+  const opens = sel('Открыть можно', VIEW_CHOICES, '');
+  const box1 = (label, on, hint) => { const i = h('input', { type: 'checkbox', checked: on }); return { i, node: h('label', { class: 'xd-chk' }, i, h('span', null, label, hint ? h('small', { class: 'muted' }, hint) : null)) }; };
+  const cView = box1('Показать на странице сразу', true, 'фото, видео, голосовое, текст: получатель видит то, что ждал');
+  const cDl = box1('Разрешить скачивание', true, 'выключите, если нужно только посмотреть');
+  const cHide = box1('Скрыть имена и название чата', false);
+  const cNotify = box1('Сообщить мне, когда откроют', false);
+  const syncDl = () => { fmt.querySelector('select').disabled = !cDl.i.checked; cnt.querySelector('select').disabled = !cDl.i.checked; };
+  cDl.i.addEventListener('change', syncDl);
   const since = h('input', { class: 'as-date', type: 'date', 'aria-label': 'С даты' });
   const until = h('input', { class: 'as-date', type: 'date', 'aria-label': 'По дату' });
   const pass = h('input', { class: 'input', type: 'text', placeholder: 'Пароль (необязательно)', autocomplete: 'off', maxLength: 100, 'aria-label': 'Пароль' });
@@ -467,20 +476,26 @@ function openExportDialog({ scope, id, title }) {
     const day = (v, end) => (v ? String(new Date(`${v}T${end ? '23:59:59.999' : '00:00:00'}`).getTime()) : '');
     return { scope, scope_id: id, format: c.format, media: !!c.media, since: day(since.value, false), until: day(until.value, true) };
   };
+  const options = () => {
+    const dl = cDl.i.checked;
+    return { view: cView.i.checked, allow_download: dl, hide_names: cHide.i.checked, notify: cNotify.i.checked, max_views: val(opens) === '' ? null : Number(val(opens)), max_downloads: !dl || val(cnt) === '' ? null : Number(val(cnt)) };
+  };
   const body = h('div', { class: 'xd-body' });
   const err = h('div', { class: 'err', role: 'alert' });
   const form = () => {
     clear(body).append(
-      h('h3', null, 'Выгрузка'), h('p', { class: 'muted' }, title),
+      h('h3', null, 'Ссылка и выгрузка'), h('p', { class: 'muted' }, title),
+      h('div', { class: 'xd-checks' }, cView.node, cDl.node, cHide.node, cNotify.node),
       fmt,
-      h('div', { class: 'xd-f' }, h('span', null, 'За период (необязательно)'), h('div', { class: 'row' }, since, h('span', { class: 'at-lab' }, '—'), until)),
-      h('div', { class: 'xd-split' }, ttl, cnt), pass, note, err,
+      scope === 'message' ? h('span', { hidden: true }) : h('div', { class: 'xd-f' }, h('span', null, 'За период (необязательно)'), h('div', { class: 'row' }, since, h('span', { class: 'at-lab' }, '—'), until)),
+      h('div', { class: 'xd-split' }, ttl, opens), cnt, pass, note, err,
       h('div', { class: 'adlg-btns xd-btns' },
         h('button', { class: 'btn secondary', type: 'button', onclick: done }, 'Закрыть'),
-        h('a', { class: 'btn secondary', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/exports/now?${new URLSearchParams(spec())}`; } }, 'Скачать сейчас'),
+        h('a', { class: 'btn secondary', href: '#', title: 'Скачать себе, без ссылки', onclick: (e) => { e.currentTarget.href = `/api/admin/exports/now?${new URLSearchParams(spec())}`; } }, 'Скачать себе'),
         h('button', { class: 'btn', type: 'button', onclick: async (e) => {
           e.currentTarget.disabled = true; err.textContent = '';
-          try { const r = await send('POST', '/api/admin/exports', { ...spec(), hours: Number(val(ttl)), max_downloads: val(cnt) === '' ? null : Number(val(cnt)), password: pass.value, note: note.value }); created(r.link); } catch (x) { err.textContent = errMsg(x); e.currentTarget.disabled = false; }
+          if (!cView.i.checked && !cDl.i.checked) { err.textContent = 'Включите хотя бы одно: показать на странице или разрешить скачивание'; e.currentTarget.disabled = false; return; }
+          try { const r = await send('POST', '/api/admin/exports', { ...spec(), ...options(), hours: Number(val(ttl)), password: pass.value, note: note.value }); created(r.link); } catch (x) { err.textContent = errMsg(x); e.currentTarget.disabled = false; }
         } }, 'Создать ссылку')));
   };
   const created = (l) => {
@@ -491,7 +506,7 @@ function openExportDialog({ scope, id, title }) {
       h('h3', null, 'Ссылка готова'), h('p', { class: 'muted' }, l.title),
       h('div', { class: 'row xd-row' }, field, copy),
       h('div', { class: 'xd-qr' }, qrCanvas(url, 150, { logo: false, animate: false })),
-      h('p', { class: 'muted' }, `Действует до ${fmtDT(l.expires_at)} · скачать ${l.max_downloads === null ? 'можно сколько угодно раз' : `можно ${l.max_downloads} ${l.max_downloads === 1 ? 'раз' : 'раза'}`}${l.password ? ' · нужен пароль' : ''}. Ссылку можно отозвать в разделе «Доступ и рассылка».`),
+      h('p', { class: 'muted' }, `${l.view ? 'Откроется страница с содержимым' : 'Страница с кнопкой «Скачать»'}${l.view && l.max_views ? ` (открыть можно ${l.max_views} ${l.max_views === 1 ? 'раз' : 'раза'})` : ''}. ${l.allow_download ? `Скачать ${l.max_downloads === null ? 'можно сколько угодно раз' : `можно ${l.max_downloads} ${l.max_downloads === 1 ? 'раз' : 'раза'}`}` : 'Скачивание отключено'}${l.password ? ' · нужен пароль' : ''}${l.hide_names ? ' · имена скрыты' : ''}. Действует до ${fmtDT(l.expires_at)}. Ссылку можно отозвать в разделе «Доступ и рассылка».`),
       h('div', { class: 'adlg-btns' }, h('button', { class: 'btn', type: 'button', onclick: () => { done(); if (state.tab === 'access') setTab('access'); } }, 'Готово')));
     field.select();
   };
@@ -510,15 +525,17 @@ async function exportsPanel() {
     clear(box).append(h('h2', null, icon('download', 18), 'Ссылки на выгрузки'),
       h('p', { class: 'muted' }, 'Выгрузка одного сообщения, сообщений чата или всего, что написал пользователь, отдаётся ссылкой с ограничениями: сколько действует, сколько раз можно скачать, пароль. Создаётся там, где вы смотрите переписку: у сообщения кнопка ⇪, на странице чата меню «Скачать», на странице пользователя «Выгрузить».'),
       d.links.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't compact' },
-        h('thead', null, h('tr', null, ['Что', 'Вид', 'Скачано', 'Действует до', 'Статус', ''].map((x) => h('th', null, x)))),
+        h('thead', null, h('tr', null, ['Что', 'Вид', 'Открыто', 'Скачано', 'До', 'Статус', ''].map((x) => h('th', null, x)))),
         h('tbody', null, d.links.map((l) => h('tr', null,
           h('td', null, h('b', null, l.title), l.note ? h('small', { class: 'muted' }, ` · ${l.note}`) : null),
-          h('td', null, `${l.format.toUpperCase()}${l.media ? ' + файлы' : ''}${l.password ? ' 🔒' : ''}`),
-          h('td', null, `${l.downloads}${l.max_downloads === null ? '' : ` из ${l.max_downloads}`}`),
+          h('td', null, [l.view ? '👁 ' : '', l.allow_download ? `⬇ ${l.format.toUpperCase()}${l.media ? '+файлы' : ''}` : 'без скачивания', l.password ? ' 🔒' : '', l.hide_names ? ' 🎭' : ''].join('')),
+          h('td', { title: l.last_view_at ? `последний раз ${fmtDT(l.last_view_at)}` : '' }, l.view ? `${l.views}${l.max_views === null ? '' : ` из ${l.max_views}`}` : '—'),
+          h('td', null, l.allow_download ? `${l.downloads}${l.max_downloads === null ? '' : ` из ${l.max_downloads}`}` : '—'),
           h('td', { class: 'ev-time' }, fmtShort(l.expires_at)),
           h('td', null, h('span', { class: `pill ${LINK_STATUS[l.status][0]}` }, LINK_STATUS[l.status][1])),
           h('td', { class: 'br-actions' },
             l.status === 'active' ? h('button', { class: 'btn small secondary', type: 'button', onclick: async (e) => { try { await navigator.clipboard.writeText(linkUrl(l.token)); e.currentTarget.textContent = '✓'; } catch { notify(linkUrl(l.token), 9000); } } }, 'Копировать') : null,
+            l.status !== 'revoked' ? h('button', { class: 'btn small secondary', type: 'button', title: 'Продлить на сутки', onclick: async () => { try { await send('PATCH', `/api/admin/exports/${l.id}`, { extend_hours: 24 }); } catch (e) { notify(errMsg(e)); } paint(); } }, '+1 день') : null,
             l.status === 'active' ? h('button', { class: 'btn small danger-o', type: 'button', onclick: async () => { if (!(await askConfirm(`Отозвать ссылку «${l.title}»? Она сразу перестанет работать.`, 'Отозвать'))) return; try { await send('DELETE', `/api/admin/exports/${l.id}`); } catch (e) { notify(errMsg(e)); } paint(); } }, 'Отозвать') : null)))))) : h('p', { class: 'muted' }, 'Ссылок пока нет.'));
   }
   await paint();

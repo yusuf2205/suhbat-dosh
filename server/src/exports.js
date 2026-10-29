@@ -2,7 +2,10 @@
 // The administrator downloads it at once or gives a link that works for a limited time and a limited number of times, optionally with a password.
 import express from 'express';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { q } from './db.js';
+import { config } from './config.js';
+import { alert } from './ops.js';
 import { HttpError, int, now, rateLimit, rid, str } from './util.js';
 import { filePath } from './files.js';
 import { audit, getUser } from './service.js';
@@ -165,26 +168,39 @@ export async function streamExport(res, spec) {
 }
 
 // ---------------------------------------------------------------- links
-const link = (r) => ({
-  id: r.id, token: r.token, scope: r.scope, scope_id: r.scope_id, title: r.title, format: r.format, media: !!r.media, since: r.since, until: r.until, note: r.note,
-  created_at: r.created_at, expires_at: r.expires_at, max_downloads: r.max_downloads, downloads: r.downloads, password: !!r.pass_hash, revoked_at: r.revoked_at, last_download_at: r.last_download_at,
-  status: r.revoked_at ? 'revoked' : r.expires_at <= now() ? 'expired' : r.max_downloads !== null && r.downloads >= r.max_downloads ? 'used' : 'active',
-});
+const link = (r) => {
+  const viewUsed = r.max_views !== null && r.views >= r.max_views;
+  const dlUsed = r.max_downloads !== null && r.downloads >= r.max_downloads;
+  return {
+    id: r.id, token: r.token, scope: r.scope, scope_id: r.scope_id, title: r.title, format: r.format, media: !!r.media, since: r.since, until: r.until, note: r.note,
+    created_at: r.created_at, expires_at: r.expires_at, password: !!r.pass_hash, revoked_at: r.revoked_at,
+    view: !!r.view, allow_download: !!r.allow_download, hide_names: !!r.hide_names, notify: !!r.notify,
+    max_downloads: r.max_downloads, downloads: r.downloads, last_download_at: r.last_download_at, max_views: r.max_views, views: r.views, first_view_at: r.first_view_at, last_view_at: r.last_view_at,
+    // a page with content is over when it was opened as often as allowed; a download-only link, when it was downloaded as often as allowed
+    status: r.revoked_at ? 'revoked' : r.expires_at <= now() ? 'expired' : (r.view ? viewUsed : dlUsed) ? 'used' : 'active',
+    downloads_left: r.allow_download && !dlUsed ? (r.max_downloads === null ? null : r.max_downloads - r.downloads) : 0,
+  };
+};
 
+const limitOf = (v, name) => (v === null || v === undefined || v === '' ? null : int(v, name, { min: 1, max: 10000 }));
 export function createLink(adminId, b) {
   const scope = b.scope === 'user' ? 'user' : b.scope === 'message' ? 'message' : 'chat';
   const scopeId = int(b.scope_id, 'scope_id');
   const about = describeScope(scope, scopeId);
   const format = FORMATS[b.format] ? b.format : 'zip';
   const hours = Math.min(90 * 24, Math.max(1, Math.round(Number(b.hours) || 24)));
-  const max = b.max_downloads === null || b.max_downloads === undefined || b.max_downloads === '' ? null : int(b.max_downloads, 'max_downloads', { min: 1, max: 10000 });
   const pass = typeof b.password === 'string' && b.password ? str(b.password, 'password', { min: 4, max: 100 }) : null;
+  const view = b.view === true || b.view === 1;
+  const allow = b.allow_download === undefined ? true : b.allow_download === true || b.allow_download === 1;
+  if (!view && !allow) throw new HttpError(400, 'invalid_input');   // a link must show something or give something
   const token = rid(24);
   const since = b.since ? int(b.since, 'since', { min: 0 }) : null;
   const until = b.until ? int(b.until, 'until', { min: 0 }) : null;
   q.run(
-    'INSERT INTO export_links (token, scope, scope_id, title, format, media, since, until, note, created_by, created_at, expires_at, max_downloads, pass_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    token, scope, scopeId, about.title, format, format === 'zip' && b.media ? 1 : 0, since, until, str(String(b.note ?? ''), 'note', { max: 200 }), adminId, now(), now() + hours * 3600_000, max, pass ? hashPassword(pass) : null,
+    `INSERT INTO export_links (token, scope, scope_id, title, format, media, since, until, note, created_by, created_at, expires_at, max_downloads, pass_hash, view, allow_download, max_views, hide_names, notify)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    token, scope, scopeId, about.title, format, format === 'zip' && b.media ? 1 : 0, since, until, str(String(b.note ?? ''), 'note', { max: 200 }), adminId, now(), now() + hours * 3600_000,
+    limitOf(b.max_downloads, 'max_downloads'), pass ? hashPassword(pass) : null, view ? 1 : 0, allow ? 1 : 0, limitOf(b.max_views, 'max_views'), b.hide_names ? 1 : 0, b.notify ? 1 : 0,
   );
   return link(q.get('SELECT * FROM export_links WHERE token = ?', token));
 }
@@ -193,36 +209,148 @@ export function revokeLink(id) {
   const r = q.run('UPDATE export_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL', now(), id);
   if (!r.changes) throw new HttpError(404, 'not_found');
 }
+/** A link that is about to run out can be given more time (from now, or from its end if that is later). */
+export function extendLink(id, hours) {
+  const h = Math.min(90 * 24, Math.max(1, Math.round(Number(hours) || 24)));
+  const r = q.get('SELECT * FROM export_links WHERE id = ? AND revoked_at IS NULL', id);
+  if (!r) throw new HttpError(404, 'not_found');
+  q.run('UPDATE export_links SET expires_at = ? WHERE id = ?', Math.max(now(), r.expires_at) + h * 3600_000, id);
+  return link(q.get('SELECT * FROM export_links WHERE id = ?', id));
+}
 
-// ---------------------------------------------------------------- the public side: a page and a download, no account needed
+// ---------------------------------------------------------------- the public side: no account needed
 export const exportsPublic = express.Router();
 const WHEN = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Tashkent', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-const page = (res, status, body) => {
-  res.status(status).setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+const BOT = /bot\b|crawl|spider|preview|facebookexternalhit|whatsapp|telegram|slack|discord|twitter|linkedin|skype|embedly|vkshare|google-read|mediapartners|bingpreview/i;
+const KEY_TTL = 15 * 60_000;   // the files of an opened page stay reachable for this long
+
+/** The page chrome. `extra`: more head tags (a title for link previews). */
+const page = (res, status, body, { title = 'Suhbat-dosh', scripts = false } = {}) => {
+  res.status(status).setHeader('Content-Security-Policy', `default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self'; ${scripts ? "script-src 'self'; " : ''}base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Robots-Tag', 'noindex');
-  res.type('html').send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Suhbat-dosh</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/c-page.css"><main class="pp">${body}</main></html>`);
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.type('html').send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><meta property="og:title" content="${esc(title)}"><meta property="og:site_name" content="Suhbat-dosh"><title>${esc(title)}</title><link rel="icon" href="/icon.svg"><link rel="stylesheet" href="/c-page.css"><link rel="stylesheet" href="/x.css"><main class="pp xv">${body}</main>${scripts ? '<script src="/x.js"></script>' : ''}</html>`);
 };
 const dead = (res) => page(res, 410, '<h1>Ссылка не работает</h1><p>Срок действия закончился, ссылкой уже воспользовались или её отозвали.</p>');
-const live = (token) => {
-  const r = q.get('SELECT * FROM export_links WHERE token = ?', String(token || ''));
-  const l = r && link(r);
-  return l && l.status === 'active' ? r : null;
-};
+const row = (token) => q.get('SELECT * FROM export_links WHERE token = ?', String(token || ''));
+const live = (token) => { const r = row(token); return r && link(r).status === 'active' ? r : null; };
+
+const sign = (token, exp, what) => crypto.createHmac('sha256', config.secret).update(`x:${token}:${exp}:${what}`).digest('base64url').slice(0, 32);
+const signed = (token, exp, what, k) => { const want = sign(token, exp, what); return typeof k === 'string' && k.length === want.length && crypto.timingSafeEqual(Buffer.from(k), Buffer.from(want)); };
+
+/** Does this file belong to what the link gives? (a link to one message never opens the other files of the chat) */
+function inScope(r, fid) {
+  const base = `SELECT 1 AS x FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.file_id = ? AND m.kind != 'secret' AND c.e2e = 0`;
+  if (r.scope === 'message') return !!q.get(`${base} AND m.id = ?`, fid, r.scope_id);
+  if (r.scope === 'chat') return !!q.get(`${base} AND m.chat_id = ?`, fid, r.scope_id);
+  return !!q.get(`${base} AND m.sender_id = ?`, fid, r.scope_id);
+}
+
+/** The last messages of what the link gives (at most `n`), oldest first. */
+function recent(r, n = 300) {
+  const where = [`m.kind != 'secret'`, 'c.e2e = 0'];
+  const params = [];
+  if (r.scope === 'chat') { where.push('m.chat_id = ?'); params.push(r.scope_id); } else if (r.scope === 'message') { where.push('m.id = ?'); params.push(r.scope_id); } else { where.push('m.sender_id = ?'); params.push(r.scope_id); }
+  if (r.since) { where.push('m.created_at >= ?'); params.push(r.since); }
+  if (r.until) { where.push('m.created_at <= ?'); params.push(r.until); }
+  const rows = q.all(`SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT ?`, ...params, n + 1);
+  const chats = new Map();
+  return { items: rows.slice(0, n).reverse().map((m) => shape(m, chats)), more: rows.length > n };
+}
+
+const INLINE = /^(image\/(jpeg|png|gif|webp)|video\/|audio\/)/;
+function itemHtml(e, r, keys) {
+  const exp = keys.exp;
+  const url = (f, dl) => `/x/${r.token}/m/${f.id}?e=${exp}&k=${sign(r.token, exp, f.id)}${dl ? '&dl=1' : ''}`;
+  let media = '';
+  if (e.file) {
+    const f = e.file;
+    const can = !!r.allow_download;
+    if (/^image\//.test(f.mime) && INLINE.test(f.mime)) media = `<img class="pp-img" src="${url(f)}" alt="" loading="lazy" draggable="false">`;
+    else if (f.mime.startsWith('video/')) media = `<video class="pp-video" src="${url(f)}" controls playsinline preload="metadata"${can ? '' : ' controlsList="nodownload noremoteplayback" disablepictureinpicture'}></video>`;
+    else if (f.mime.startsWith('audio/')) media = `<audio class="xv-audio" src="${url(f)}" controls preload="metadata"${can ? '' : ' controlsList="nodownload"'}></audio>`;
+    else media = `<div class="pp-file">📎 ${esc(f.name)} <small>(${f.size < 1048576 ? `${Math.max(1, Math.round(f.size / 1024))} КБ` : `${(f.size / 1048576).toFixed(1)} МБ`})</small>${can ? '' : '<br><small>Этот файл нельзя открыть на странице, а скачивание отключено.</small>'}</div>`;
+    if (can) media += `<div class="xv-dl"><a href="${url(f, true)}">⬇ Скачать${/^image\/|^video\/|^audio\//.test(f.mime) ? '' : ' файл'}</a></div>`;
+  }
+  let text = '';
+  const geo = /^geo:(-?[\d.]+),(-?[\d.]+)/.exec(e.text);
+  if (e.kind === 'location' && geo) text = `<div class="pp-text">📍 Геопозиция: <a href="https://yandex.ru/maps/?pt=${esc(geo[2])},${esc(geo[1])}&z=16&l=map" target="_blank" rel="noopener noreferrer">${esc(geo[1])}, ${esc(geo[2])}</a> <small>Яндекс Карты</small></div>`;
+  else if (e.text) text = `<div class="pp-text">${esc(e.text).replace(/\n/g, '<br>')}</div>`;
+  else if (!e.file) text = `<div class="pp-text"><i>[${esc(KIND[e.kind] || e.kind)}]</i></div>`;
+  const who = r.hide_names ? '' : `<b>${esc(e.author)}</b>${r.scope !== 'message' ? ` · ${esc(e.chat)}` : ''} · `;
+  return `<article class="pp-post">${media}${text}<footer>${who}${esc(WHEN.format(new Date(e.at)))}</footer></article>`;
+}
+
+/** Counts one opening (under the limit, atomically) and shows what the link gives. */
+function openPage(req, res, r) {
+  const t = q.run('UPDATE export_links SET views = views + 1, last_view_at = ?, first_view_at = COALESCE(first_view_at, ?) WHERE id = ? AND revoked_at IS NULL AND expires_at > ? AND (max_views IS NULL OR views < max_views)', now(), now(), r.id, now());
+  if (!t.changes) return dead(res);
+  audit(null, 'export.view', { target_type: 'export', target_id: String(r.id), ip: req.ip, details: { title: r.title } });
+  if (r.notify && !r.first_view_at) alert(`🔗 Ссылку «${r.title}» открыли (${req.ip}).`);
+  const { items, more } = recent(r);
+  const keys = { exp: Date.now() + KEY_TTL };
+  const dl = r.allow_download && (r.max_downloads === null || r.downloads < r.max_downloads);
+  const heading = r.hide_names ? 'Материал' : r.title;
+  page(res, 200, `<h1>${esc(heading)}</h1>${more ? `<p class="muted">Показаны последние ${items.length} сообщений.</p>` : ''}
+${items.length ? items.map((e) => itemHtml(e, r, keys)).join('\n') : '<p class="muted">Здесь пока нечего показывать.</p>'}
+${dl ? `<form method="post" action="/x/${esc(r.token)}/get" class="xv-all"><input type="hidden" name="e" value="${keys.exp}"><input type="hidden" name="k" value="${sign(r.token, keys.exp, 'dl')}"><button type="submit">⬇ Скачать всё (${esc(FORMATS[r.format][0].toUpperCase())}${r.media ? ', с файлами' : ''})</button></form>` : ''}
+<p class="muted xv-foot">${r.allow_download ? '' : 'Скачивание отключено. '}Ссылка действует до ${esc(WHEN.format(new Date(r.expires_at)))}.</p>`, { title: heading, scripts: !r.allow_download });
+}
+
+const passForm = (r, msg = '') => `<h1>${esc(r.hide_names ? 'Материал' : r.title)}</h1>${msg ? `<p class="err">${esc(msg)}</p>` : '<p>Чтобы открыть, введите пароль.</p>'}<form method="post" action="/x/${esc(r.token)}/open"><p><input type="password" name="p" placeholder="Пароль" autocomplete="off" required autofocus></p><p><button type="submit">Открыть</button></p></form>`;
 
 exportsPublic.get('/x/:token', (req, res) => {
   const r = live(req.params.token);
   if (!r) return dead(res);
+  // a messenger that previews the address must not use up a one-time link: it gets only the name
+  if (BOT.test(String(req.headers['user-agent'] || ''))) return page(res, 200, `<h1>${esc(r.hide_names ? 'Материал' : r.title)}</h1><p>Вам прислали материал в Suhbat-dosh. Откройте ссылку в браузере.</p>`, { title: r.hide_names ? 'Материал' : r.title });
+  if (r.view) return r.pass_hash ? page(res, 200, passForm(r), { title: 'Suhbat-dosh' }) : openPage(req, res, r);
   const left = r.max_downloads === null ? '' : `<p class="muted">Можно скачать ещё раз: ${r.max_downloads - r.downloads}</p>`;
   page(res, 200, `<h1>${esc(r.title)}</h1><p>Выгрузка сообщений (${esc(FORMATS[r.format][0].toUpperCase())}${r.media ? ', с файлами' : ''}). Ссылка действует до ${esc(WHEN.format(new Date(r.expires_at)))}.</p>${left}
 <form method="post" action="/x/${esc(r.token)}/get">${r.pass_hash ? '<p><input type="password" name="p" placeholder="Пароль" autocomplete="off" required></p>' : ''}<p><button type="submit">Скачать</button></p></form>`);
+});
+
+exportsPublic.post('/x/:token/open', express.urlencoded({ extended: false, limit: '2kb' }), (req, res) => {
+  if (!rateLimit(`xopen:${req.ip}`, 30, 600_000)) return page(res, 429, '<h1>Слишком много попыток</h1><p>Подождите несколько минут.</p>');
+  const r = live(req.params.token);
+  if (!r || !r.view) return dead(res);
+  if (r.pass_hash && !verifyPassword(String(req.body?.p ?? ''), r.pass_hash)) return page(res, 403, passForm(r, 'Неверный пароль.'));
+  openPage(req, res, r);
+});
+
+// a file of an opened page: shown there, and downloaded only when the link allows it
+exportsPublic.get('/x/:token/m/:fid', (req, res) => {
+  const r = row(req.params.token);
+  const fid = String(req.params.fid || '');
+  const exp = Number(req.query.e);
+  if (!r || r.revoked_at || r.expires_at <= now() || !Number.isFinite(exp) || exp < Date.now() || !signed(r.token, exp, fid, req.query.k)) return dead(res);
+  const f = q.get('SELECT * FROM files WHERE id = ?', fid);
+  if (!f || !inScope(r, fid) || !fs.existsSync(filePath(fid))) return res.status(404).type('text').send('not found');
+  const wantsDownload = req.query.dl === '1';
+  if (wantsDownload) {
+    if (!r.allow_download) return res.status(403).type('text').send('Скачивание отключено');
+    const t = q.run('UPDATE export_links SET downloads = downloads + 1, last_download_at = ? WHERE id = ? AND revoked_at IS NULL AND (max_downloads IS NULL OR downloads < max_downloads)', now(), r.id);
+    if (!t.changes) return res.status(403).type('text').send('Лимит скачиваний исчерпан');
+    audit(null, 'export.download', { target_type: 'export', target_id: String(r.id), ip: req.ip, details: { title: r.title, file: f.name } });
+  } else if (!INLINE.test(f.mime)) return res.status(403).type('text').send('Этот файл нельзя открыть на странице');
+  res.setHeader('Content-Type', wantsDownload && !INLINE.test(f.mime) ? 'application/octet-stream' : f.mime);
+  res.setHeader('Content-Disposition', `${wantsDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.sendFile(filePath(fid), { dotfiles: 'allow', cacheControl: false, lastModified: false }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
 });
 
 exportsPublic.post('/x/:token/get', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
   if (!rateLimit(`xdl:${req.ip}`, 20, 600_000)) return page(res, 429, '<h1>Слишком много попыток</h1><p>Подождите несколько минут.</p>');
   const r = live(req.params.token);
   if (!r) return dead(res);
-  if (r.pass_hash && !verifyPassword(String(req.body?.p ?? ''), r.pass_hash)) return page(res, 403, `<h1>${esc(r.title)}</h1><p>Неверный пароль.</p><p><a href="/x/${esc(r.token)}">Попробовать ещё раз</a></p>`);
+  if (!r.allow_download) return page(res, 403, '<h1>Скачивание отключено</h1><p>Содержимое можно только посмотреть на странице.</p>');
+  // a page that was already opened (with its password) carries a signed key; otherwise the password is asked
+  const unlocked = r.view && signed(r.token, Number(req.body?.e), 'dl', req.body?.k) && Number(req.body.e) > Date.now();
+  if (r.pass_hash && !unlocked && !verifyPassword(String(req.body?.p ?? ''), r.pass_hash)) return page(res, 403, `<h1>${esc(r.title)}</h1><p>Неверный пароль.</p><p><a href="/x/${esc(r.token)}">Попробовать ещё раз</a></p>`);
   // the count is taken at once and under the limit: two people with the last download cannot both get it
   const t = q.run('UPDATE export_links SET downloads = downloads + 1, last_download_at = ? WHERE id = ? AND revoked_at IS NULL AND expires_at > ? AND (max_downloads IS NULL OR downloads < max_downloads)', now(), r.id, now());
   if (!t.changes) return dead(res);

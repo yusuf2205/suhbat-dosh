@@ -368,3 +368,72 @@ test('exports: one message, by a link or at once, with its file', async () => {
   assert.equal((await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: 99999999 })).status, 404);
   assert.equal((await call(eli.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: m1.id })).status, 403);
 });
+
+test('a link that shows the content: the photo is on the page at once, downloading can be switched off, a one-time view, previews do not use it up', async () => {
+  const root1 = await login('+998900000001', 'Root');
+  const gia = await login('+998900000071', 'Gia');
+  const han = await login('+998900000072', 'Han');
+  const chat = (await call(gia.cookie, 'POST', '/api/chats/direct', { user_id: han.user.id })).data.chat;
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const up = async (name) => (await (await fetch(`${BASE}/api/chats/${chat.id}/files?name=${name}`, { method: 'POST', headers: { cookie: gia.cookie, 'content-type': 'image/png' }, body: png })).json()).message;
+  const photo = await up('private-photo.png');
+  const other = await up('other-photo.png');
+  const mk = (extra) => call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: photo.id, hours: 1, ...extra });
+  const hit = (path, init) => fetch(`${BASE}${path}`, init);
+  const imgOf = (html) => /src="(\/x\/[^"]+\/m\/[^"]+)"/.exec(html)?.[1].replace(/&amp;/g, '&');
+
+  // view only: the picture is shown, there is no download, no way round it
+  const l1 = (await mk({ view: true, allow_download: false })).data.link;
+  const html = await (await hit(`/x/${l1.token}`)).text();
+  const src = imgOf(html);
+  assert.ok(src, 'the picture is on the page');
+  assert.ok(!html.includes('Скачать'), 'no download button');
+  assert.ok(html.includes('x.js'), 'the page keeps the casual save away');
+  const shown = await hit(src);
+  assert.equal(shown.status, 200);
+  assert.equal(shown.headers.get('content-type'), 'image/png');
+  assert.equal((await hit(`${src}&dl=1`)).status, 403, 'a download is refused');
+  assert.equal((await hit(src.replace(/k=[^&]+/, 'k=forged'))).status, 410, 'a forged key');
+  const otherSrc = src.replace(photo.file.id, other.file.id);
+  assert.notEqual((await hit(otherSrc)).status, 200, 'another file of the same chat is not opened');
+  assert.equal((await hit(`/x/${l1.token}/get`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '' })).status, 403, 'the archive is refused too');
+
+  // with download: a button, the file as an attachment, and the author can be hidden
+  const l2 = (await mk({ view: true, allow_download: true, hide_names: true })).data.link;
+  const html2 = await (await hit(`/x/${l2.token}`)).text();
+  assert.ok(html2.includes('Скачать'));
+  assert.ok(!html2.includes('Gia'), 'the name of the author is hidden');
+  const src2 = imgOf(html2);
+  const dl = await hit(`${src2}&dl=1`);
+  assert.equal(dl.status, 200);
+  assert.ok(dl.headers.get('content-disposition').startsWith('attachment'));
+
+  // one opening: a messenger that previews the address does not use it up; the second person is too late, the first still sees the picture
+  const l3 = (await mk({ view: true, allow_download: false, max_views: 1 })).data.link;
+  const preview = await hit(`/x/${l3.token}`, { headers: { 'user-agent': 'TelegramBot (like TwitterBot)' } });
+  assert.equal(preview.status, 200);
+  assert.ok(!imgOf(await preview.text()), 'the preview shows no content');
+  const first = await (await hit(`/x/${l3.token}`)).text();
+  assert.ok(imgOf(first));
+  assert.equal((await hit(`/x/${l3.token}`)).status, 410, 'the second opening is too late');
+  assert.equal((await hit(imgOf(first))).status, 200, 'the opened page keeps its picture');
+
+  // a password first; the content comes with the right one
+  const l4 = (await mk({ view: true, allow_download: false, password: 'open-sesame' })).data.link;
+  const ask = await (await hit(`/x/${l4.token}`)).text();
+  assert.ok(ask.includes('type="password"') && !imgOf(ask));
+  const post = (p) => hit(`/x/${l4.token}/open`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ p }) });
+  assert.equal((await post('nope')).status, 403);
+  assert.ok(imgOf(await (await post('open-sesame')).text()));
+
+  // the administrator is told when it is opened; the list shows the openings; a link can be given more time
+  const l5 = (await mk({ view: true, allow_download: false, notify: true })).data.link;
+  await hit(`/x/${l5.token}`);
+  let list = (await call(root1.cookie, 'GET', '/api/admin/exports')).data.links;
+  assert.equal(list.find((x) => x.id === l5.id).views, 1);
+  assert.ok(list.find((x) => x.id === l5.id).first_view_at);
+  const longer = (await call(root1.cookie, 'PATCH', `/api/admin/exports/${l5.id}`, { extend_hours: 24 })).data.link;
+  assert.ok(longer.expires_at > l5.expires_at + 23 * 3600_000);
+  assert.equal((await call(root1.cookie, 'POST', '/api/admin/exports', { scope: 'message', scope_id: photo.id, view: false, allow_download: false })).status, 400, 'a link that shows nothing and gives nothing');
+  assert.equal((await call(gia.cookie, 'PATCH', `/api/admin/exports/${l5.id}`, { extend_hours: 24 })).status, 403);
+});

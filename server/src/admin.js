@@ -16,7 +16,7 @@ import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
 import { embedderReady, rankByMeaning } from './semantic.js';
 import { integrityState, lastRuns, runIntegrity } from './integrity.js';
-import { FORMATS, createLink, describeScope, listLinks, revokeLink, streamExport } from './exports.js';
+import { FORMATS, createLink, describeScope, extendLink, listLinks, revokeLink, streamExport } from './exports.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
@@ -290,8 +290,14 @@ admin.get('/exports/now', async (req, res) => {
 });
 admin.post('/exports', (req, res) => {
   const l = createLink(req.user.id, req.body || {});
-  audit(req.user.id, 'admin.export_link', { target_type: l.scope, target_id: String(l.scope_id), chat_id: l.scope === 'chat' ? l.scope_id : null, ip: req.ip, details: { title: l.title, format: l.format, media: l.media, expires_at: l.expires_at, max_downloads: l.max_downloads, password: l.password } });
+  audit(req.user.id, 'admin.export_link', { target_type: l.scope, target_id: String(l.scope_id), chat_id: l.scope === 'chat' ? l.scope_id : null, ip: req.ip, details: { title: l.title, format: l.format, media: l.media, expires_at: l.expires_at, view: l.view, allow_download: l.allow_download, max_views: l.max_views, max_downloads: l.max_downloads, password: l.password } });
   res.status(201).json({ link: l });
+});
+admin.patch('/exports/:id', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const l = extendLink(id, req.body?.extend_hours);
+  audit(req.user.id, 'admin.export_extend', { target_type: 'export', target_id: String(id), ip: req.ip, details: { expires_at: l.expires_at } });
+  res.json({ link: l });
 });
 admin.delete('/exports/:id', (req, res) => {
   const id = int(req.params.id, 'id');

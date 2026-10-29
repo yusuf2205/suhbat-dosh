@@ -1,0 +1,15 @@
+/* the page of a link to an export: what was sent is shown at once */
+.xv h1 { margin: 0; font-size: 1.3rem; overflow-wrap: anywhere; }
+.xv .muted { color: var(--muted); margin: 0; }
+.xv .err { color: #c0392b; }
+.xv .pp-post { gap: 8px; }
+.xv .pp-img { max-height: 80vh; }
+.xv .pp-video { max-height: 80vh; background: #000; }
+.xv-audio { width: 100%; }
+.xv-dl a { display: inline-block; padding: 8px 14px; border-radius: 12px; background: var(--y); color: #1d1d1f; font-weight: 700; text-decoration: none; }
+.xv-all { text-align: center; margin: 8px 0 0; }
+.xv button, .xv input { font: inherit; padding: 10px 16px; border-radius: 12px; border: 1px solid rgba(0, 0, 0, .15); }
+.xv button { background: var(--y); color: #1d1d1f; font-weight: 700; cursor: pointer; }
+.xv input[type=password] { width: 100%; max-width: 320px; background: var(--card); color: var(--ink); }
+.xv-foot { text-align: center; font-size: .85rem; }
+.xv .pp-post img, .xv .pp-post video { -webkit-touch-callout: none; }

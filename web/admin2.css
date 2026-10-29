@@ -337,4 +337,10 @@ table.t.health td { overflow-wrap: anywhere; }
 .tb-chat { cursor: default; flex-wrap: wrap; }
 .tb-chat:hover { background: transparent; }
 @media (max-width: 560px) { .tb-chat .btn { margin-left: auto; } }
+.xd-checks { display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; background: rgba(251, 199, 0, .12); }
+.xd-chk { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: .92rem; }
+.xd-chk input { width: 18px; height: 18px; margin-top: 2px; accent-color: #17171a; flex: none; }
+.xd-chk span { display: grid; gap: 1px; }
+.xd-chk small { font-size: .78rem; }
+.xd-f select:disabled { opacity: .5; }
 
