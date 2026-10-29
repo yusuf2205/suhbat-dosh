@@ -471,7 +471,7 @@ function messageNode(m, ctx, prev) {
   if (!prev || dayOf(prev.created_at) !== dayOf(m.created_at)) nodes.push(h('div', { class: 'aday' }, h('span', null, DAY_FMT.format(new Date(m.created_at)).replace(/^./, (c) => c.toUpperCase()).replace(/ г\.$/, ''))));
   const showName = !sameAuthor && (!mine || ctx.group);
   const name = m.sender && !ctx.imported ? userLink(m.sender.id) : h('b', null, authorOf(m));
-  nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}` },
+  nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}`, dataset: { id: String(m.id) } },
     showName ? h('div', { class: 'abub-who' }, name) : '',
     m.forward_from ? h('div', { class: 'abub-quote' }, `Переслано от ${m.forward_from}`) : '',
     m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', m.reply_to.text) : '',
@@ -544,7 +544,7 @@ async function openChat(id) {
   const heading = h('h2');
   const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${f.q || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
-  // like a messenger: the conversation opens on its newest message, and loading older ones keeps the place being read
+  // like a messenger: the conversation opens on its newest message; going back keeps the message being read where it is
   let stick = true;
   const scroller = () => {
     for (let p = list.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {   // the body's own overflow belongs to the viewport
@@ -554,18 +554,54 @@ async function openChat(id) {
     return document.scrollingElement;
   };
   const toEnd = () => { list.lastElementChild?.scrollIntoView({ block: 'end' }); };
-  moreBtn.onclick = async () => {
-    const r = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100, before: all[0]?.id })}`);
-    const sc = scroller();
-    const h0 = sc.scrollHeight; const top0 = sc.scrollTop;
-    stick = false;
-    all.unshift(...r.messages);
-    moreBtn.hidden = !r.has_more;
-    draw();
-    sc.scrollTop = top0 + (sc.scrollHeight - h0);
+  // the place being read: the first message on screen and how far from the top of the screen it is
+  let anchor = null;
+  const bubbleOf = (mid) => list.querySelector(`.abub[data-id="${mid}"]`);
+  const takeAnchor = () => {
+    for (const el of list.querySelectorAll('.abub')) {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > 60) return { id: el.dataset.id, top: r.top };
+    }
+    return null;
   };
-  list.addEventListener('load', () => { if (stick) toEnd(); }, true);   // pictures change the height as they arrive
-  for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { stick = false; }, { once: true, capture: true });
+  const holdAnchor = () => {
+    if (!anchor) return;
+    const el = bubbleOf(anchor.id);
+    if (!el) return;
+    const d = el.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(d) > 1) scroller().scrollTop += d;
+  };
+  let loading = false;
+  const loadEarlier = async () => {
+    if (loading || !more || !all.length) return;
+    loading = true;
+    try {
+      const r = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100, before: all[0]?.id })}`);
+      stick = false;
+      anchor = takeAnchor();
+      all.unshift(...r.messages);
+      more = r.has_more; moreBtn.hidden = !more;
+      draw();
+      holdAnchor();
+      // the pictures above arrive later and push everything down: keep the same message in place until the user moves on
+      clearTimeout(loadEarlier.t);
+      loadEarlier.t = setTimeout(() => { anchor = null; }, 8000);
+    } finally { loading = false; }
+  };
+  moreBtn.onclick = loadEarlier;
+  list.addEventListener('load', () => { if (stick) toEnd(); else holdAnchor(); }, true);   // pictures change the height as they arrive
+  let ready = false;   // the page settles on the newest message first; its own scrolling must not count as the user's
+  setTimeout(() => { ready = true; }, 900);
+  const onScroll = () => {
+    if (!list.isConnected) { window.removeEventListener('scroll', onScroll); return; }
+    if (!ready) return;
+    const sc = scroller();
+    if (sc.scrollHeight - sc.scrollTop - sc.clientHeight > 160) stick = false;   // scrolled away from the end by any means (wheel, bar, touch, keys)
+    if (anchor) { const el = bubbleOf(anchor.id); if (el) anchor.top = el.getBoundingClientRect().top; }
+    // reached the beginning of what is loaded: bring the earlier part in, without a button press
+    if (more && !loading && moreBtn.getBoundingClientRect().bottom > -200 && moreBtn.getBoundingClientRect().top < innerHeight) loadEarlier();
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
   // a picture opens large, with the arrows, instead of a new tab
   list.addEventListener('click', (e) => {
     const img = e.target.closest?.('img.abub-img');
