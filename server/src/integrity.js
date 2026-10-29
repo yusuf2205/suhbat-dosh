@@ -101,7 +101,7 @@ function checkDisk() {
 
 function checkMeaning() {
   const need = scalar("SELECT COUNT(*) AS n FROM messages m WHERE m.kind = 'text' AND length(m.text) >= 12 AND m.once = 0");
-  const have = scalar('SELECT COUNT(*) AS n FROM embeddings');
+  const have = scalar("SELECT COUNT(*) AS n FROM embeddings e JOIN messages m ON m.id = e.message_id WHERE m.kind = 'text' AND length(m.text) >= 12 AND m.once = 0");
   if (!need) return check('Поиск по смыслу', 'ok', 'нечего индексировать');
   const pct = Math.round((Math.min(have, need) / need) * 100);
   return check('Поиск по смыслу', pct >= 90 ? 'ok' : 'warn', `проиндексировано ${pct}% (${have} из ${need}); остальное досчитывается само`);
