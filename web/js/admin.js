@@ -378,7 +378,6 @@ async function viewOverview() {
   const today = st.series.messages[st.series.messages.length - 1];
   setView(
     heroCard(o, st),
-    attentionPanels(o),
     h('div', { class: 'kpis' },
       kpi('users', 'tone-gold', o.users, 'Пользователи', `+${o.new_users_7d} за 7 дней`, () => setTab('users')),
       kpi('bolt', 'tone-green', st.online, 'В сети сейчас', `${o.active_sessions} активных сессий`, () => { state.preset = { onlineOnly: true }; setTab('users'); }),
@@ -406,6 +405,7 @@ async function viewOverview() {
         h('div', { class: 'panel-head' }, h('h2', null, icon('list', 18), 'Последние события'),
           h('a', { href: '#', class: 'link-more', onclick: (e) => { e.preventDefault(); setTab('journal'); } }, 'Весь журнал →')),
         feed)),
+    attentionPanels(o),
     h('div', { class: 'note' }, icon('shield', 18), h('span', null, 'Журнал фиксирует вход и выход, изменения профилей и чатов, отправку, правку и удаление сообщений (с прежним текстом). Просмотр переписки администратором тоже записывается.')),
   );
   applyDynamicStyles();
