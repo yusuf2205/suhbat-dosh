@@ -170,3 +170,15 @@ test('the admin conversation view: filters, the live feed and the export are adm
     assert.equal((await fetch(BASE + `/api/admin/chats/${chat.id}/export`, { headers: { cookie: who.cookie } })).status, 403);
   }
 });
+
+test('a failed recording on a phone reaches the administrator with its reason', async () => {
+  const root1 = await login('+998900000001', 'Root');
+  const kim = await login('+998900000021', 'Kim');
+  const r = await call(kim.cookie, 'POST', '/api/diag/media', { where: 'voice', name: 'NotAllowedError', message: 'Permission denied', mime: 'audio/mp4' });
+  assert.equal(r.status, 200);
+  const ev = (await call(root1.cookie, 'GET', '/api/admin/audit?action=client.media_error')).data.events;
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].details.name, 'NotAllowedError');
+  assert.equal(ev[0].actor.id, kim.user.id);
+  assert.equal((await call('', 'POST', '/api/diag/media', { name: 'x' })).status, 401);
+});

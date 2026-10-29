@@ -101,7 +101,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -153,6 +153,7 @@ function describe(ev) {
     case 'call.quality':
       out.push(h('div', null, `RTT ${d.rtt_ms ?? '—'} мс (макс ${d.rtt_max_ms ?? '—'}) · потери ${d.loss_pct ?? '—'}% · джиттер ${d.jitter_ms ?? '—'} мс · ${d.width ?? '?'}×${d.height ?? '?'}@${d.fps ?? '?'} · ${d.kbps_in ?? '—'}/${d.kbps_out ?? '—'} кбит/с · ${d.codec || '?'}${d.relay ? ' · через TURN' : ' · напрямую'} · режим ${d.quality_mode || '—'} · переподключений ${d.reconnects ?? 0}`));
       break;
+    case 'client.media_error': out.push(h('div', null, `${d.where || ''}: ${d.name || ''}${d.message ? ` — ${d.message}` : ''}${d.mime ? ` (${d.mime})` : ''}`), h('div', { class: 'muted' }, deviceName(d.ua))); break;
     case 'call.end': out.push(h('div', null, `${d.video ? 'видео' : 'аудио'} · ${d.status}${d.duration ? ` · ${d.duration} с` : ''}`)); break;
     default:
   }

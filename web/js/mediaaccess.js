@@ -120,5 +120,9 @@ export function openMediaCheck(problem = null) {
 /** A recording failed: a short message, and the full check opens so the reason can be read (and sent) at once. */
 export function showMediaProblem(e, fallbackKey = 'voice.denied') {
   toast(mediaErrorText(e, fallbackKey), 6000);
+  // the administrator sees the reason too (a phone cannot always be asked to run the check)
+  try {
+    import('./net.js').then(({ api }) => api('POST', '/api/diag/media', { where: fallbackKey === 'call.no_media' ? 'camera' : 'voice', name: e?.name || 'Error', message: e?.message || '', mime: window.MediaRecorder ? ['audio/webm', 'audio/mp4', 'video/mp4'].filter((m) => MediaRecorder.isTypeSupported(m)).join(',') : 'no MediaRecorder' }).catch(() => {}));
+  } catch { /* the report is optional */ }
   openMediaCheck(e);
 }

@@ -25,6 +25,43 @@ function add(el, kids) {
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
+/**
+ * A long press of a finger. The browsers differ: Android Chrome sends "contextmenu" after a long press, iPhone Safari never does,
+ * so the menu of a message used to be unreachable on an iPhone. Here the press is timed by hand (and a "contextmenu" that follows
+ * it is ignored). Returns a function: has the press just fired? (for the "contextmenu" listener of the same element).
+ */
+export function longPress(el, fn, { ms = 450, skip = 'button, a, input, textarea, select, audio, video, .poll' } = {}) {
+  let timer = 0;
+  let x = 0;
+  let y = 0;
+  let fired = 0;
+  let thisTouch = false;   // the press that is going on has fired
+  const stop = () => clearTimeout(timer);
+  el.addEventListener('touchstart', (e) => {
+    stop();
+    thisTouch = false;
+    if (e.touches.length !== 1 || (skip && e.target.closest?.(skip))) return;
+    x = e.touches[0].clientX;
+    y = e.touches[0].clientY;
+    timer = setTimeout(() => {
+      fired = Date.now();
+      thisTouch = true;
+      try { navigator.vibrate?.(10); } catch { /* not everywhere */ }
+      fn(e);
+    }, ms);
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    const p = e.touches[0];
+    if (p && (Math.abs(p.clientX - x) > 10 || Math.abs(p.clientY - y) > 10)) stop();
+  }, { passive: true });
+  el.addEventListener('touchcancel', stop, { passive: true });
+  // lifting the finger after a long press must not become a tap (the browser would send "mousedown" and "click" to what the menu now covers)
+  el.addEventListener('touchend', (e) => { stop(); if (thisTouch && e.cancelable) e.preventDefault(); thisTouch = false; });
+  // and the click, if one comes anyway
+  el.addEventListener('click', (e) => { if (Date.now() - fired < 700) { e.preventDefault(); e.stopPropagation(); } }, true);
+  return () => Date.now() - fired < 1200;
+}
+
 export function clear(el) {
   el.replaceChildren();
   return el;

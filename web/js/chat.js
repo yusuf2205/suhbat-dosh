@@ -24,7 +24,7 @@ import { transcriptNode } from './transcript.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { swipeLeft } from './swipe.js';
 import { REACTIONS, LIMITS } from '/shared/contracts.js';
-import { h, clear, linkify, formatBytes, formatDuration, uuid, debounce } from './dom.js';
+import { h, clear, linkify, formatBytes, formatDuration, uuid, debounce, longPress } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S, bucket, chatTitle, fire, isMuted, on, savePrefs } from './state.js';
 import { api, flushOutbox, outbox, sendTyping } from './net.js';
@@ -937,6 +937,7 @@ async function startRecording(hs) {
   };
   // live loudness for the waveform
   try {
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) throw new Error('no audio graph next to the recorder on iOS');
     const ac = new (window.AudioContext || window.webkitAudioContext)();
     const an = ac.createAnalyser();
     an.fftSize = 512;
@@ -1269,7 +1270,9 @@ function buildMessage(m, c) {
     setTimeout(() => undo.remove(), m.hold - Date.now());
   }
   bubble.append(h('button', { class: 'more', type: 'button', 'aria-label': t('msg.more'), onclick: (e) => messageMenu(e.currentTarget, m) }, '⋯'));
-  bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); messageMenu(bubble, m); });
+  // the menu of a message: a right click, or a long press of the finger (a phone sends no "contextmenu" on iPhone)
+  const pressed = longPress(bubble, () => messageMenu(bubble, m));
+  bubble.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!pressed()) messageMenu(bubble, m); });
   // double tap / double click: a quick heart, like in Telegram
   if (typeof m.id === 'number' && !m.pending && m.kind !== 'call') {
     bubble.addEventListener('dblclick', (e) => {

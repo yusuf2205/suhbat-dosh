@@ -2131,3 +2131,9 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .tg-prev summary { cursor: pointer; }
 .tg-prev-v { margin-top: 3px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .br-lock { display: inline-grid; place-items: center; color: var(--muted); cursor: default; }
+/* a phone: a long press opens the menu of a message, so the system's own selection and callout must not fight it */
+@media (hover: none) and (pointer: coarse) {
+  .msg .bubble { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .msg .bubble .msg-text, .msg .bubble .linkify { -webkit-user-select: none; user-select: none; }
+}
+.send-btn { -webkit-touch-callout: none; }

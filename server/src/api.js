@@ -473,6 +473,14 @@ api.get('/auth/qr/poll', (req, res) => {
 
 api.use(bridgeIn); // the bridge container's own door: shared secret, no session
 api.use(requireAuth);
+
+// A failed recording or camera on someone's phone: the exact reason reaches the administrator (what the device said, nothing else).
+api.post('/diag/media', (req, res) => {
+  if (!rateLimit(`diag:${req.user.id}`, 20, 600_000)) throw new HttpError(429, 'slow_down');
+  const clip = (v, n) => String(v ?? '').slice(0, n);
+  audit(req.user.id, 'client.media_error', { ip: req.ip, details: { where: clip(req.body?.where, 30), name: clip(req.body?.name, 60), message: clip(req.body?.message, 200), mime: clip(req.body?.mime, 80), ua: clip(req.headers['user-agent'], 200) } });
+  res.json({ ok: true });
+});
 api.use(bridge);
 
 api.get('/auth/qr/info', (req, res) => {
