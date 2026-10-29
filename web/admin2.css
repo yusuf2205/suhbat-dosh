@@ -187,7 +187,8 @@
 @media (min-width: 901px) { .adm-side { border-radius: 24px; } }
 
 /* tables: tighter rows, the header stays in view inside a scrolling frame */
-.tablewrap { max-height: 64vh; overflow: auto; }
+.tablewrap { overflow: auto; }
+@media (min-width: 901px) { .tablewrap { max-height: 64vh; } }
 table.t th { position: sticky; top: 0; z-index: 1; padding: 8px 10px; }
 table.t td { padding: 8px 10px; }
 table.t { font-size: .88rem; }
@@ -264,4 +265,22 @@ td .btn.secondary.small + .btn.secondary.small { margin-left: 6px; }
 @keyframes abub-hl { 0%, 60% { box-shadow: 0 0 0 4px rgba(251, 199, 0, .85); } 100% { box-shadow: 0 1px 4px rgba(0, 0, 0, .06); } }
 .abub.abub-hl { animation: abub-hl 2.6s ease-out; }
 .ud-chat.find .ud-cm small:nth-of-type(1) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* a narrow window: nothing may push the page sideways or hide behind a scroll bar */
+.pill { white-space: nowrap; }
+table.t.health td { overflow-wrap: anywhere; }
+@media (max-width: 860px) {
+  .adm-side { scrollbar-width: none; gap: 2px; }
+  .adm-side::-webkit-scrollbar { display: none; }
+  .adm-nav { gap: 2px; }
+  .adm-nav button { min-width: 38px; padding: 8px; min-height: 40px; }
+  .adm-brand { padding: 0 4px 0 0; }
+  .adm-brand img { width: 34px; height: 34px; }
+  .adm-back.btn, .adm-back { background: var(--ink-2) !important; color: var(--ink-text) !important; min-width: 38px; padding: 8px; flex: none; margin-left: 2px; }
+  .adm-back .ico { color: var(--ink-text) !important; }
+  table.t.health tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  table.t.health td { border: 0; padding: 0; }
+  table.t.health td:nth-child(3) { grid-column: 1 / -1; }
+  .adm-main { padding-left: 12px; padding-right: 12px; }
+}
 

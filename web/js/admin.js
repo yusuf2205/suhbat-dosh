@@ -1139,7 +1139,7 @@ async function viewServer() {
     ['Работа без перезапуска', mark(true, false), fmtUp(n.uptime)],
   ];
   const healthPanel = h('div', { class: 'panel' }, h('h2', null, icon('shield', 18), 'Состояние сервера'),
-    h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('tbody', null,
+    h('div', { class: 'tablewrap' }, h('table', { class: 't health' }, h('tbody', null,
       ...healthRows.map(([name, pill, text]) => h('tr', null, h('td', null, name), h('td', null, pill), h('td', { class: 'muted' }, text)))))));
   const storagePanel = st ? h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Куда уходит место'),
     h('p', { class: 'muted' }, `Файлов: ${st.total.files}, ${fmtBytes(st.total.bytes)}${st.bridge.files ? `; из них из Телеграма: ${st.bridge.files} (${fmtBytes(st.bridge.bytes)})` : ''}. Только размеры, содержимое не открывается.`),
