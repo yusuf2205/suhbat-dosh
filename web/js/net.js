@@ -103,11 +103,9 @@ export function sendTyping(chatId, action) {
 
 window.addEventListener('online', () => {
   retry = 0;
+  flushOutbox();   // the queued messages go at once: the sending does not wait for the live connection to come back
   if (!ws || ws.readyState > 1) connect();
-  else {
-    setNet('online');
-    flushOutbox();
-  }
+  else setNet('online');
 });
 window.addEventListener('offline', () => setNet('offline'));
 

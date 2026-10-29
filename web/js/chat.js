@@ -1523,16 +1523,16 @@ function messageMenu(anchor, m) {
   }
   items.push({ emojis: REACTIONS, onPick: (emoji) => api('POST', `/api/messages/${m.id}/reactions`, { emoji }).catch((e) => toast(errText(e.code))) });
   if (c.can_post) {
-    items.push({ label: t('msg.reply'), onClick: () => { replyTo = m; editing = null; renderComposer(); view.ta.focus(); } });
+    items.push({ icon: 'reply', label: t('msg.reply'), onClick: () => { replyTo = m; editing = null; renderComposer(); view.ta.focus(); } });
   }
   if (m.replies > 0 && typeof m.id === 'number') more.push({ label: `${t('msg.thread')} (${m.replies})`, onClick: () => openThread(m, c) });
-  if (Object.keys(m.reactions || {}).length) more.push({ label: t('react.who'), onClick: () => openReactors(m) });
-  if (m.text) items.push({ label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
-  if (m.text && m.kind === 'text') more.push({ label: t('msg.translate'), onClick: () => translateMessage(m) });
-  items.push({ label: t('msg.forward'), onClick: () => openForward(m) });
+  if (Object.keys(m.reactions || {}).length) more.push({ icon: 'smile', label: t('react.who'), onClick: () => openReactors(m) });
+  if (m.text) items.push({ icon: 'copy', label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
+  if (m.text && m.kind === 'text') more.push({ icon: 'globe', label: t('msg.translate'), onClick: () => translateMessage(m) });
+  items.push({ icon: 'forward', label: t('msg.forward'), onClick: () => openForward(m) });
   if (!isSecret(c) && typeof m.id === 'number' && !c.saved && m.kind !== 'call') {
     // bookmark = a copy in "Saved messages"
-    more.push({ label: t('msg.bookmark'), onClick: async () => {
+    more.push({ icon: 'bookmark', label: t('msg.bookmark'), onClick: async () => {
       try {
         const saved = (await api('POST', '/api/chats/saved')).chat;
         S.chats.set(saved.id, saved);
@@ -1542,21 +1542,21 @@ function messageMenu(anchor, m) {
     } });
   }
   if (m.file && !isSecret(c) && typeof m.id === 'number') {
-    if (c.saved) more.push({ label: t('sv.share'), onClick: () => shareMessageFile(m) });
-    if (mine) more.push({ label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
+    if (c.saved) more.push({ icon: 'forward', label: t('sv.share'), onClick: () => shareMessageFile(m) });
+    if (mine) more.push({ icon: 'lock', label: t('access.limit'), onClick: () => accessMenu(anchor, m) });
   }
   if (m.file) {
-    items.push({ label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });
+    items.push({ icon: 'download', label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });
   }
   if (m.kind === 'image' && m.file && navigator.clipboard?.write && window.ClipboardItem) {
-    more.push({ label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
+    more.push({ icon: 'copy', label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
   }
-  if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') more.push({ label: t('readers.title'), onClick: () => openReaders(m) });
+  if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') more.push({ icon: 'checks', label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
-    if (!mine) more.push({ label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
-    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) more.push(...(featureOn('tasks') ? [{ label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
-    more.push({ label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
-    items.push({ label: t('msg.select'), onClick: () => enterSelect(m.id) });
+    if (!mine) more.push({ icon: 'flag', label: t('msg.report'), danger: true, onClick: () => reportMenu(anchor, m) });
+    if (!isSecret(c) && c.can_post && ['text', 'image', 'video', 'file', 'voice', 'audio'].includes(m.kind)) more.push(...(featureOn('tasks') ? [{ icon: 'tasks', label: t('task.make'), onClick: () => openTaskCreate(c.id, m) }] : []), { icon: 'check', label: t('deal.make'), onClick: () => openDealCreate(c.id, m) });
+    more.push({ icon: 'bell', label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
+    items.push({ icon: 'selectc', label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
   if (mine && c.can_post && !lockedChat(c) && (m.kind === 'text' || m.file)) {
     items.push({
@@ -1576,20 +1576,20 @@ function messageMenu(anchor, m) {
   if (c.type === 'direct' || adminLike) {
     const pinned = (c.pins || []).some((p) => p.id === m.id) || c.pinned?.id === m.id;
     items.push({
-      label: pinned ? t('msg.unpin') : t('msg.pin'),
+      icon: 'pin', label: pinned ? t('msg.unpin') : t('msg.pin'),
       onClick: () => api('POST', `/api/chats/${c.id}/pin`, pinned ? { message_id: m.id, unpin: true } : { message_id: m.id }).catch((e) => toast(errText(e.code))),
     });
   }
   if ((mine || (c.type !== 'direct' && adminLike)) && !lockedChat(c)) {
     items.push({
-      label: t('msg.delete'), danger: true, onClick: async () => {
+      icon: 'trash', label: t('msg.delete'), danger: true, onClick: async () => {
         if (await confirmDialog(t('msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true })) {
           api('DELETE', `/api/messages/${m.id}`).catch((e) => toast(errText(e.code)));
         }
       },
     });
   }
-  if (more.length) items.push({ label: t('msg.more_actions'), onClick: () => popMenu(anchor, more) });
+  if (more.length) items.push({ icon: 'more', label: t('msg.more_actions'), onClick: () => popMenu(anchor, more) });
   popMenu(anchor, items);
 }
 
@@ -1754,17 +1754,17 @@ function chatMoreMenu(anchor) {
   const c = activeChat();
   if (!c) return;
   const items = [
-    { label: t('chat.search'), onClick: () => openChatSearch(c.id) }, // the header button is hidden on narrow phone screens
+    { icon: 'search', label: t('chat.search'), onClick: () => openChatSearch(c.id) }, // the header button is hidden on narrow phone screens
     isMuted(c)
-      ? { label: t('ctx.unmute'), onClick: () => setMute(c, 'off') }
-      : { label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },
-    { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
-    { label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
+      ? { icon: 'bell', label: t('ctx.unmute'), onClick: () => setMute(c, 'off') }
+      : { icon: 'bell', label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },
+    { icon: 'pin', label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },
+    { icon: 'folder', label: t('ctx.folder'), onClick: () => folderPicker(anchor, c) },
     ...(featureOn('scheduled') ? [{ label: t('sched.title'), onClick: () => openScheduled(c.id) }] : []),
     ...(featureOn('chattheme') ? [{ label: t('theme.title'), onClick: () => openChatTheme(c) }] : []),
     ...(!isSecret(c) && featureOn('digest') ? [{ label: t('digest.title'), onClick: () => openDigest(c.id) }] : []),
     ...(featureOn('tasks') ? [{ label: t('task.title'), onClick: () => openTasks() }] : []),
-    ...(!isSecret(c) && !c.saved ? [{ label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
+    ...(!isSecret(c) && !c.saved ? [{ icon: 'globe', label: `${t('atr.title')}: ${autoOn(c.id) ? t('st.on') : t('st.off')}`, onClick: () => {
       if (!autoOn(c.id) && !autoAvailable()) { toast(t('atr.unavailable'), 6000); return; }
       setAuto(c.id, !autoOn(c.id)); nodeCache.clear(); renderMessages(); renderHeader();
     } }] : []),
@@ -1772,18 +1772,18 @@ function chatMoreMenu(anchor) {
     ...(featureOn('chatsound') ? [{ label: `${t('ctx.sound')}: ${t(`sound.${c.sound || 'default'}`)}`, onClick: () => soundMenu(anchor, c) }] : []),
     ...(c.type === 'group' ? [
       ...(!c.imported && featureOn('rooms') ? [{ label: t('room.title'), onClick: () => joinGroupCall(c.id, false, { room: true }) }] : []),
-      { label: t('gcall.audio'), onClick: () => joinGroupCall(c.id, false) },
-      { label: t('gcall.video'), onClick: () => joinGroupCall(c.id, true) },
+      { icon: 'phone', label: t('gcall.audio'), onClick: () => joinGroupCall(c.id, false) },
+      { icon: 'video', label: t('gcall.video'), onClick: () => joinGroupCall(c.id, true) },
     ] : []),
-    { label: t('chat.profile'), onClick: toggleInfo },
-    { label: t('media.title'), onClick: () => openMediaPanel(c.id) },
-    { label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
+    { icon: 'user', label: t('chat.profile'), onClick: toggleInfo },
+    { icon: 'grid', label: t('media.title'), onClick: () => openMediaPanel(c.id) },
+    { icon: 'archive', label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
     ...(featureOn('chatexport') ? [{ label: t('chat.export'), onClick: () => exportChat(c).catch((e) => toast(errText(e.code))) }] : []),
-    ...(lockedChat(c) ? [] : [{ label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) }]),
+    ...(lockedChat(c) ? [] : [{ icon: 'trash', label: t('chat.clear'), danger: true, onClick: () => clearHistory(c) }]),
   ];
-  if (isSecret(c)) items.unshift({ label: t('secret.title'), onClick: () => showSecretInfo(c) });
-  else if (c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot) items.splice(1, 0, { label: t('secret.start'), onClick: () => startSecretChat(c.peer.id) });
-  if (c.type === 'direct' && !c.saved && !lockedChat(c)) items.push({ label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
+  if (isSecret(c)) items.unshift({ icon: 'lock', label: t('secret.title'), onClick: () => showSecretInfo(c) });
+  else if (c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot) items.splice(1, 0, { icon: 'lock', label: t('secret.start'), onClick: () => startSecretChat(c.peer.id) });
+  if (c.type === 'direct' && !c.saved && !lockedChat(c)) items.push({ icon: 'trash', label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
   popMenu(anchor, items);
 }
 

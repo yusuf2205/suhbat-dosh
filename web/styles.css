@@ -2156,3 +2156,9 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 @keyframes rec-ring { 0% { box-shadow: 0 0 0 0 rgba(214, 69, 61, .55); } 100% { box-shadow: 0 0 0 16px rgba(214, 69, 61, 0); } }
 @media (prefers-reduced-motion: reduce) { .eq i, .up-arrows i, .composer.recording .send-btn { animation: none; } .eq i { transform: scaleY(.7); } }
 
+/* menus with an icon in front of every action */
+.menu button.mi { display: flex; align-items: center; gap: 14px; }
+.menu button.mi .ico { flex: none; color: var(--muted); }
+.menu button.mi.danger .ico { color: var(--danger); }
+.menu button.mi .mi-label { min-width: 0; }
+

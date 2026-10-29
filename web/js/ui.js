@@ -1,3 +1,4 @@
+import { icon } from './icons.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { h, clear, stripCustomEmoji } from './dom.js';
 import { t, locale } from './i18n.js';
@@ -165,9 +166,9 @@ export function popMenu(anchor, items) {
         h('button', { type: 'button', role: 'menuitem', 'aria-label': e, onclick: () => { closeMenu(); it.onPick(e); } }, e))));
     } else {
       el.append(h('button', {
-        type: 'button', role: 'menuitem', class: it.danger ? 'danger' : '',
+        type: 'button', role: 'menuitem', class: `${it.danger ? 'danger' : ''}${it.icon ? ' mi' : ''}`.trim(),
         onclick: () => { closeMenu(); it.onClick(); },
-      }, it.label));
+      }, it.icon ? [icon(it.icon, 20), h('span', { class: 'mi-label' }, it.label)] : it.label));
     }
   }
   document.body.append(el);
