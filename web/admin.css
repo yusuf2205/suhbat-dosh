@@ -149,7 +149,7 @@ table.t tr.click:hover td { background: var(--brand-soft); }
   .adm-nav { flex-direction: row; }
   .adm-nav button { padding: 8px 12px; min-height: 42px; white-space: nowrap; }
   .adm-nav button span { display: none; }
-  .adm-nav button[aria-current='true'] span { display: inline; }
+  .adm-nav button { min-width: 44px; justify-content: center; padding: 8px 12px; }
   .adm-back { width: auto; margin-left: auto; padding: 8px 12px; }
   .adm-main { padding: 16px 14px 40px; }
   .adm-head h1 { font-size: 1.35rem; }

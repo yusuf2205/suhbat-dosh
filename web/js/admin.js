@@ -434,6 +434,29 @@ async function viewUsers() {
       h('thead', null, h('tr', null, ['Имя', 'Username', 'Телефон', 'Был(а) / в сети', 'Сообщений', 'Чатов', 'Сессий', 'Файлы', 'Регистрация'].map((x) => h('th', null, x)))), body)));
 }
 
+/** A question with a text field (a reason): resolves to the text ('' if left empty) or null when cancelled. Esc cancels, Enter confirms. */
+function askText(text, label, ok = 'Подтвердить') {
+  return new Promise((resolve) => {
+    const done = (v) => { document.removeEventListener('keydown', key, true); box.remove(); resolve(v); };
+    const input = h('input', { class: 'input', placeholder: label, maxLength: 200, 'aria-label': label });
+    const key = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+      else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); done(input.value.trim()); }
+    };
+    const box = h('div', { class: 'adlg', role: 'dialog', 'aria-modal': 'true', onclick: (e) => { if (e.target === box) done(null); } },
+      h('div', { class: 'adlg-card' }, h('p', { class: 'adlg-text' }, text), input,
+        h('div', { class: 'adlg-btns' }, h('button', { class: 'btn secondary', type: 'button', onclick: () => done(null) }, 'Отмена'), h('button', { class: 'btn danger', type: 'button', onclick: () => done(input.value.trim()) }, ok))));
+    document.addEventListener('keydown', key, true);
+    document.body.append(box);
+    input.focus();
+  });
+}
+
+/** A block that is closed until the administrator opens it. */
+const fold = (title, count, ...body) => h('details', { class: 'panel fold' },
+  h('summary', null, h('span', { class: 'fold-t' }, title), count !== null && count !== undefined ? h('span', { class: 'fold-n' }, String(count)) : null, h('span', { class: 'fold-go', 'aria-hidden': 'true' }, icon('chevron', 18))),
+  h('div', { class: 'fold-body' }, ...body));
+
 async function openUser(id) {
   setTab('users', false);
   const [d, ev] = await Promise.all([get(`/api/admin/users/${id}`), get(`/api/admin/audit?actor=${id}&limit=100`)]);
@@ -442,48 +465,70 @@ async function openUser(id) {
     if (label && !(await askConfirm(label))) return;
     try { await fn(); await (after ? after() : openUser(id)); } catch (e) { notify(errMsg(e)); }
   };
-  const reasonBox = h('input', { class: 'input', placeholder: 'Причина блокировки (необязательно)', maxLength: 200 });
-  const actions = h('div', { class: 'panel' }, h('h2', null, 'Управление аккаунтом'),
-    u.banned_at ? h('p', null, h('span', { class: 'pill warn' }, 'Заблокирован'), ' ', fmtDT(u.banned_at), u.ban_reason ? ` · ${u.ban_reason}` : '') : '',
-    h('div', { class: 'toolbar' },
+  const act = (ico, label, cls, onclick, title) => h('button', { class: `btn small ud-act ${cls}`.trim(), type: 'button', title: title || label, 'aria-label': label, onclick }, icon(ico, 16), h('span', null, label));
+
+  // the top: who this is, and what can be done with the account
+  const head = h('section', { class: 'panel ud-head' },
+    h('div', { class: 'ud-who' },
+      u.avatar ? h('img', { class: 'ud-ava', src: u.avatar, alt: '' }) : h('span', { class: 'ud-ava ph', 'aria-hidden': 'true' }, (u.name || '?').slice(0, 1).toUpperCase()),
+      h('div', { class: 'ud-name' },
+        h('h2', null, u.name),
+        h('div', { class: 'ud-pills' },
+          u.username ? h('span', { class: 'muted' }, `@${u.username}`) : null,
+          u.is_admin ? h('span', { class: 'pill ok' }, 'админ') : null,
+          u.online ? h('span', { class: 'pill ok' }, 'в сети') : h('span', { class: 'pill' }, `был(а) ${fmtShort(u.last_seen)}`),
+          u.banned_at ? h('span', { class: 'pill warn', title: u.ban_reason || '' }, 'заблокирован') : null))),
+    h('div', { class: 'ud-actions' },
+      act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
+      u.is_bot ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
+      h('span', { class: 'ud-sp' }),
       u.banned_at
-        ? h('button', { class: 'btn', type: 'button', onclick: run(null, () => send('POST', `/api/admin/users/${id}/ban`, { banned: false })) }, 'Разблокировать')
-        : [reasonBox, h('button', { class: 'btn danger', type: 'button', onclick: run('Заблокировать аккаунт? Все сессии будут завершены.', () => send('POST', `/api/admin/users/${id}/ban`, { banned: true, reason: reasonBox.value })) }, 'Заблокировать')],
-      h('button', { class: 'btn secondary', type: 'button', onclick: run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`)) }, 'Завершить все сессии'),
-      u.is_bot ? '' : h('button', { class: 'btn secondary', type: 'button', onclick: run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { is_admin: !u.is_admin })) }, u.is_admin ? 'Снять админа' : 'Сделать админом'),
-      h('button', { class: 'btn danger', type: 'button', onclick: run('Удалить аккаунт навсегда? Личные чаты будут удалены, сообщения в группах останутся.', () => send('DELETE', `/api/admin/users/${id}`), () => setTab('users')) }, 'Удалить аккаунт')));
+        ? act('block', 'Разблокировать', '', run(null, () => send('POST', `/api/admin/users/${id}/ban`, { banned: false })))
+        : act('block', 'Заблокировать', 'danger-o', async () => {
+          const reason = await askText('Заблокировать аккаунт? Все сессии будут завершены.', 'Причина (необязательно)', 'Заблокировать');
+          if (reason === null) return;
+          try { await send('POST', `/api/admin/users/${id}/ban`, { banned: true, reason }); await openUser(id); } catch (e) { notify(errMsg(e)); }
+        }),
+      act('trash', 'Удалить', 'danger-o', run('Удалить аккаунт навсегда? Личные чаты будут удалены, сообщения в группах останутся.', () => send('DELETE', `/api/admin/users/${id}`), () => setTab('users')))));
+
+  // chats: the most useful part, right under the top
+  const typeName = { direct: 'личный', group: 'группа', channel: 'канал' };
+  const chatsPanel = h('section', { class: 'panel' }, h('h2', null, `Чаты · ${d.chats.length}`),
+    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', onclick: () => openChat(c.id, () => openUser(id)) },
+      h('span', { class: `ud-ci ${c.type}`, 'aria-hidden': 'true' }, (c.title || '#').slice(0, 1).toUpperCase()),
+      h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || `#${c.id}`),
+        h('small', { class: 'muted ellipsis' }, `${typeName[c.type] || c.type}${c.role && c.role !== 'member' ? ` · ${c.role}` : ''} · с ${fmtShort(c.joined_at)}`)),
+      c.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : null,
+      h('span', { class: 'ud-cn', title: 'написал сообщений' }, String(c.sent)),
+      h('span', { class: 'ud-go', 'aria-hidden': 'true' }, icon('chevron', 16))))) : h('p', { class: 'muted' }, 'Чатов нет'));
+
   const dir = state.users.get(id) || {};
-  const qIn = h('input', { class: 'input', type: 'number', min: 0, placeholder: 'МБ (пусто — как у всех, 0 — без лимита)', 'aria-label': 'Лимит хранилища, МБ',
-    value: dir.quota ? Math.round(dir.quota / 1048576) : '' });
-  const quotaPanel = h('div', { class: 'panel' }, h('h2', null, icon('disk', 18), 'Хранилище пользователя'),
-    h('p', null, `Занято файлами в чатах: ${fmtBytes(dir.storage || 0)}${dir.quota ? ` из ${fmtBytes(dir.quota)}` : ' (без лимита)'}`),
+  const qIn = h('input', { class: 'input', type: 'number', min: 0, placeholder: 'МБ (пусто — как у всех, 0 — без лимита)', 'aria-label': 'Лимит хранилища, МБ', value: dir.quota ? Math.round(dir.quota / 1048576) : '' });
+  const storage = fold('Хранилище', fmtBytes(dir.storage || 0),
+    h('p', { class: 'muted' }, `Занято файлами в чатах: ${fmtBytes(dir.storage || 0)}${dir.quota ? ` из ${fmtBytes(dir.quota)}` : ' (без лимита)'}`),
     h('div', { class: 'toolbar' }, qIn, h('button', { class: 'btn', type: 'button', onclick: run(null, () => send('PUT', `/api/admin/users/${id}/quota`, { mb: qIn.value === '' ? null : Number(qIn.value) })) }, 'Сохранить лимит')));
+
+  const profile = fold('Профиль', null,
+    h('dl', { class: 'dl' },
+      h('dt', null, 'Телефон'), h('dd', { class: 'mono' }, u.phone || '—'), h('dt', null, 'Username'), h('dd', null, u.username ? `@${u.username}` : '—'),
+      h('dt', null, 'Статус'), h('dd', null, u.status || '—'), h('dt', null, 'О себе'), h('dd', null, u.bio || '—'),
+      h('dt', null, 'Регистрация'), h('dd', null, fmtDT(u.created_at)), h('dt', null, 'Последний визит'), h('dd', null, u.online ? 'в сети' : fmtDT(u.last_seen)),
+      u.banned_at ? [h('dt', null, 'Блокировка'), h('dd', null, `${fmtDT(u.banned_at)}${u.ban_reason ? ` · ${u.ban_reason}` : ''}`)] : '',
+      h('dt', null, 'Приватность'), h('dd', { class: 'muted' }, `фото — ${u.privacy.photo}, статус — ${u.privacy.status}, был(а) — ${u.privacy.last_seen}`),
+      d.blocks.length ? [h('dt', null, 'Заблокировал'), h('dd', null, d.blocks.map((b) => b.name).join(', '))] : ''));
+
+  const sessions = fold('Сессии', d.sessions.length,
+    h('div', { class: 'tablewrap ud-sessions' }, h('table', { class: 't compact' },
+      h('thead', null, h('tr', null, ['Устройство', 'IP', 'Активность', ''].map((x) => h('th', null, x)))),
+      h('tbody', null, d.sessions.map((s) => h('tr', null, h('td', { title: s.device }, deviceName(s.device)), h('td', { class: 'mono' }, s.ip),
+        h('td', { class: 'ev-time', title: `создана ${fmtDT(s.created_at)}` }, fmtShort(s.last_active)),
+        h('td', null, s.revoked ? h('span', { class: 'pill' }, 'завершена') : h('span', { class: 'pill ok' }, 'активна'))))))));
+
+  const journal = fold('Журнал действий', ev.events.length, eventsTable(ev.events));
+
   setView(
     h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('users'); } }, '← Пользователи')),
-    h('div', { class: 'grid2 ud-grid' },
-      h('div', { class: 'panel ud-card' }, h('h2', null, u.name, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
-        u.avatar ? h('img', { class: 'ud-ava', src: u.avatar, alt: '' }) : '',
-        h('dl', { class: 'dl' },
-          h('dt', null, 'Телефон'), h('dd', { class: 'mono' }, u.phone), h('dt', null, 'Username'), h('dd', null, u.username ? `@${u.username}` : '—'),
-          h('dt', null, 'Статус'), h('dd', null, u.status || '—'), h('dt', null, 'О себе'), h('dd', null, u.bio || '—'),
-          h('dt', null, 'Регистрация'), h('dd', null, fmtDT(u.created_at)), h('dt', null, 'Последний визит'), h('dd', null, u.online ? 'в сети' : fmtDT(u.last_seen)),
-          h('dt', null, 'Приватность'), h('dd', { class: 'muted' }, `фото — ${u.privacy.photo}, статус — ${u.privacy.status}, был(а) — ${u.privacy.last_seen}`),
-          d.blocks.length ? [h('dt', null, 'Заблокировал'), h('dd', null, d.blocks.map((b) => b.name).join(', '))] : '')),
-      h('div', { class: 'panel' }, h('h2', null, `Сессии (${d.sessions.length})`),
-        h('div', { class: 'tablewrap ud-sessions' }, h('table', { class: 't compact' },
-          h('thead', null, h('tr', null, ['Устройство', 'IP', 'Активность', ''].map((x) => h('th', null, x)))),
-          h('tbody', null, d.sessions.map((s) => h('tr', null, h('td', { title: s.device }, deviceName(s.device)), h('td', { class: 'mono' }, s.ip),
-            h('td', { class: 'ev-time', title: `создана ${fmtDT(s.created_at)}` }, fmtShort(s.last_active)),
-            h('td', null, s.revoked ? h('span', { class: 'pill' }, 'завершена') : h('span', { class: 'pill ok' }, 'активна')))))))),
-    ),
-    h('div', { class: 'grid2' }, actions, quotaPanel),
-    h('div', { class: 'panel' }, h('h2', null, `Чаты (${d.chats.length})`),
-      h('div', { class: 'tablewrap' }, h('table', { class: 't' },
-        h('thead', null, h('tr', null, ['Чат', 'Тип', 'Роль', 'Написал сообщений', 'Вступил'].map((x) => h('th', null, x)))),
-        h('tbody', null, d.chats.map((c) => h('tr', { class: 'click', onclick: () => openChat(c.id) },
-          h('td', null, c.title || `#${c.id}`, c.banned ? [' ', h('span', { class: 'pill warn' }, 'заблокирован')] : ''),
-          h('td', null, c.type), h('td', null, c.role), h('td', null, String(c.sent)), h('td', { class: 'ev-time' }, fmtDT(c.joined_at)))))))),
-    h('div', { class: 'panel' }, h('h2', null, 'Журнал действий пользователя'), eventsTable(ev.events)),
+    head, chatsPanel, profile, sessions, storage, journal,
   );
 }
 
@@ -575,8 +620,8 @@ function openLightbox(imgs, start) {
   show();
 }
 
-async function openChat(id) {
-  setTab('chats', false);
+async function openChat(id, back = null) {   // back: where the crumb and Esc lead (the user page we came from)
+  setTab(back ? 'users' : 'chats', false);
   const f = { q: '', kind: '', author: '', since: '', until: '' };
   const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([, v]) => v !== '' && v !== undefined && v !== null)).toString();
   const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?limit=100`)]);
@@ -738,7 +783,7 @@ async function openChat(id) {
   paintHeading();
   draw();
   setView(
-    h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); setTab('chats'); } }, '← Чаты')),
+    h('div', { class: 'crumb' }, h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (back) back(); else setTab('chats'); } }, back ? '← Назад' : '← Чаты')),
     h('div', { class: 'panel' }, h('h2', null, c.title || state.chats.get(id)?.title || `Чат #${id}`),
       h('p', { class: 'muted' }, `${c.type} · создан ${fmtDT(c.created_at)}${c.description ? ` · ${c.description}` : ''}`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
