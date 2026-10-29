@@ -401,3 +401,17 @@ test('the copy of a Telegram chat shows when the other side is online in Telegra
   assert.equal((await chatOf()).tg.presence.approx, 'recently');
   assert.equal((await tgPost({ presence: true, tg_chat: '555555', online: true })).skipped, true, 'an unknown chat is ignored');
 });
+
+test('the daily check can ask the bridge to catch up, and sees when it is done', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002099', 'Проверка');
+  await link(u);
+  const ask = (m, p) => fetch(`http://127.0.0.1:${BPORT}${p}?u=${u.user.id}`, { method: m, headers: { Authorization: `Bearer ${TOKEN}` } }).then((r) => r.json().then((j) => ({ status: r.status, j })));
+  const before = (await ask('GET', '/accounts')).j.accounts[String(u.user.id)];
+  assert.equal(before.connected, true);
+  assert.equal(typeof before.last_sync, 'number');
+  const r = await ask('POST', '/resync');
+  assert.equal(r.status, 200, JSON.stringify(r.j));
+  const done = await until(async () => { const a = (await ask('GET', '/accounts')).j.accounts[String(u.user.id)]; return a.last_sync > 0 && !a.resyncing ? a : null; });
+  assert.ok(done, 'the catch-up finished');
+  assert.equal((await fetch(`http://127.0.0.1:${BPORT}/resync?u=999999`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } })).status >= 400, true);
+});

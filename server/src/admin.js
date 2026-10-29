@@ -15,6 +15,7 @@ import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
 import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
 import { embedderReady, rankByMeaning } from './semantic.js';
+import { integrityState, lastRuns, runIntegrity } from './integrity.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
 // Super-admin API. Every route requires users.is_admin = 1; reading private content is itself audited.
@@ -67,6 +68,7 @@ admin.get('/overview', (_req, res) => {
         disk_free: sys.disk_free, disk_total: sys.disk_total, db_bytes: sys.db_bytes,
         last_backup_at: last ? last.created_at : null,
         offsite: mirrorConfig().configured, offsite_ok: mirrorConfig().configured && mirrorStatus.last ? (!mirrorStatus.last.dir || mirrorStatus.last.dir === 'ok') && (!mirrorStatus.last.webdav || mirrorStatus.last.webdav === 'ok') : null,
+        integrity: (() => { const r = lastRuns(1)[0]; return r ? { ok: r.ok, bad: r.bad, warn: r.warn, at: r.ts, problems: r.checks.filter((c) => c.status === 'bad').map((c) => `${c.name}: ${c.text}`) } : null; })(),
         backup_verify: verifyStatus.last ? { ok: verifyStatus.last.ok, at: verifyStatus.last.at, problems: verifyStatus.last.problems } : null,
         uptime: sys.uptime, cpu: sys.cpu, mem: sys.mem,
         services: {
@@ -271,6 +273,15 @@ admin.get('/chats/:id/messages', (req, res) => {
     out.total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
   } else out.deleted = [];
   res.json(out);
+});
+
+// The daily check that everything is recorded: the last runs, and a button to run it now.
+admin.get('/integrity', (_req, res) => res.json({ state: integrityState(), runs: lastRuns(14) }));
+admin.post('/integrity/run', (req, res) => {
+  if (integrityState().running) return res.json({ started: false, running: true });
+  audit(req.user.id, 'admin.integrity_run', { ip: req.ip });
+  runIntegrity('manual').catch(() => {});
+  res.json({ started: true });
 });
 
 // Search across the messages: the words themselves (any letter case) or the meaning of a phrase. Every search is written to the journal.

@@ -207,6 +207,7 @@ class Acct:
         self.up_nochat = set()     # chats whose messages could not be fetched (the library does not know them)
         self.last_sync = 0.0
         self.last_ok = time.time()   # the last moment the connection was seen alive: what came after it may have been missed
+        self.resync_task = None      # the catch-up asked for by the daily check
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.synced = False        # the first complete copy of the personal chats has finished
 
@@ -909,8 +910,35 @@ def who(request) -> Acct:
 
 async def accounts(_r):
     """For the administrator's panel: who is connected right now and how the first copy is going."""
-    return web.json_response({"accounts": {u: {"connected": bool(a.me and a.client and a.client.is_connected()), "synced": a.synced, "backfill": a.backfill["state"]}
+    return web.json_response({"accounts": {u: {"connected": bool(a.me and a.client and a.client.is_connected()), "synced": a.synced, "backfill": a.backfill["state"],
+                                               "last_sync": int(a.last_sync), "resyncing": bool(a.resync_task and not a.resync_task.done())}
                                            for u, a in ACCTS.items() if a.me}})
+
+
+async def resync(r):
+    """The daily check asks every account to catch up on the newest messages of its chats now (in the background; /accounts shows when it is done)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    if not MOCK and a.client is not None and not a.client.is_connected():
+        try:
+            await asyncio.wait_for(a.client.connect(), 40)
+        except Exception:
+            return web.json_response({"error": "not_connected"}, status=503)
+
+    async def run():
+        try:
+            if not MOCK:
+                a.last_sync = 0
+                a.last_ok = time.time() - 2 * 3600   # the photos and files of the last hours come along
+                await sync_recent(a)
+        except Exception as e:
+            log("resync failed:", type(e).__name__)
+        finally:
+            a.last_sync = time.time()
+    if a.resync_task is None or a.resync_task.done():
+        a.resync_task = asyncio.create_task(run())
+    return web.json_response({"ok": True})
 
 
 async def health(_r):
@@ -1259,7 +1287,7 @@ async def mock_media(r):
 def app():
     a = web.Application(middlewares=[guard], client_max_size=SEND_MAX + 1024 * 1024)
     a.add_routes([
-        web.get("/health", health), web.get("/accounts", accounts),
+        web.get("/health", health), web.get("/accounts", accounts), web.post("/resync", resync),
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),

@@ -284,3 +284,18 @@ table.t.health td { overflow-wrap: anywhere; }
   .adm-main { padding-left: 12px; padding-right: 12px; }
 }
 
+/* the daily check that everything is recorded */
+.integ-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; }
+.integ-run { margin: 6px 0; padding: 6px 12px; border-radius: 12px; background: rgba(251, 199, 0, .2); font-size: .9rem; }
+.integ-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.integ-list li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+.integ-list li:last-child { border-bottom: 0; }
+.integ-ico { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: .78rem; font-weight: 800; background: #d9f6e6; color: #138a52; margin-top: 1px; }
+.integ-list li.warn .integ-ico { background: #ffe9b8; color: #8a5a00; }
+.integ-list li.bad .integ-ico { background: #ffd9d6; color: #c0392b; }
+.integ-t { display: grid; gap: 1px; min-width: 0; }
+.integ-t small { overflow-wrap: anywhere; color: var(--muted); }
+.integ-days { display: flex; gap: 4px; margin-top: 10px; flex-wrap: wrap; }
+.integ-day { width: 14px; height: 14px; border-radius: 4px; background: #22b573; }
+.integ-day.warn { background: #f59e0b; } .integ-day.bad { background: #d6453d; }
+

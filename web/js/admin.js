@@ -101,7 +101,7 @@ const LABELS = {
   'chat.member_update': 'изменил права участника', 'chat.leave': 'покинул чат', 'chat.invite_reset': 'сбросил ссылку-приглашение',
   'chat.join_by_link': 'вступил по ссылке', 'message.send': 'отправил сообщение', 'message.edit': 'изменил сообщение',
   'message.delete': 'удалил сообщение', 'chat.pin': 'закрепил сообщение', 'chat.unpin': 'открепил сообщение',
-  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)',
+  'admin.view_user': 'открыл профиль пользователя (админ)', 'admin.view_chat': 'открыл переписку (админ)', 'admin.export_chat': 'выгрузил переписку (админ)', 'client.media_error': 'не удалась запись звука или видео', 'admin.search': 'искал в сообщениях (админ)', 'admin.integrity_run': 'запустил проверку записи данных (админ)',
   'call.start': 'начал звонок', 'call.end': 'завершил звонок', 'call.quality': 'показатели качества звонка',
   'admin.ban_user': 'заблокировал аккаунт (админ)', 'admin.unban_user': 'разблокировал аккаунт (админ)', 'admin.delete_user': 'удалил аккаунт (админ)',
   'admin.logout_user': 'завершил все сессии (админ)', 'admin.grant_admin': 'выдал права администратора', 'admin.revoke_admin': 'снял права администратора',
@@ -328,6 +328,7 @@ function attentionPanels(o) {
   if (a.last_backup_at && !a.offsite) add('warn', 'disk', 'Копии лежат на том же диске', 'Если диск выйдет из строя, пропадёт всё. Задайте внешнюю папку или облако', () => setTab('server'));
   else if (a.offsite_ok === false) add('bad', 'disk', 'Копия не дошла до внешнего хранилища', 'Подробности на вкладке «Сервер»', () => setTab('server'));
   if (a.backup_verify && !a.backup_verify.ok) add('bad', 'disk', 'Проверка резервной копии не прошла', (a.backup_verify.problems || []).join('; '), () => setTab('server'));
+  if (a.integrity && !a.integrity.ok) add('bad', 'shield', 'Проверка записи данных нашла проблемы', (a.integrity.problems || []).join('; ').slice(0, 140), () => setTab('server'));
   if (a.failed_logins_24h >= 10) add('warn', 'lock', `Неудачных входов за сутки: ${a.failed_logins_24h}`, 'Возможен подбор пароля', () => { state.preset = { action: 'auth.login_failed' }; setTab('journal'); });
   if (a.banned) add('info', 'block', `Заблокировано аккаунтов: ${a.banned}`, null, () => setTab('users'));
   if (o.registration === 'open') add('info', 'users', 'Регистрация открыта для всех', 'Можно ограничить по приглашениям', () => setTab('access'));
@@ -1083,6 +1084,35 @@ function mirrorLine(m) {
   return `Копии дублируются: ${parts.join(' и ')}.${last}`;
 }
 
+/** The daily check that everything is recorded: the last verdict, every check, the days before it, and a button to run it now. */
+const CHECK_ICON = { ok: '✓', warn: '!', bad: '✕' };
+async function integrityPanel() {
+  const box = h('section', { class: 'panel integ' });
+  let timer = 0;
+  async function paint() {
+    let d;
+    try { d = await get('/api/admin/integrity'); } catch { clear(box).append(h('p', { class: 'muted' }, 'Не удалось получить данные проверки')); return; }
+    const last = d.runs[0];
+    const running = d.state.running;
+    const btn = h('button', { class: 'btn small', type: 'button', disabled: running, onclick: async () => { btn.disabled = true; try { await send('POST', '/api/admin/integrity/run'); } catch (e) { notify(errMsg(e)); } paint(); } }, running ? 'Проверяю…' : 'Проверить сейчас');
+    clear(box).append(
+      h('div', { class: 'panel-head' }, h('h2', null, icon('shield', 18), 'Проверка записи данных'), btn),
+      h('p', { class: 'muted' }, `Каждый день в ${d.state.at} (${d.state.tz}) сервер сам проверяет, что всё записано: база, файлы, поиск, запланированное, копии и Телеграм. Устройства для этого включать не нужно.`),
+      running ? h('p', { class: 'integ-run' }, `Идёт проверка: ${d.state.progress || '…'}`) : null,
+      last ? h('div', { class: 'integ-head' },
+        h('span', { class: `pill ${last.ok ? 'ok' : 'bad'}` }, last.ok ? (last.warn ? 'в порядке, есть заметки' : 'всё в порядке') : 'есть проблемы'),
+        h('span', { class: 'muted' }, `${fmtDT(last.ts)} · ${last.trigger === 'auto' ? 'по расписанию' : 'вручную'} · ${(last.duration_ms / 1000).toFixed(1)} с`)) : h('p', { class: 'muted' }, 'Проверок ещё не было: первая будет сегодня после ' + d.state.at + ' или по кнопке.'),
+      last ? h('ul', { class: 'integ-list' }, last.checks.map((c) => h('li', { class: c.status },
+        h('span', { class: 'integ-ico', 'aria-hidden': 'true' }, CHECK_ICON[c.status] || '·'),
+        h('span', { class: 'integ-t' }, h('b', null, c.name), h('small', null, c.text), c.examples?.length ? h('small', { class: 'muted' }, c.examples.join(', ')) : null)))) : null,
+      d.runs.length > 1 ? h('div', { class: 'integ-days', 'aria-label': 'Прошлые проверки' }, d.runs.slice().reverse().map((r) => h('span', { class: `integ-day ${r.ok ? (r.warn ? 'warn' : 'ok') : 'bad'}`, title: `${fmtDT(r.ts)}: ${r.ok ? 'в порядке' : `проблем: ${r.bad}`}` }))) : null);
+    clearTimeout(timer);
+    if (running) timer = setTimeout(() => { if (box.isConnected) paint(); }, 3000);
+  }
+  await paint();
+  return box;
+}
+
 async function viewServer() {
   const [sys, bk, st] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups'), get('/api/admin/storage').catch(() => null)]);
   const n = sys.now;
@@ -1157,7 +1187,8 @@ async function viewServer() {
     h('h3', null, 'Самые тяжёлые чаты'),
     h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Сообщений', 'Файлов', 'Размер'].map((x) => h('th', null, x)))),
       h('tbody', null, ...st.chats.map((c) => h('tr', null, h('td', null, c.title || `чат ${c.id}`, c.bridge ? [' ', h('span', { class: 'pill' }, 'Телеграм')] : ''), h('td', null, String(c.messages)), h('td', null, String(c.files)), h('td', null, fmtBytes(c.bytes)))))))) : null;
-  setView(healthPanel, kpis, turnPanel, storagePanel,
+  const integrity = await integrityPanel();
+  setView(healthPanel, integrity, kpis, turnPanel, storagePanel,
     h('div', { class: 'grid2' },
       h('div', { class: 'panel' }, h('h2', null, 'Процессор, % (последние сутки)'), spark(S.map((x) => x.cpu), { max: 100, unit: '%' })),
       h('div', { class: 'panel' }, h('h2', null, 'Память, %'), spark(S.map((x) => x.mem), { max: 100, unit: '%', color: '#3b82f6' }))),

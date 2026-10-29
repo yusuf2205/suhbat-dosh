@@ -214,3 +214,56 @@ test('the administrator searches messages by their words (any letter case) in ev
   assert.ok(log.length >= 3);
   assert.ok(log.some((e) => e.details?.q === 'money' && e.details?.mode === 'text'));
 });
+
+test('the daily check: finds a lost file, repairs the search index, keeps the history, and tells the time of day in the right zone', async () => {
+  const { localClock } = await import('../server/src/clock.js');
+  const root1 = await login('+998900000001', 'Root');
+  const una = await login('+998900000041', 'Una');
+  const vik = await login('+998900000042', 'Vik');
+  const chat = (await call(una.cookie, 'POST', '/api/chats/direct', { user_id: vik.user.id })).data.chat;
+  await call(una.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'a message for the index check' });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const up = await fetch(`${BASE}/api/chats/${chat.id}/files?name=pic.png`, { method: 'POST', headers: { cookie: una.cookie, 'content-type': 'image/png' }, body: png });
+  const fid = (await up.json()).message.file.id;
+
+  const wait = async () => { for (let i = 0; i < 100; i++) { const d = (await call(root1.cookie, 'GET', '/api/admin/integrity')).data; if (!d.state.running) return d; await new Promise((r) => setTimeout(r, 100)); } throw new Error('the check did not finish'); };
+  // a clean day
+  assert.equal((await call(root1.cookie, 'POST', '/api/admin/integrity/run')).data.started, true);
+  let d = await wait();
+  const names = d.runs[0].checks.map((c) => c.name);
+  for (const n of ['База данных', 'Индекс поиска', 'Файлы на диске', 'Запланированные сообщения', 'Резервные копии', 'Место на диске']) assert.ok(names.includes(n), n);
+  assert.equal(d.runs[0].checks.find((c) => c.name === 'Файлы на диске').status, 'ok');
+
+  // the index loses rows: the check puts them back and says so
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(path.join(dataDir, 'suhbat.db'));
+  db.exec('DELETE FROM msg_fts');
+  db.close();
+  await call(root1.cookie, 'POST', '/api/admin/integrity/run');
+  d = await wait();
+  const idx = d.runs[0].checks.find((c) => c.name === 'Индекс поиска');
+  assert.equal(idx.status, 'warn');
+  assert.ok(idx.fixed > 0);
+  await call(root1.cookie, 'POST', '/api/admin/integrity/run');
+  d = await wait();
+  assert.equal(d.runs[0].checks.find((c) => c.name === 'Индекс поиска').status, 'ok');   // the next day it is whole
+
+  // a file disappears from the disk: a problem, with the name of the file
+  fs.unlinkSync(path.join(dataDir, 'files', fid));
+  await call(root1.cookie, 'POST', '/api/admin/integrity/run');
+  d = await wait();
+  const lost = d.runs[0].checks.find((c) => c.name === 'Файлы на диске');
+  assert.equal(lost.status, 'bad');
+  assert.ok(lost.examples.some((x) => x.includes('pic.png')));
+  assert.equal(d.runs[0].ok, false);
+  assert.ok(d.runs.length >= 4);
+  assert.equal((await call(una.cookie, 'GET', '/api/admin/integrity')).status, 403);
+  assert.equal((await call(una.cookie, 'POST', '/api/admin/integrity/run')).status, 403);
+
+  // 14:00 in Tashkent is 09:00 in Greenwich
+  if (localClock) {
+    process.env.INTEGRITY_TZ = 'Asia/Tashkent';
+    assert.deepEqual(localClock(Date.UTC(2026, 9, 30, 9, 0)), { day: '2026-10-30', hm: '14:00' });
+    assert.deepEqual(localClock(Date.UTC(2026, 9, 30, 20, 30)), { day: '2026-10-31', hm: '01:30' });
+  }
+});

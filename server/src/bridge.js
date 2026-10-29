@@ -28,6 +28,11 @@ const BASE = () => (process.env.TGBRIDGE_URL || 'http://tgbridge:9200').replace(
 const TOKEN = () => process.env.BRIDGE_TOKEN || '';
 export const bridgeConfigured = () => TOKEN().length >= 24;
 
+/** The accounts the bridge holds right now: { userId: { connected, synced, last_sync, resyncing } }. */
+export async function bridgeLiveAccounts() { return (await call('GET', '/accounts', 0)).accounts || {}; }
+/** Ask the bridge to catch up on the newest messages of one account (it runs in the background; progress shows in the accounts list). */
+export async function bridgeResync(uid) { return call('POST', '/resync', uid); }
+
 let health = { at: 0, ok: false };
 export async function bridgeAvailable() {
   if (!bridgeConfigured()) return false;
