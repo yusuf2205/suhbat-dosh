@@ -992,56 +992,91 @@ async function viewJournal() {
 // ---------------------------------------------------------------- access: registration, invitations, broadcast
 /** Who may link a Telegram account to their messenger; the copies are readable in "Чаты и переписка". */
 function bridgePanel(data) {
-  const body = h('tbody');
   const KIND = { user: 'личный', group: 'группа', channel: 'канал' };
-  const toggleChats = async (u, sub) => {
-    if (!sub.hidden) { sub.hidden = true; return; }
-    sub.hidden = false;
-    const cell = sub.firstChild;
-    const load = async () => {
-      clear(cell).append(h('span', { class: 'muted' }, 'Загрузка…'));
-      const r = await get(`/api/admin/bridge/${u.id}/chats`);
-      const rows = r.chats.map((c) => h('tr', null,
-        h('td', null, c.title || '—'), h('td', null, h('span', { class: 'pill' }, KIND[c.kind] || c.kind)),
-        h('td', null, String(c.messages)), h('td', { class: 'ev-time' }, c.last_at ? fmtDT(c.last_at) : '—'),
-        h('td', null,
-          h('button', { class: 'btn secondary', type: 'button', title: 'Может ли человек отвечать в этом чате из приложения', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { two_way: !c.two_way }); load(); } catch (e) { notify(errMsg(e)); } } }, c.two_way ? 'Отвечает из приложения' : 'Только читает'), ' ',
-          h('button', { class: 'btn danger', type: 'button', title: 'Перестать копировать этот чат (то, что скопировано, останется)', onclick: async () => {
-            if (!(await askConfirm(`Перестать копировать «${c.title}»? Уже скопированное останется.`))) return;
-            try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { copy: false }); load(); } catch (e) { notify(errMsg(e)); }
-          } }, 'Не копировать'))));
-      clear(cell).append(
-        r.chats.length ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Вид', 'Сообщений', 'Последнее', ''].map((x) => h('th', null, x)))), h('tbody', null, rows))) : h('p', { class: 'muted' }, 'Чатов нет.'),
-        r.excluded ? h('p', null, `Снято с копирования личных чатов: ${r.excluded} `, h('button', { class: 'btn secondary', type: 'button', onclick: async () => { try { await send('POST', `/api/admin/bridge/${u.id}/restore`, {}); load(); } catch (e) { notify(errMsg(e)); } } }, 'Вернуть все')) : null);
-    };
-    try { await load(); } catch (e) { clear(cell).append(h('span', { class: 'err' }, errMsg(e))); }
+  const list = h('div', { class: 'tb-list' });
+  const head = h('div', { class: 'tb-sum' });
+  let users = data.users;
+  let filter = 'all';
+  let query = '';
+  const refresh = async () => { users = (await get('/api/admin/bridge')).users; draw(); };
+  const fail = (e) => notify(errMsg(e));
+
+  /** A switch with a caption: on / off, the state is the whole message. */
+  const sw = (on, label, title, onclick) => h('button', { class: `tb-sw${on ? ' on' : ''}`, type: 'button', role: 'switch', 'aria-checked': String(on), title, onclick }, h('i', { 'aria-hidden': 'true' }), h('span', null, label));
+
+  // the copied chats of one person: opened under the row
+  async function chatsOf(u, cell) {
+    clear(cell).append(h('p', { class: 'muted' }, 'Загрузка…'));
+    let r;
+    try { r = await get(`/api/admin/bridge/${u.id}/chats`); } catch (e) { clear(cell).append(h('p', { class: 'err' }, errMsg(e))); return; }
+    const row = (c) => h('div', { class: 'ud-chat tb-chat' },
+      h('span', { class: `ud-ci ${c.kind === 'user' ? 'direct' : c.kind}`, 'aria-hidden': 'true' }, (c.title || '?').slice(0, 1).toUpperCase()),
+      h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || '—'), h('small', { class: 'muted ellipsis' }, `${KIND[c.kind] || c.kind} · ${c.last_at ? `последнее ${fmtShort(c.last_at)}` : 'сообщений нет'}`)),
+      h('span', { class: 'ud-cn', title: 'сообщений скопировано' }, String(c.messages)),
+      sw(!!c.two_way, c.two_way ? 'отвечает' : 'читает', 'Может ли человек отвечать в этом чате из приложения', async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { two_way: !c.two_way }); chatsOf(u, cell); } catch (e) { fail(e); } }),
+      h('button', { class: 'btn small danger-o', type: 'button', title: 'Перестать копировать этот чат (то, что скопировано, останется)', onclick: async () => {
+        if (!(await askConfirm(`Перестать копировать «${c.title}»? Уже скопированное останется.`))) return;
+        try { await send('PUT', `/api/admin/bridge/${u.id}/chats/${encodeURIComponent(c.tg_chat)}`, { copy: false }); chatsOf(u, cell); } catch (e) { fail(e); }
+      } }, 'Не копировать'));
+    clear(cell).append(
+      r.chats.length ? h('div', { class: 'ud-chats tb-chats' }, r.chats.map(row)) : h('p', { class: 'muted' }, 'Чатов нет.'),
+      r.excluded ? h('p', { class: 'muted' }, `Снято с копирования личных чатов: ${r.excluded}. `, h('button', { class: 'btn small secondary', type: 'button', onclick: async () => { try { await send('POST', `/api/admin/bridge/${u.id}/restore`, {}); chatsOf(u, cell); } catch (e) { fail(e); } } }, 'Вернуть все')) : null);
+  }
+
+  const act = (ico, label, cls, title, onclick) => h('button', { class: `btn small ud-act ${cls}`.trim(), type: 'button', title: title || label, 'aria-label': label, onclick }, icon(ico, 16), h('span', null, label));
+
+  const rowOf = (u) => {
+    const sub = h('div', { class: 'tb-sub', hidden: true });
+    const live = u.linked && !(u.live && !u.live.connected);
+    const el = h('div', { class: `tb-row${u.linked ? '' : ' off'}` },
+      h('div', { class: 'tb-main' },
+        h('span', { class: `ud-ci ${u.linked ? 'direct' : 'channel'}`, 'aria-hidden': 'true' }, (u.name || '?').slice(0, 1).toUpperCase()),
+        h('span', { class: 'ud-cm' },
+          h('b', { class: 'ellipsis' }, u.name, u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : null),
+          u.linked ? h('small', { class: 'muted ellipsis' }, `Телеграм: ${u.tg_name || '—'}${u.tg_username ? ` @${u.tg_username}` : ''}`) : h('small', { class: 'muted' }, u.allowed ? 'Телеграм не подключён' : 'Подключать запрещено')),
+        h('span', { class: 'tb-chips' },
+          u.linked ? h('span', { class: `pill ${live ? 'ok' : ''}` }, live ? 'подключён' : 'нет связи') : (!u.allowed ? h('span', { class: 'pill warn' }, 'запрещено') : null),
+          u.linked ? h('span', { class: 'pill', title: 'скопировано чатов' }, `${u.chats} чатов`) : null,
+          u.linked ? h('span', { class: 'pill', title: 'скопировано сообщений' }, `${u.messages.toLocaleString('ru-RU')} сообщ.`) : null)),
+      h('div', { class: 'tb-ctl' },
+        u.linked ? sw(!!u.auto_private, u.auto_private ? 'личные копируются' : 'личные не копируются', 'Копировать ли личные чаты этого человека (видит только админ)', async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); await refresh(); } catch (e) { fail(e); } }) : null,
+        h('span', { class: 'ud-sp' }),
+        u.linked ? act('chat', 'Чаты', 'secondary', 'Показать скопированные чаты', () => { sub.hidden = !sub.hidden; if (!sub.hidden) chatsOf(u, sub); }) : null,
+        u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [
+          act(u.allowed ? 'block' : 'check', u.allowed ? 'Запретить' : 'Разрешить', u.allowed ? 'secondary' : '', u.allowed ? 'Отключить Телеграм и запретить подключать' : 'Разрешить подключать Телеграм', async () => {
+            if (u.allowed && u.linked && !(await askConfirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`, 'Запретить'))) return;
+            try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); await refresh(); } catch (e) { fail(e); }
+          }),
+          u.linked ? act('trash', 'Удалить', 'danger-o', 'Отключить Телеграм этого человека и удалить скопированные чаты', async () => {
+            if (!(await askConfirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`, 'Удалить'))) return;
+            try { await send('DELETE', `/api/admin/bridge/${u.id}`); await refresh(); } catch (e) { fail(e); }
+          }) : null]),
+      sub);
+    return el;
   };
-  const draw = (users) => clear(body).append(...users.flatMap((u) => { const sub = h('tr', { class: 'br-sub', hidden: true }, h('td', { colSpan: 3 })); const main = h('tr', null,
-    h('td', null, h('b', null, u.name), u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : ''),
-    h('td', null, u.linked
-      ? [h('span', { class: u.live && !u.live.connected ? 'pill' : 'pill ok' }, u.live && !u.live.connected ? 'нет связи' : 'подключён'), ` ${u.tg_name}${u.tg_username ? ` @${u.tg_username}` : ''} · чатов ${u.chats} · сообщений ${u.messages} `,
-          h('button', { class: 'btn secondary', type: 'button', title: 'Копировать ли личные чаты этого человека (видит только админ)', onclick: async () => { try { await send('PUT', `/api/admin/bridge/${u.id}/personal`, { auto_private: !u.auto_private }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); } } }, u.auto_private ? 'Личные чаты: копируются' : 'Личные чаты: не копируются'), ' ',
-          h('button', { class: 'btn secondary', type: 'button', onclick: () => toggleChats(u, sub) }, 'Чаты')]
-      : h('span', { class: 'muted' }, 'не подключён')),
-    h('td', { class: 'br-actions' }, u.is_admin ? h('span', { class: 'muted' }, 'всегда можно') : [h('button', {
-      class: `btn small ${u.allowed ? 'secondary' : 'danger'}`, type: 'button',
-      onclick: async () => {
-        if (u.allowed && u.linked && !(await askConfirm(`Запретить ${u.name}? Подключённый Телеграм будет отключён, копии останутся.`))) return;
-        try { await send('PUT', `/api/admin/bridge/${u.id}`, { allowed: !u.allowed }); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); }
-      },
-    }, u.allowed ? 'Запретить' : 'Разрешить'), u.linked ? [h('button', {
-      class: 'btn small danger', type: 'button', title: 'Отключить Телеграм этого человека и удалить скопированные чаты',
-      onclick: async () => {
-        if (!(await askConfirm(`Удалить мост ${u.name}? Телеграм будет отключён, ВСЕ скопированные чаты удалены. Это нельзя отменить.`))) return;
-        try { await send('DELETE', `/api/admin/bridge/${u.id}`); const fresh = await get('/api/admin/bridge'); draw(fresh.users); } catch (e) { notify(errMsg(e)); }
-      },
-    }, 'Удалить')] : ''])); return [main, sub]; }));
-  draw(data.users);
-  return h('div', { class: 'panel' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'),
-    h('p', { class: 'muted' }, data.configured
-      ? 'Подключить свой Телеграм может любой пользователь, пока вы не запретите. «Запретить» отключает его Телеграм (копии остаются), «Удалить» отключает и стирает все скопированные чаты. Все личные чаты такого человека копируются сюда тихо, без уведомлений; человек видит их и может отвечать из приложения, но не может их удалять, очищать или остановить копирование: это можете только вы. Вы видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.'
-      : 'Мост не включён на сервере: нужны BRIDGE_TOKEN и контейнер tgbridge (см. docs/tgbridge.md).'),
-    data.configured ? h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Пользователь', 'Телеграм', 'Доступ'].map((x) => h('th', null, x)))), body)) : null);
+
+  function draw() {
+    const linked = users.filter((u) => u.linked);
+    const offline = linked.filter((u) => u.live && !u.live.connected).length;
+    clear(head).append(
+      h('span', { class: 'pill ok' }, `подключено: ${linked.length}`),
+      offline ? h('span', { class: 'pill warn' }, `нет связи: ${offline}`) : null,
+      h('span', { class: 'pill' }, `сообщений: ${linked.reduce((a, u) => a + (u.messages || 0), 0).toLocaleString('ru-RU')}`));
+    const q = query.trim().toLowerCase();
+    const shown = users.filter((u) => (filter === 'all' || (filter === 'on' ? u.linked : !u.linked)) && (!q || `${u.name} ${u.username || ''} ${u.tg_name || ''} ${u.tg_username || ''}`.toLowerCase().includes(q)));
+    clear(list).append(...(shown.length ? shown.map(rowOf) : [h('p', { class: 'muted' }, 'Никого не найдено')]));
+  }
+
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя или @username', 'aria-label': 'Поиск', oninput: (e) => { query = e.target.value; draw(); } });
+  const chips = [['all', 'Все'], ['on', 'Подключены'], ['off', 'Не подключены']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === filter), onclick: () => { filter = k; chips.forEach((b, i) => b.setAttribute('aria-pressed', String(['all', 'on', 'off'][i] === k))); draw(); } }, l));
+  draw();
+  return h('section', { class: 'panel tb-panel' },
+    h('div', { class: 'panel-head' }, h('h2', null, icon('chat', 18), 'Мост с Телеграмом'), data.configured ? head : null),
+    data.configured ? null : h('p', { class: 'muted' }, 'Мост не включён на сервере: нужны BRIDGE_TOKEN и контейнер tgbridge (см. docs/tgbridge.md).'),
+    h('details', { class: 'tb-how' }, h('summary', null, 'Как это работает'),
+      h('p', { class: 'muted' }, 'Подключить свой Телеграм может любой пользователь, пока вы не запретите. «Запретить» отключает его Телеграм (копии остаются), «Удалить» отключает и стирает все скопированные чаты. Все личные чаты такого человека копируются сюда тихо, без уведомлений; человек видит их и может отвечать из приложения, но не может их удалять, очищать или остановить копирование: это можете только вы. Вы видите эти копии во вкладке «Чаты и переписка»; каждый просмотр записывается в журнал. Человек знает об этом заранее.')),
+    data.configured ? h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, chips))) : null,
+    data.configured ? list : null);
 }
 
 async function viewAccess() {

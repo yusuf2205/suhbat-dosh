@@ -313,3 +313,28 @@ table.t.health td { overflow-wrap: anywhere; }
 .xd-qr { display: grid; place-items: center; padding: 6px; }
 @media (max-width: 520px) { .xd-split { grid-template-columns: 1fr; } }
 
+/* the Telegram bridge: one tidy row per person */
+.tb-sum { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tb-how { margin: 4px 0 8px; font-size: .9rem; }
+.tb-how > summary { cursor: pointer; color: var(--brand-text); font-weight: 600; width: max-content; }
+.tb-how p { margin: 6px 0 0; line-height: 1.5; }
+.tb-list { display: grid; gap: 8px; }
+.tb-row { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.tb-row.off { background: transparent; opacity: .85; }
+.tb-main { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.tb-main .ud-cm { flex: 1 1 200px; }
+.tb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tb-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.tb-ctl:empty { display: none; }
+.tb-sw { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; font-size: .86rem; cursor: pointer; padding: 4px 2px; border-radius: 14px; }
+.tb-sw i { width: 34px; height: 20px; border-radius: 10px; background: #c9c3b0; position: relative; flex: none; transition: background-color .15s; }
+.tb-sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.tb-sw.on i { background: #22b573; }
+.tb-sw.on i::after { transform: translateX(14px); }
+.tb-sw:focus-visible { outline: 2px solid var(--yel, #fbc700); outline-offset: 2px; }
+.tb-sub { padding-top: 8px; border-top: 1px dashed var(--line); }
+.tb-chats { max-height: 50vh; }
+.tb-chat { cursor: default; flex-wrap: wrap; }
+.tb-chat:hover { background: transparent; }
+@media (max-width: 560px) { .tb-chat .btn { margin-left: auto; } }
+
