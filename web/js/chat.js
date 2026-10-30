@@ -91,8 +91,18 @@ function showPlaceholder() {
 // ---------------------------------------------------------------- open / close
 let chatLayer = null;
 
+/** On a computer the cursor is in the message field as soon as a chat is opened, so one can type at once (not on a phone: the keyboard would jump up). */
+function focusComposer() {
+  try {
+    if (!matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    if (document.querySelector('.modal, dialog[open]')) return;   // a window is open: its own field keeps the cursor
+    const ta = view?.ta;
+    if (ta?.isConnected && !ta.disabled && !ta.readOnly) ta.focus({ preventScroll: true });
+  } catch { /* no focus, no harm */ }
+}
+
 export async function openChat(id) {
-  if (S.active === id && view) return;
+  if (S.active === id && view) { focusComposer(); return; }
   closeRecorder();
   S.active = id;
   const c = S.chats.get(id);
@@ -107,6 +117,7 @@ export async function openChat(id) {
   nodeCache.clear();
   buildView();
   fire('active');
+  focusComposer();
   if (!chatLayer) chatLayer = openLayer(() => { chatLayer = null; closeChat(); });
   history.replaceState(history.state, '', `#/chat/${id}`);
   const b = bucket(id);
@@ -127,6 +138,7 @@ export async function openChat(id) {
   if (c.forum) refreshTopics(id, true);
   renderAll({ scroll: 'unread' });
   markRead();
+  if (S.active === id) focusComposer();   // the list that was clicked may have taken the focus back while the messages loaded
   if (c.secret?.group) syncGroup(c);
 }
 
