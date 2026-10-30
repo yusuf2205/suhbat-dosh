@@ -359,6 +359,11 @@ async function paintFromSnapshot() {
   paintedFor = snap.user.id;
   fire('chats');
   syncView();
+  // the chat that was open last time opens again at once, from the saved messages (on a phone the list comes first, as in Telegram)
+  try {
+    const last = Number(localStorage.getItem(`suhbat.last.${snap.user.id}`));
+    if (last && S.chats.has(last) && !/^#\/(chat|join|login|stickers)/.test(location.hash) && !matchMedia('(max-width: 600px)').matches) openChat(last).catch(() => {});
+  } catch { /* storage blocked */ }
 }
 
 async function enter(user) {
@@ -371,10 +376,11 @@ async function enter(user) {
   outbox.clearForOtherUsers();
   if (paintedFor !== user.id) buildApp();
   paintedFor = null;
-  try { const conf = await api('GET', '/api/config'); S.cfg = conf; setConfig(conf); } catch { /* defaults */ }
-  try {
-    await loadChats();
-  } catch { /* offline start: list stays empty until reconnect */ }
+  // the settings and the chat list are asked for together, not one after the other
+  await Promise.all([
+    api('GET', '/api/config').then((conf) => { S.cfg = conf; setConfig(conf); }).catch(() => { /* defaults */ }),
+    loadChats().catch(() => { /* offline start: list stays empty until reconnect */ }),
+  ]);
   connect();
   initUpdates();
   restorePendingUploads();
@@ -452,8 +458,10 @@ document.addEventListener('suhbat:logout-local', () => fire('logged-out-request'
     });
   }
   try {
+    const meAsk = api('GET', '/api/me');   // already on its way while the saved list is painted
+    meAsk.catch(() => {});
     await paintFromSnapshot().catch(() => {});
-    const r = await api('GET', '/api/me');
+    const r = await meAsk;
     await enter(r.user);
     syncPush();
     initEdgeSwipe();

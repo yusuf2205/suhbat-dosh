@@ -107,6 +107,7 @@ export async function openChat(id) {
   S.active = id;
   const c = S.chats.get(id);
   if (!c) return closeChat();
+  try { localStorage.setItem(`suhbat.last.${S.me.id}`, String(id)); } catch { /* storage blocked */ }
   replyTo = null;
   editing = null;
   selectMode = false;
@@ -168,6 +169,7 @@ export function closeChat() {
   closeRecorder();
   if (chatLayer) { const l = chatLayer; chatLayer = null; closeLayer(l); }
   S.active = null;
+  try { localStorage.removeItem(`suhbat.last.${S.me?.id}`); } catch { /* storage blocked */ }
   showPlaceholder();
   fire('active');
   if (location.hash.startsWith('#/chat/')) history.replaceState(history.state, '', '#/');
