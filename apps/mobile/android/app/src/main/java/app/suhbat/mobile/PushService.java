@@ -69,6 +69,10 @@ public class PushService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private OkHttpClient client;
     private WebSocket ws;
+    private final Runnable connectTask = this::connect;   // one object: removeCallbacks must find the very same one it was posted with
+    private final java.util.LinkedHashMap<Long, Boolean> shown = new java.util.LinkedHashMap<Long, Boolean>() {
+        @Override protected boolean removeEldestEntry(Map.Entry<Long, Boolean> e) { return size() > 400; }
+    };   // the messages that already have a line in a notification: the same message is never added twice
     private long myId = 0;
     private int backoff = 2000;
     private boolean stopped = false;
@@ -156,14 +160,13 @@ public class PushService extends Service {
 
     private void reconnectNow() {
         if (stopped) return;
-        if (ws != null) { ws.cancel(); ws = null; }
-        main.removeCallbacks(this::connect);
+        main.removeCallbacks(connectTask);
         connect();
     }
 
     private void schedule(int ms) {
-        main.removeCallbacks(this::connect);
-        main.postDelayed(this::connect, ms);
+        main.removeCallbacks(connectTask);
+        main.postDelayed(connectTask, ms);
     }
 
     private void connect() {
@@ -176,18 +179,27 @@ public class PushService extends Service {
         }
         String url = (o.startsWith("https") ? "wss" : "ws") + o.substring(o.indexOf("://")) + "/ws";
         Request req = new Request.Builder().url(url).header("Cookie", cookie).build();
-        ws = client.newWebSocket(req, new WebSocketListener() {
-            @Override public void onOpen(WebSocket w, Response r) { backoff = 2000; }
-            @Override public void onMessage(WebSocket w, String text) { handle(text, cookie, o); }
+        // exactly one connection: the old one is closed before the new one opens, and whatever an old one still says is ignored
+        // (several connections meant every message was handled several times: the same line again and again in the notification)
+        WebSocket old = ws;
+        ws = null;
+        if (old != null) old.cancel();
+        final WebSocket[] me = new WebSocket[1];
+        me[0] = client.newWebSocket(req, new WebSocketListener() {
+            @Override public void onOpen(WebSocket w, Response r) { if (w == ws) backoff = 2000; }
+            @Override public void onMessage(WebSocket w, String text) { if (w == ws) handle(text, cookie, o); }
             @Override public void onClosed(WebSocket w, int code, String reason) {
+                if (w != ws) return;
                 if (code == 4001) { schedule(60_000); return; } // session revoked
                 retry();
             }
             @Override public void onFailure(WebSocket w, Throwable t, Response r) {
+                if (w != ws) return;
                 if (r != null && r.code() == 401) { schedule(60_000); return; }
                 retry();
             }
         });
+        ws = me[0];
     }
 
     private void retry() {
@@ -258,6 +270,10 @@ public class PushService extends Service {
         String kind = m.optString("kind");
         if ("call".equals(kind)) return;
         long chatId = m.optLong("chat_id");
+        long msgId = m.optLong("id");
+        synchronized (history) {
+            if (msgId > 0 && shown.put(msgId, Boolean.TRUE) != null) return;   // this message is already in a notification
+        }
         JSONObject chat = chats.get(chatId);
         if (chat == null && System.currentTimeMillis() - chatsAt > 5000) {
             loadChats(cookie, origin);

@@ -15,7 +15,11 @@ export function emit(userIds, event) {
   for (const id of new Set(userIds)) {
     const set = conns.get(id);
     if (!set) continue;
-    for (const ws of set) if (ws.readyState === 1) ws.send(payload);
+    // The background service of the Android app (versions up to 0.2.23) could pile up several connections of one session after network changes, and every
+    // one of them showed the same message again in the notification. Of those, only the newest one is written to.
+    const newest = new Map();
+    for (const ws of set) if (ws.native && (!newest.get(ws.sessionId) || newest.get(ws.sessionId).since < ws.since)) newest.set(ws.sessionId, ws);
+    for (const ws of set) if (ws.readyState === 1 && (!ws.native || newest.get(ws.sessionId) === ws)) ws.send(payload);
   }
 }
 
@@ -51,6 +55,8 @@ export function attach(server, h) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.userId = auth.user.id;
       ws.sessionId = auth.session.id;
+      ws.native = /^okhttp\//i.test(String(req.headers['user-agent'] || ''));   // the Android background service (a browser or the web view never says so)
+      ws.since = Date.now();
       wss.emit('connection', ws);
     });
   });
