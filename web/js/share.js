@@ -216,9 +216,25 @@ async function phoneMenu(anchor, phone) {
   popMenu(anchor, items);
 }
 
+/** A tapped @username: the person with that name here (their chat opens), otherwise their profile in Telegram. */
+async function mention(username) {
+  let user = null;
+  try {
+    const r = await Promise.race([
+      api('GET', `/api/users/search?q=${encodeURIComponent(username)}`),
+      new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    user = r?.users?.find((u) => (u.username || '').toLowerCase() === username.toLowerCase()) ?? null;
+  } catch { /* no answer: Telegram */ }
+  if (user) openUser(user.id);
+  else if (S.me?.username && S.me.username.toLowerCase() === username.toLowerCase()) toast(S.me.name);
+  else openExternal(`https://t.me/${username}`);
+}
+
 let wired = false;
 export function initPhoneMenu() {
   if (wired) return;
   wired = true;
+  document.addEventListener('suhbat:mention', (e) => mention(e.detail.username));
   document.addEventListener('suhbat:phone', (e) => phoneMenu(e.detail.el, e.detail.phone));
 }

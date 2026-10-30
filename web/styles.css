@@ -2178,3 +2178,4 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 .qr-timer i { display: block; height: 100%; border-radius: 3px; background: var(--brand); transform-origin: left center; animation: qr-drain linear forwards; }
 @keyframes qr-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
+.text a.mention { font-weight: 600; }

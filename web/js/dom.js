@@ -67,7 +67,7 @@ export function clear(el) {
   return el;
 }
 
-const TOKEN_RE = /\b(?:https?:\/\/|www\.)[^\s<>"']+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\+?\d[\d\s().-]{7,18}\d/gi;
+const TOKEN_RE = /\b(?:https?:\/\/|www\.)[^\s<>"']+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\B@[A-Za-z]\w{3,31}\b|\+?\d[\d\s().-]{7,18}\d/gi;
 const rel = 'noopener noreferrer nofollow';
 const viaShell = (href) => (e) => {
   const n = window.SuhbatNative;
@@ -109,6 +109,12 @@ function linkifyRaw(text) {
     if (/^(https?:\/\/|www\.)/i.test(tok)) {
       const href = /^www\./i.test(tok) ? `https://${tok}` : tok;
       node = h('a', { href, target: '_blank', rel, onclick: viaShell(href) }, tok);
+    } else if (tok.startsWith('@')) {
+      // @username: a person here, or else a profile in Telegram (share.js decides)
+      node = h('a', { href: `https://t.me/${tok.slice(1)}`, class: 'mention', rel, target: '_blank', onclick: (e) => {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent('suhbat:mention', { detail: { username: tok.slice(1) } }));
+      } }, tok);
     } else if (tok.includes('@')) {
       node = h('a', { href: `mailto:${tok}`, rel, onclick: viaShell(`mailto:${tok}`) }, tok);
     } else {
