@@ -715,23 +715,41 @@ def attach_handlers(a: Acct):
             mk = media_kind(event.message)
             if time.time() - a.prof_at.get(key, 0) >= PROFILE_EVERY:
                 asyncio.create_task(delayed_profile(a, event, key, kind))   # after the message: the server creates the chat from it
+            lag = time.time() - event.message.date.timestamp()
+            if lag > 20:
+                log("live message came late:", int(lag), "s after it was sent")
             async with chat_lock(a.uid, key):
-              if mk and await upload_media(a, event.message, mk, {
-                "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
-                "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
-                "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message),
-              }):
-                return
               await to_server({
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
                 "reply_to": reply_id(event.message), "geo": geo_of(event.message),
               }, locked=True)
+            if mk:
+                # the message is there at once as a mark ("[Фото]", "[Видео]"); the file follows in the background and replaces it, so a big
+                # film neither delays its own message nor holds back the ones after it
+                fill = asyncio.create_task(fill_media(a, event.message, mk, {
+                    "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
+                    "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
+                    "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True,
+                }))
+                FILLS.add(fill)
+                fill.add_done_callback(FILLS.discard)
         except Exception as e:  # a bad message must not stop the others
             log("message skipped:", type(e).__name__)
 
     start_upgrade(a)
+
+
+FILLS = set()   # the background downloads that put a file into a message already shown
+
+
+async def fill_media(a: Acct, msg, mk: str, meta: dict):
+    """The file of a message that is already shown as a mark. If it cannot be fetched now the mark stays and the upgrade pass tries again later."""
+    try:
+        await upload_media(a, msg, mk, meta)
+    except Exception as e:
+        log("file of a message skipped:", type(e).__name__)
 
 
 async def delayed_profile(a: Acct, event, key: str, kind: str):
