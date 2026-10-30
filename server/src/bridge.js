@@ -558,6 +558,8 @@ function deliver(b, file = null) {
   if ((b.out || b.backfill) && q.get('SELECT forum FROM chats WHERE id = ?', row.chat_id)?.forum) {
     q.run('INSERT INTO topic_reads (chat_id, user_id, topic_id, last_read_id) VALUES (?,?,?,?) ON CONFLICT (chat_id, user_id, topic_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)', row.chat_id, uid, topicId || 0, id);
   }
+  // the one shown as the last message is the newest by time (history that is copied later has higher ids but older times)
+  q.run('UPDATE chats SET last_shown_id = CASE WHEN ? >= COALESCE((SELECT created_at FROM messages WHERE id = COALESCE(last_shown_id, last_message_id)), 0) THEN ? ELSE COALESCE(last_shown_id, last_message_id) END WHERE id = ?', ts, id, row.chat_id);
   q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?) WHERE id = ?', id, ts, row.chat_id);
   q.run('UPDATE members SET hidden = 0 WHERE chat_id = ?', row.chat_id);
   if (b.out || b.backfill) q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?) WHERE chat_id = ? AND user_id = ?', id, id, row.chat_id, uid);

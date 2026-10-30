@@ -182,9 +182,9 @@ function drawTabs() {
 }
 
 const RULE_TEST = {
-  direct: (c) => c.type === 'direct' && !c.saved && !c.peer?.is_bot,
-  groups: (c) => c.type === 'group',
-  channels: (c) => c.type === 'channel',
+  direct: (c) => kindOf(c) === 'direct' && !c.saved && !c.peer?.is_bot,
+  groups: (c) => kindOf(c) === 'group',
+  channels: (c) => kindOf(c) === 'channel',
   bots: (c) => c.type === 'direct' && !!c.peer?.is_bot,
   telegram: (c) => !!c.imported,
 };
@@ -198,14 +198,20 @@ export function inFolder(f, c) {
   return r.include.some((k) => RULE_TEST[k]?.(c)) && !(r.exclude || []).some((k) => RULE_SKIP[k]?.(c));
 }
 
+/** direct / group / channel; a copy of a Telegram chat counts as what it is in Telegram (all of them are groups here) */
+function kindOf(c) {
+  if (c.imported === 'tgbridge' && c.tg_kind) return c.tg_kind === 'user' ? 'direct' : c.tg_kind === 'channel' ? 'channel' : 'group';
+  return c.type;
+}
+
 function passesFilter(c, filter = S.filter) {
   if (filter.startsWith('f:')) { const f = S.folders?.find((x) => `f:${x.id}` === filter); return !!f && inFolder(f, c); }
   switch (filter) {
     case 'unread': return c.unread > 0;
     case 'inbox': return inInbox(c);
-    case 'direct': return c.type === 'direct';
-    case 'group': return c.type === 'group';
-    case 'channel': return c.type === 'channel';
+    case 'direct': return kindOf(c) === 'direct';
+    case 'group': return kindOf(c) === 'group';
+    case 'channel': return kindOf(c) === 'channel';
     default: return true;
   }
 }
@@ -233,7 +239,9 @@ function listKeys(e) {
 function chatMenu(anchor, c) {
   popMenu(anchor, [
     { label: t('ctx.open'), onClick: () => fire('open-chat', c.id) },
-    ...(c.unread > 0 ? [{ label: t('ctx.mark_read'), onClick: () => { if (c.last_message) api('POST', `/api/chats/${c.id}/read`, { message_id: c.last_message.id }).catch(() => {}); } }] : []),
+    ...(c.unread > 0 ? [{ label: t('ctx.mark_read'), onClick: () => {   // up to the very last one: the message shown as the last may be an older one by id (the server limits it to the newest)
+      api('POST', `/api/chats/${c.id}/read`, { message_id: 2147483647 }).catch(() => {});
+    } }] : []),
     { label: isMuted(c) ? t('ctx.unmute') : t('ctx.mute'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, isMuted(c) ? { muted: false, muted_until: 0 } : { muted: true, muted_until: 0 }).catch((e) => toast(errText(e.code))) },
     { label: c.archived ? t('archive.remove') : t('archive.add'), onClick: () => api('PATCH', `/api/chats/${c.id}/me`, { archived: !c.archived }).catch((e) => toast(errText(e.code))) },
     { label: c.pinned_at ? t('ctx.unpin') : t('ctx.pin'), onClick: () => api('POST', `/api/chats/${c.id}/pin-chat`, { pinned: !c.pinned_at }).catch((e) => toast(errText(e.code))) },

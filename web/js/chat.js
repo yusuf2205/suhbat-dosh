@@ -1131,19 +1131,27 @@ function onScroll() {
   view.jump.hidden = !(bucket(S.active).detached || far > 800);
 }
 
+const topicMarked = new Map();   // chat:topic -> the last message already reported as read
 const markReadDebounced = debounce(async () => {
   const id = S.active;
   const c = S.chats.get(id);
   if (!c || document.visibilityState !== 'visible' || !isNearBottom() || bucket(id).detached) return;
   const last = [...bucket(id).list].reverse().find((m) => !m.pending && !m.failed);
-  if (!last || last.id <= c.last_read_id) return;
+  if (!last) return;
+  if (c.forum) {
+    // a group with topics: the reading position belongs to the topic that is open, whatever was marked for the whole chat before
+    const topic = currentTopic(id) || 0;
+    const key = `${id}:${topic}`;
+    const here = topicsOf(id).find((x) => x.id === topic);
+    if ((here && !here.unread) || topicMarked.get(key) === last.id) return;
+    topicMarked.set(key, last.id);
+    api('POST', `/api/chats/${id}/read-topic`, { topic, message_id: last.id }).then(() => refreshTopics(id)).catch(() => topicMarked.delete(key));
+    return;
+  }
+  if (last.id <= c.last_read_id) return;
   c.last_read_id = last.id;
   c.unread = 0;
   fire('chats');
-  if (c.forum) {
-    api('POST', `/api/chats/${id}/read-topic`, { topic: currentTopic(id) || 0, message_id: last.id }).then(() => refreshTopics(id)).catch(() => {});
-    return;
-  }
   api('POST', `/api/chats/${id}/read`, { message_id: last.id }).catch(() => {});
 }, 250);
 export function markRead() { markReadDebounced(); }

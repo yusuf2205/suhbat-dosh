@@ -260,7 +260,7 @@ async function onWs(ev) {
       if (!c) break;
       if (ev.user_id === S.me.id) {
         c.last_read_id = Math.max(c.last_read_id, ev.message_id);
-        if (c.last_message && c.last_read_id >= c.last_message.id) c.unread = 0;
+        if (!c.forum && c.imported !== 'tgbridge' && c.last_message && c.last_read_id >= c.last_message.id) c.unread = 0;
         else api('GET', `/api/chats/${c.id}`).then((r) => { S.chats.set(c.id, r.chat); fire('chats'); }).catch(() => {});
       } else {
         c.others_read_id = Math.max(c.others_read_id, ev.message_id);

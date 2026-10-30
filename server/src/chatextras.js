@@ -51,6 +51,16 @@ extras.post('/chats/:id/read', (req, res) => {
      WHERE chat_id = ? AND user_id = ?`, upTo, upTo, id, req.user.id,
   );
   const m = membership(id, req.user.id);
+  // a group with topics keeps a position per topic: reading the whole chat moves all of them (this is what "mark as read" in the list and in a notification means)
+  const forumChat = q.get('SELECT forum FROM chats WHERE id = ?', id)?.forum;
+  if (forumChat) {
+    q.run(
+      `INSERT INTO topic_reads (chat_id, user_id, topic_id, last_read_id)
+       SELECT ?, ?, t.id, ? FROM (SELECT 0 AS id UNION SELECT id FROM topics WHERE chat_id = ?) t WHERE true
+       ON CONFLICT(chat_id, user_id, topic_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)`, id, req.user.id, upTo, id,
+    );
+    emit([req.user.id], { type: EVENTS.CHAT_UPDATE, chat: chatOut(id, req.user.id) });
+  }
   if (m.last_read_id > before.last_read_id) {
     q.run('INSERT INTO read_log (chat_id, user_id, upto_id, at) VALUES (?,?,?,?)', id, req.user.id, m.last_read_id, now());
     if (Math.random() < 0.02) q.run('DELETE FROM read_log WHERE at < ?', now() - 90 * 86400_000);

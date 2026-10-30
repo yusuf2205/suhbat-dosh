@@ -1194,7 +1194,7 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
     audit(user.id, 'comment.send', { chat_id: chat.id, target_type: 'message', target_id: id, details: { post: threadOf, length: text.length } });
     return { message: comment, duplicate: false };
   }
-  q.run('UPDATE chats SET last_message_id = ?, last_message_at = ? WHERE id = ?', id, t, chat.id);
+  q.run('UPDATE chats SET last_message_id = ?, last_message_at = ?, last_shown_id = NULL WHERE id = ?', id, t, chat.id);
   q.run('UPDATE members SET hidden = 0 WHERE chat_id = ? AND hidden = 1', chat.id); // a deleted chat comes back with a new message
   q.run(
     'UPDATE members SET last_read_id = ?, last_delivered_id = ?, draft = ? WHERE chat_id = ? AND user_id = ?',

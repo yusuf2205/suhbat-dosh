@@ -440,3 +440,35 @@ test('a Telegram group with topics: each topic is a topic here, with its own mes
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.equal(r.data.message.topic_id, topics[1].id);
 });
+
+test('a copied Telegram group: history that arrives later does not become the last message; "read" clears every topic', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002110', 'Прочтение');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '-100777', kind: 'group', title: 'Склад', author: 'Рустам', ...body }) }).then((r) => r.json());
+  assert.equal((await call(u.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: '-100777', title: 'Склад', kind: 'group', two_way: true }] })).status, 200);
+  const t0 = Date.now() - 60_000;
+  assert.ok((await tgPost({ tg_msg: 10, text: 'свежее', ts: t0 + 30_000, tg_topic: 20, topic_title: 'Приход' })).id);
+  assert.ok((await tgPost({ tg_msg: 11, text: 'в другой теме', ts: t0 + 31_000, tg_topic: 21, topic_title: 'Расход' })).id);
+  assert.ok((await tgPost({ tg_msg: 5, text: 'старое из истории', ts: t0, tg_topic: 20 })).id);
+  const find = async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Склад');
+  let chat = await find();
+  assert.equal(chat.last_message.text, 'в другой теме', 'the newest by time is shown, not the one stored last');
+  assert.ok(chat.unread >= 2);
+  const r = await call(u.cookie, 'POST', `/api/chats/${chat.id}/read`, { message_id: 2147483647 });
+  assert.equal(r.status, 200);
+  chat = await find();
+  assert.equal(chat.unread, 0, 'marking the group as read clears the unread of all its topics');
+});
+
+test('a copy of a Telegram chat tells what it is in Telegram (personal chat, group, channel), so the list can sort it', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002120', 'Виды');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, author: 'Кто-то', ...body }) }).then((r) => r.json());
+  assert.ok((await tgPost({ tg_chat: '9101', kind: 'user', title: 'Личный', tg_msg: 1, text: 'привет' })).id);
+  assert.equal((await call(u.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: '-1009102', title: 'Группа', kind: 'group', two_way: false }, { id: '-1009103', title: 'Канал', kind: 'channel', two_way: false }] })).status, 200);
+  assert.ok((await tgPost({ tg_chat: '-1009102', kind: 'group', title: 'Группа', tg_msg: 1, text: 'раз' })).id);
+  assert.ok((await tgPost({ tg_chat: '-1009103', kind: 'channel', title: 'Канал', tg_msg: 1, text: 'два' })).id);
+  const chats = (await call(u.cookie, 'GET', '/api/chats')).data.chats;
+  const kind = (t) => chats.find((c) => c.title === `✈ ${t}`)?.tg_kind;
+  assert.deepEqual([kind('Личный'), kind('Группа'), kind('Канал')], ['user', 'group', 'channel']);
+});

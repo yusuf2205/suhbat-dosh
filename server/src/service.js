@@ -244,7 +244,8 @@ export function refreshLastMessage(chatId) {
   const last = q.get('SELECT id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', chatId);
   const chat = q.get('SELECT created_at FROM chats WHERE id = ?', chatId);
   q.run(
-    'UPDATE chats SET last_message_id = ?, last_message_at = ? WHERE id = ?',
+    `UPDATE chats SET last_message_id = ?, last_message_at = ?, last_shown_id = CASE WHEN imported_from IS NULL THEN NULL ELSE
+       (SELECT m.id FROM messages m WHERE m.chat_id = chats.id AND m.thread_of IS NULL ORDER BY m.created_at DESC, m.id DESC LIMIT 1) END WHERE id = ?`,
     last?.id ?? null, last?.created_at ?? chat.created_at, chatId,
   );
 }
@@ -296,7 +297,8 @@ export function chatOut(chatId, viewerId) {
     blocked_me = !!q.get('SELECT 1 AS x FROM blocks WHERE user_id = ? AND blocked_id = ?', pid, viewerId);
   }
   const sc = c.type === 'direct' ? q.get('SELECT * FROM secret_chats WHERE chat_id = ?', chatId) : null;
-  const last = c.last_message_id && c.last_message_id > (m.cleared_before || 0) ? messageOut(getMessage(c.last_message_id)) : null;
+  const shownId = c.last_shown_id || c.last_message_id;   // a copy of a Telegram chat: the newest by time
+  const last = shownId && shownId > (m.cleared_before || 0) ? messageOut(getMessage(shownId)) : null;
   const pinRows = q.all('SELECT message_id FROM pins WHERE chat_id = ? ORDER BY pinned_at, message_id LIMIT 20', chatId);
   const pins = pinRows.map((r) => getMessage(r.message_id)).filter(Boolean).map(messageOut);
   const pinned = pins.length ? pins[pins.length - 1] : null;
@@ -310,10 +312,11 @@ export function chatOut(chatId, viewerId) {
     title: c.title,
     avatar: c.avatar_file ? `/api/files/${c.avatar_file}` : null,
     ...(c.imported_from === 'tgbridge' ? (() => {
-      const t = q.get('SELECT tg_username, tg_phone, tg_online_until, tg_seen, tg_approx FROM tg_chats WHERE chat_id = ?', chatId);
+      const t = q.get('SELECT kind, tg_username, tg_phone, tg_online_until, tg_seen, tg_approx FROM tg_chats WHERE chat_id = ?', chatId);
       if (!t) return {};
       const presence = t.tg_online_until || t.tg_seen || t.tg_approx ? { presence: { online: t.tg_online_until > Date.now(), until: t.tg_online_until, seen: t.tg_seen, approx: t.tg_approx } } : {};
-      return t.tg_username || t.tg_phone || presence.presence ? { tg: { username: t.tg_username, phone: t.tg_phone, ...presence } } : {};
+      // tg_kind: which sort of Telegram chat it is (user = a personal chat, group, channel): the list sorts the copies by it
+      return { tg_kind: t.kind, ...(t.tg_username || t.tg_phone || presence.presence ? { tg: { username: t.tg_username, phone: t.tg_phone, ...presence } } : {}) };
     })() : {}),
     description: c.description,
     owner_id: c.owner_id,
