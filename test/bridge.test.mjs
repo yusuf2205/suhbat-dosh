@@ -415,3 +415,28 @@ test('the daily check can ask the bridge to catch up, and sees when it is done',
   assert.ok(done, 'the catch-up finished');
   assert.equal((await fetch(`http://127.0.0.1:${BPORT}/resync?u=999999`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` } })).status >= 400, true);
 });
+
+test('a Telegram group with topics: each topic is a topic here, with its own messages and title kept up to date', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002100', 'Темы');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '-100500', kind: 'group', title: 'Снабжение', author: 'Рустам', ...body }) }).then((r) => r.json());
+  // the group is picked first (groups are copied only when chosen)
+  assert.equal((await call(u.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: '-100500', title: 'Снабжение', kind: 'group', two_way: true }] })).status, 200);
+  assert.ok((await tgPost({ tg_msg: 1, text: 'общее сообщение' })).id);
+  assert.ok((await tgPost({ tg_msg: 2, text: 'пришла партия', tg_topic: 10, topic_title: 'SAP Приход', topic_color: 7322096 })).id);
+  assert.ok((await tgPost({ tg_msg: 3, text: 'отклонение найдено', tg_topic: 11, topic_title: 'Отклонение' })).id);
+  assert.ok((await tgPost({ tg_msg: 4, text: 'ещё приход', tg_topic: 10, topic_title: 'SAP Приход (новое)' })).id);
+  const chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Снабжение');
+  assert.equal(chat.forum, true, 'the chat became a group with topics');
+  const topics = (await call(u.cookie, 'GET', `/api/chats/${chat.id}/topics`)).data.topics;
+  assert.deepEqual(topics.map((t) => t.title), ['', 'SAP Приход (новое)', 'Отклонение'], 'the titles come from Telegram and follow a rename');
+  const inTopic = async (t) => (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?topic=${t}`)).data.messages.map((m) => m.text);
+  assert.deepEqual(await inTopic(0), ['общее сообщение']);
+  assert.deepEqual(await inTopic(topics[1].id), ['пришла партия', 'ещё приход']);
+  assert.deepEqual(await inTopic(topics[2].id), ['отклонение найдено']);
+  assert.equal((await tgPost({ tg_msg: 2, text: 'пришла партия', tg_topic: 10 })).duplicate, true, 'the same message twice is one');
+  // an answer written here inside a topic goes to Telegram with the topic named
+  const r = await call(u.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'принято' }, { 'x-topic': String(topics[1].id) });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.message.topic_id, topics[1].id);
+});

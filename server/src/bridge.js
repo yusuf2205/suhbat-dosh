@@ -469,6 +469,38 @@ function applyProfile(uid, b) {
   return { ok: true, changed };
 }
 
+/**
+ * The topic of a message from a Telegram group with topics (b.tg_topic > 1; General has none). The topic is created the first time it is seen and the
+ * chat becomes a "forum"; the title comes along with the message and is kept up to date. Returns our topic id, or null for General.
+ */
+function topicOfTelegram(uid, row, b) {
+  const tt = Number(b.tg_topic);
+  if (!Number.isInteger(tt) || tt <= 1) return null;
+  const title = String(b.topic_title || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
+  const color = Number.isInteger(Number(b.topic_color)) ? Number(b.topic_color) : null;
+  let t = q.get('SELECT * FROM topics WHERE chat_id = ? AND tg_topic = ?', row.chat_id, tt);
+  if (t) {
+    if (title && title !== t.title) {
+      q.run('UPDATE topics SET title = ? WHERE id = ?', title, t.id);
+      emit(memberIds(row.chat_id), { type: 'topics.update', chat_id: row.chat_id });
+    }
+    return t.id;
+  }
+  if (q.get('SELECT COUNT(*) AS n FROM topics WHERE chat_id = ?', row.chat_id).n >= 100) return null;
+  const r = q.run('INSERT INTO topics (chat_id, title, emoji, created_by, created_at, tg_topic, color) VALUES (?,?,?,?,?,?,?)', row.chat_id, title || `Тема ${tt}`, '', uid, now(), tt, color);
+  t = { id: Number(r.lastInsertRowid) };
+  if (!q.get('SELECT forum FROM chats WHERE id = ?', row.chat_id).forum) {
+    // what was copied so far stays in General and is not unread
+    for (const m of q.all('SELECT user_id, last_read_id FROM members WHERE chat_id = ?', row.chat_id)) {
+      q.run('INSERT OR REPLACE INTO topic_reads (chat_id, user_id, topic_id, last_read_id) VALUES (?,?,0,?)', row.chat_id, m.user_id, m.last_read_id);
+    }
+    q.run('UPDATE chats SET forum = 1 WHERE id = ?', row.chat_id);
+    refreshChat(uid, row.chat_id);
+  }
+  emit(memberIds(row.chat_id), { type: 'topics.update', chat_id: row.chat_id });
+  return t.id;
+}
+
 /** One Telegram message (text, or a file with its caption). Dedupes by (chat, key); quiet: nothing is pushed, the chats are muted. */
 function deliver(b, file = null) {
   const uid = Number(b.owner);
@@ -501,6 +533,7 @@ function deliver(b, file = null) {
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
   const key = `tg:${row.tg_chat}:${int(b.tg_msg, 'tg_msg')}`;
+  const topicId = topicOfTelegram(uid, row, b);
   const had = q.get('SELECT id, kind, file_id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key);
   if (had) {
     // the file of a message that was copied as a mark such as "[Фото]" (history, a failed upload): the message becomes the real one
@@ -518,10 +551,13 @@ function deliver(b, file = null) {
     ? q.get('SELECT id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${b.reply_to}`)?.id ?? null : null;
   const ts = Number.isFinite(Number(b.ts)) && Number(b.ts) > 0 ? Math.min(Math.round(Number(b.ts)), now()) : now();
   const r = q.run(
-    'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    row.chat_id, b.out ? uid : null, file ? file.kind : geo ? 'location' : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, // others' messages have no account here: they count as unread
+    'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at, topic_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    row.chat_id, b.out ? uid : null, file ? file.kind : geo ? 'location' : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, topicId, // others' messages have no account here: they count as unread
   );
   const id = Number(r.lastInsertRowid);
+  if ((b.out || b.backfill) && q.get('SELECT forum FROM chats WHERE id = ?', row.chat_id)?.forum) {
+    q.run('INSERT INTO topic_reads (chat_id, user_id, topic_id, last_read_id) VALUES (?,?,?,?) ON CONFLICT (chat_id, user_id, topic_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)', row.chat_id, uid, topicId || 0, id);
+  }
   q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?) WHERE id = ?', id, ts, row.chat_id);
   q.run('UPDATE members SET hidden = 0 WHERE chat_id = ?', row.chat_id);
   if (b.out || b.backfill) q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?) WHERE chat_id = ? AND user_id = ?', id, id, row.chat_id, uid);
@@ -591,6 +627,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
     out = deliver({
     owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
     caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1', upgrade: qy.upgrade === '1',
+    tg_topic: qy.tg_topic, topic_title: qy.topic_title, topic_color: qy.topic_color,
   }, { id: fid, kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
   } catch (e) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); throw e; }
   if (!out.id) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); return res.json(out); } // skipped or already there: the file is not kept
@@ -681,19 +718,21 @@ export function bridgeOut(chat, messageId, text, replyKey, file = null) {
   q.run('UPDATE messages SET import_author = ? WHERE id = ?', me?.tg_name || 'Я', messageId);
   const reply = replyKey ? Number(String(replyKey).split(':').pop()) : null;
   const replyTo = Number.isInteger(reply) ? reply : null;
+  // written inside a topic: Telegram needs to be told which one
+  const tgTopic = q.get('SELECT t.tg_topic FROM messages m JOIN topics t ON t.id = m.topic_id WHERE m.id = ?', messageId)?.tg_topic || null;
   let sending;
   if (file && SEND_KINDS.includes(file.kind)) {
     const f = q.get('SELECT * FROM files WHERE id = ?', file.id);
     if (!f || f.size > SEND_MAX) sending = Promise.reject(new HttpError(413, 'file_too_big'));
     else {
       sending = fs.promises.readFile(filePath(f.id)).then((bytes) => callFile(row.user_id, {
-        chat: row.tg_chat, kind: file.kind, name: f.name, mime: f.mime, caption: text || '', duration: file.duration ?? '', ...(replyTo ? { reply_to: replyTo } : {}),
+        chat: row.tg_chat, kind: file.kind, name: f.name, mime: f.mime, caption: text || '', duration: file.duration ?? '', ...(replyTo ? { reply_to: replyTo } : {}), ...(tgTopic ? { tg_topic: tgTopic } : {}),
       }, bytes));
     }
   } else if (!String(text || '').trim()) {
     return; // a poll, a contact ...: there is nothing to say to Telegram
   } else {
-    sending = call('POST', '/send', row.user_id, { chat: row.tg_chat, text, reply_to: replyTo });
+    sending = call('POST', '/send', row.user_id, { chat: row.tg_chat, text, reply_to: replyTo, tg_topic: tgTopic });
   }
   sending.then((r) => {
     q.run('UPDATE messages SET import_key = ? WHERE id = ?', `tg:${row.tg_chat}:${r.tg_msg}`, messageId);

@@ -144,8 +144,9 @@ class MockClient:
     async def get_dialogs(self, limit=None):
         return []
 
-    async def send(self, chat_id, text, reply_to=None):
+    async def send(self, chat_id, text, reply_to=None, topic=None):
         self.n += 1
+        self.last_send = {"chat": chat_id, "text": text, "reply_to": reply_to, "topic": topic}
         return self.n
 
     async def send_file_bytes(self, chat_id, data, name, kind, caption, reply_to=None, duration=0):
@@ -209,6 +210,7 @@ class Acct:
         self.last_ok = time.time()   # the last moment the connection was seen alive: what came after it may have been missed
         self.resync_task = None      # the catch-up asked for by the daily check
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
+        self.topics = {}           # chat -> { "at": when the list was fetched, "map": topic id -> (title, color) } (groups with topics)
         self.synced = False        # the first complete copy of the personal chats has finished
 
     @property
@@ -718,12 +720,13 @@ def attach_handlers(a: Acct):
             lag = time.time() - event.message.date.timestamp()
             if lag > 20:
                 log("live message came late:", int(lag), "s after it was sent")
+            topic = await topic_fields(a, key, event.message)
             async with chat_lock(a.uid, key):
               await to_server({
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
-                "reply_to": reply_id(event.message), "geo": geo_of(event.message),
+                "reply_to": reply_id(event.message), "geo": geo_of(event.message), **topic,
               }, locked=True)
             if mk:
                 # the message is there at once as a mark ("[Фото]", "[Видео]"); the file follows in the background and replaces it, so a big
@@ -731,7 +734,7 @@ def attach_handlers(a: Acct):
                 fill = asyncio.create_task(fill_media(a, event.message, mk, {
                     "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
                     "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
-                    "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True,
+                    "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True, **topic,
                 }))
                 FILLS.add(fill)
                 fill.add_done_callback(FILLS.discard)
@@ -761,8 +764,43 @@ async def delayed_profile(a: Acct, event, key: str, kind: str):
 
 
 def reply_id(msg):
-    """The id of the message this one answers (a reply to a story or another odd header has none)."""
-    return getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
+    """The id of the message this one answers (a reply to a story or another odd header has none; in a topic the header
+    that only names the topic is no reply)."""
+    rt = getattr(msg, "reply_to", None)
+    rid = getattr(rt, "reply_to_msg_id", None)
+    if rt is not None and getattr(rt, "forum_topic", False):
+        top = getattr(rt, "reply_to_top_id", None)
+        if not top or rid == top:
+            return None
+    return rid
+
+
+def topic_of(msg):
+    """The id of the topic a message of a group with topics belongs to (None: an ordinary chat, or the General topic)."""
+    rt = getattr(msg, "reply_to", None)
+    if rt is not None and getattr(rt, "forum_topic", False):
+        t = getattr(rt, "reply_to_top_id", None) or getattr(rt, "reply_to_msg_id", None)
+        return t if t and t > 1 else None
+    return None
+
+
+async def topic_fields(a: Acct, key: str, msg) -> dict:
+    """tg_topic / topic_title / topic_color for the payload of a message that belongs to a topic (the titles are fetched once and kept)."""
+    t = topic_of(msg)
+    if not t or MOCK:
+        return {"tg_topic": t} if t else {}
+    c = a.topics.setdefault(key, {"at": 0.0, "map": {}})
+    if t not in c["map"] and time.time() - c["at"] > 60 or time.time() - c["at"] > 900:
+        c["at"] = time.time()
+        try:
+            from telethon.tl.functions.channels import GetForumTopicsRequest
+            r = await a.client(GetForumTopicsRequest(channel=await a.client.get_input_entity(int(key)), offset_date=None, offset_id=0, offset_topic=0, limit=100))
+            for x in r.topics:
+                c["map"][x.id] = (getattr(x, "title", "") or "", getattr(x, "icon_color", None))
+        except Exception as e:
+            log("topics not fetched:", type(e).__name__)
+    title, color = c["map"].get(t, ("", None))
+    return {"tg_topic": t, "topic_title": title, **({"topic_color": color} if isinstance(color, int) else {})}
 
 
 async def copy_dialog(a: Acct, d, limit=None, media_since=None):
@@ -771,20 +809,22 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
     async for m in a.client.iter_messages(d.entity, limit=limit or BACKFILL_MESSAGES):
         if describe(m):
             msgs.append(m)
+    kind = "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"
     for m in reversed(msgs):
         sender = await m.get_sender()
+        topic = await topic_fields(a, str(d.id), m)
         mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
         if mk and await upload_media(a, m, mk, {
-            "tg_chat": str(d.id), "chat_kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
-            "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+            "tg_chat": str(d.id), "chat_kind": kind, "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+            "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
         }):
             continue
         await to_server({
-            "owner": a.uid, "tg_chat": str(d.id), "kind": "user", "title": d.name or "", "backfill": True, "tg_msg": m.id,
+            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": d.name or "", "backfill": True, "tg_msg": m.id,
             "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
-            "geo": geo_of(m),
+            "geo": geo_of(m), **topic,
         })
-    await sync_profile(a, d.entity, str(d.id), "user")
+    await sync_profile(a, d.entity, str(d.id), kind)
 
 
 async def run_backfill(a: Acct):
@@ -835,7 +875,7 @@ async def _run_backfill(a: Acct):
 
 async def sync_recent(a: Acct):
     """A light pass over the newest messages of the chats that had activity lately: nothing a dropped connection missed stays missing."""
-    if not a.me or not a.auto_private or a.backfill["state"] in ("running", "queued"):
+    if not a.me or a.backfill["state"] in ("running", "queued"):
         return
     n = 0
     async with HEAVY:
@@ -846,7 +886,8 @@ async def sync_recent(a: Acct):
                 # the name, @username, phone and photo of every copied chat, however quiet it is (a few hours apart per chat)
                 if await sync_profile(a, d.entity, key, "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"):
                     await asyncio.sleep(0.3)
-            if not (d.is_user and private_ok(d.id, d.entity)):
+            # personal chats (when they are mirrored by default) and the groups and channels that were picked: topics of a forum come along
+            if not ((d.is_user and a.auto_private and private_ok(d.id, d.entity)) or (not d.is_user and key in a.chats)):
                 continue
             if not (d.unread_count or (d.date and d.date.timestamp() > recent)):
                 continue
@@ -1101,10 +1142,22 @@ async def send(r):
     if not text.strip():
         return web.json_response({"error": "empty"}, status=400)
     reply = body.get("reply_to")
+    topic = body.get("tg_topic")
+    topic = int(topic) if str(topic or "").isdigit() and int(topic) > 1 else None
     if MOCK:
-        mid = await a.client.send(int(chat), text, reply)
+        mid = await a.client.send(int(chat), text, reply, topic)
+    elif topic and reply and int(reply) != topic:
+        # an answer to a message inside a topic: Telegram needs both the message and the topic
+        from telethon.tl.functions.messages import SendMessageRequest
+        from telethon.tl.types import InputReplyToMessage
+        peer = await a.client.get_input_entity(int(chat))
+        upd = await a.client(SendMessageRequest(peer=peer, message=text, random_id=int.from_bytes(os.urandom(7), "big"),
+                                                reply_to=InputReplyToMessage(reply_to_msg_id=int(reply), top_msg_id=topic)))
+        mid = next((u.message.id for u in getattr(upd, "updates", []) if hasattr(u, "message") and getattr(u.message, "id", None)), None)
+        if mid is None:
+            mid = getattr(upd, "id", 0)
     else:
-        m = await a.client.send_message(int(chat), text, reply_to=int(reply) if reply else None)
+        m = await a.client.send_message(int(chat), text, reply_to=int(reply) if reply else topic)
         mid = m.id
     a.sent.append(mid)
     return web.json_response({"tg_msg": mid})
@@ -1165,6 +1218,9 @@ async def send_file(r):
     name = re.sub(r"[^\w.\- ()]", "_", q.get("name", "file"))[:80] or "file"
     caption = q.get("caption", "")[:1000]
     reply = int(q["reply_to"]) if q.get("reply_to", "").isdigit() else None
+    topic = int(q["tg_topic"]) if q.get("tg_topic", "").isdigit() and int(q["tg_topic"]) > 1 else None
+    if topic and not reply:
+        reply = topic   # a file written in a topic: the topic is the thing it answers
     try:
         duration = int(float(q.get("duration") or 0))
     except ValueError:
