@@ -1,7 +1,8 @@
-import { h } from './dom.js';
-import { t } from './i18n.js';
+import { h, uuid } from './dom.js';
+import { t, errText } from './i18n.js';
 import { S, chatTitle } from './state.js';
 import { toast } from './ui.js';
+import { api } from './net.js';
 import { attachFiles } from './chat.js';
 
 // Drop files anywhere in the window to send them to the open chat,
@@ -10,7 +11,9 @@ let overlay;
 let depth = 0;
 let hovered = null;
 
-const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+const hasFiles = (e) => { const ty = [...(e.dataTransfer?.types || [])]; return ty.includes('Files') && !ty.includes('application/x-suhbat-msg'); };   // not a file of our own chat taken out of it
+const MSG = 'application/x-suhbat-msg';   // a file of a message, taken from the open chat
+const hasMsg = (e) => [...(e.dataTransfer?.types || [])].includes(MSG);
 const chatItem = (e) => e.target?.closest?.('.ci[data-chat-id]');
 
 function targetChatId(e) {
@@ -78,6 +81,37 @@ document.addEventListener('drop', (e) => {
   if (!id) return void toast(t('drop.open_chat'));
   attachFiles(id, files);
 });
+
+// a file of a message dropped onto a chat in the list is passed on there (the same as "Передать дальше")
+document.addEventListener('dragover', (e) => {
+  if (!hasMsg(e)) return;
+  const ci = chatItem(e);
+  if (!ci || !S.chats.get(Number(ci.dataset.chatId))?.can_post) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  if (ci !== hovered) { hovered?.classList.remove('drop-target'); hovered = ci; ci.classList.add('drop-target'); }
+});
+document.addEventListener('dragleave', (e) => {
+  if (!hasMsg(e) || !hovered || hovered.contains(e.relatedTarget)) return;
+  hovered.classList.remove('drop-target');
+  hovered = null;
+});
+document.addEventListener('drop', async (e) => {
+  if (!hasMsg(e)) return;
+  const ci = chatItem(e);
+  hide();
+  if (!ci || !S.me) return;
+  e.preventDefault();
+  let src;
+  try { src = JSON.parse(e.dataTransfer.getData(MSG)); } catch { return; }
+  const to = S.chats.get(Number(ci.dataset.chatId));
+  if (!to?.can_post || !Number.isInteger(src?.id)) return;
+  try {
+    await api('POST', `/api/chats/${to.id}/messages`, { forward_of: src.id, client_id: uuid() });
+    toast(`${t('msg.forwarded')} · ${chatTitle(to)}`);
+  } catch (err) { toast(errText(err.code)); }
+});
+document.addEventListener('dragend', hide);
 
 // a drag that is cancelled with Esc must not leave the overlay behind
 window.addEventListener('blur', hide);

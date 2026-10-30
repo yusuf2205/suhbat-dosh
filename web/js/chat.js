@@ -1463,6 +1463,25 @@ function uploadCard(m) {
     h('span', { class: 'up-actions' }, act));
 }
 
+/**
+ * A picture, video or file can be taken with the mouse and dropped into another program or website (the file is fetched from here at that moment, no need
+ * to save it first), or onto a chat in the list (it is passed on there). Chromium browsers and the desktop app; not for secret chats, one-time files or uploads in progress.
+ */
+function dragOut(node, m) {
+  const f = m.file;
+  if (!f || m.upload || m.once || typeof m.id !== 'number' || S.chats.get(m.chat_id)?.secret || !['image', 'video', 'file'].includes(m.kind) || isVideoNote(m)) return;
+  node.draggable = true;
+  node.addEventListener('dragstart', (e) => {
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    const name = String(f.name || 'file').replace(/[:\\/]/g, '_');
+    dt.effectAllowed = 'copyMove';
+    dt.setData('DownloadURL', `${f.mime || 'application/octet-stream'}:${name}:${new URL(`${f.url}?dl=1`, location.origin).href}`);
+    dt.setData('application/x-suhbat-msg', JSON.stringify({ id: m.id, chat_id: m.chat_id }));
+    dt.setData('text/plain', name);
+  });
+}
+
 /** A file whose access was limited: after the end its recipients see only a note (the sender still has it). */
 function buildFile(m) {
   const mine = m.sender_id === S.me.id;
@@ -1471,6 +1490,7 @@ function buildFile(m) {
       h('span', { class: 'fname' }, h('b', null, m.file.name), h('span', { class: 'muted' }, t('access.ended'))));
   }
   const node = buildFileInner(m);
+  dragOut(node, m);
   const badge = accessBadge(m, mine);
   // in Saved messages a file can be handed on: link (password, expiry, download limit) and QR code
   const share = S.chats.get(m.chat_id)?.saved && typeof m.id === 'number' && !m.upload
