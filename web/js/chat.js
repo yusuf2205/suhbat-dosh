@@ -13,6 +13,7 @@ import { noteNode, openNoteCreate } from './notes.js';
 import { firstUrl, linkCard } from './linkcard.js';
 import { editImage, scanDocument } from './photoedit.js';
 import { attachQuick, openQuickManager } from './quick.js';
+import { directRoute, sendFromChat } from './nearby.js';
 import { tgOnline, tgSeenLine } from './tgpresence.js';
 import { applyAutoTr, autoAvailable, autoDecided, autoOn, foreignLang, langName, setAuto } from './autotr.js';
 import { onceNode } from './once.js';
@@ -563,6 +564,7 @@ function renderComposer() {
   clear(view.composer).append(
     h('button', { class: 'icon-btn attach', type: 'button', 'aria-label': t('chat.attach'), onclick: (e) => popMenu(e.currentTarget, [
       { label: t('attach.file'), onClick: () => view.fileInput.click() },
+      ...(directRoute(activeChat()) ? [{ label: directRoute(activeChat()) === 'nearby' ? t('nb.direct_menu_near', { name: activeChat().peer.name }) : t('nb.direct_menu'), onClick: () => sendFromChat(activeChat(), attachFiles) }] : []),
       { label: t('attach.location'), onClick: () => sendLocation(S.active, (m) => upsert(S.active, m)) },
       { label: t('quick.title'), onClick: () => openQuickManager({ onPick: (text) => insertAtCursor(text) }) },
       { label: t('sc.title'), onClick: async () => { const chatId = S.active; const f = await scanDocument(); if (f) attachFiles(chatId, [f]); } },

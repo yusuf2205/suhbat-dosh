@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Suhbat-dosh</title>
+<style>
+:root { color-scheme: light dark; --bg: #fffaea; --card: #fff; --ink: #15202b; --muted: #66707a; --line: #e4e0d0; --brand: #fbc700; }
+@media (prefers-color-scheme: dark) { :root { --bg: #11100c; --card: #1d1c17; --ink: #eef0f0; --muted: #a3a8ad; --line: #33312a; } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding: 16px; font: 16px/1.4 system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--ink); }
+main { max-width: 640px; margin: 0 auto; display: grid; gap: 12px; }
+h1 { font-size: 1.3rem; margin: 0; overflow-wrap: anywhere; }
+.muted { color: var(--muted); font-size: .9rem; margin: 0; }
+.btn { display: block; width: 100%; padding: 12px; min-height: 44px; border: 0; border-radius: 12px; background: var(--brand); color: #2b2b2e; font: inherit; font-weight: 600; text-align: center; text-decoration: none; cursor: pointer; }
+.btn.sec { background: transparent; color: inherit; border: 1px solid var(--line); }
+.file { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px; display: grid; gap: 8px; }
+.file b { overflow-wrap: anywhere; font-weight: 600; }
+.file img, .file video { width: 100%; max-height: 320px; object-fit: contain; border-radius: 10px; background: #0002; }
+.file audio { width: 100%; }
+.row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.row .btn { width: auto; flex: none; padding: 8px 14px; min-height: 40px; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--brand); }
+#up { display: grid; gap: 6px; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Suhbat-dosh</h1>
+  <p class="muted" id="lead"></p>
+  <label class="btn" for="pick" id="add"></label>
+  <input id="pick" type="file" multiple>
+  <div id="up"></div>
+  <div id="list" style="display:grid;gap:10px"></div>
+  <p class="muted" id="empty"></p>
+  <a class="btn sec" id="apk" href="app.apk?dl=1" hidden></a>
+</main>
+<script>
+var uz = /^uz/i.test(navigator.language || '');
+var T = uz ? {
+  lead: 'Internetsiz ishlaydi: fayllar shu telefondan to‘g‘ridan-to‘g‘ri uzatiladi.', add: 'Fayl qo‘shish', empty: 'Hozircha fayl yo‘q. U paydo bo‘lishi bilan shu yerda ko‘rinadi.',
+  get: 'Yuklab olish', apk: 'Suhbat-dosh ilovasini o‘rnatish (Android)', fail: 'Yuborilmadi', sent: 'Yuborildi', lost: 'Aloqa yo‘q. Xona ochiq turgan Wi-Fi ga ulanganingizni tekshiring.',
+} : {
+  lead: 'Работает без интернета: файлы идут напрямую с этого телефона.', add: 'Добавить файл', empty: 'Пока нет файлов. Как только появятся, они будут здесь.',
+  get: 'Скачать', apk: 'Установить приложение Suhbat-dosh (Android)', fail: 'Не отправлено', sent: 'Отправлено', lost: 'Нет связи. Проверьте, что вы подключены к Wi-Fi этой комнаты.',
+};
+function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function bytes(n) { if (n < 1024) return n + ' B'; var u = ['KB', 'MB', 'GB', 'TB'], i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < 3); return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i]; }
+document.getElementById('lead').textContent = T.lead;
+document.getElementById('add').textContent = T.add;
+var apk = document.getElementById('apk');
+apk.textContent = T.apk;
+apk.hidden = !/Android/i.test(navigator.userAgent);
+var shown = {};
+function card(f) {
+  var c = el('div', 'file');
+  var url = 'f/' + f.id;
+  if (/^image\//.test(f.mime) && !/svg/.test(f.mime)) { var i = el('img'); i.src = url; i.alt = f.name; i.loading = 'lazy'; c.append(i); }
+  else if (/^video\//.test(f.mime)) { var v = el('video'); v.src = url; v.controls = true; v.preload = 'metadata'; v.playsInline = true; c.append(v); }
+  else if (/^audio\//.test(f.mime)) { var a = el('audio'); a.src = url; a.controls = true; c.append(a); }
+  c.append(el('b', '', f.name));
+  var r = el('div', 'row');
+  r.append(el('span', 'muted', bytes(f.size)));
+  var d = el('a', 'btn', T.get); d.href = url + '?dl=1'; d.download = f.name;
+  r.append(d);
+  c.append(r);
+  return c;
+}
+function refresh() {
+  var x = new XMLHttpRequest();
+  x.open('GET', 'files');
+  x.timeout = 6000;
+  x.onload = function () {
+    try {
+      var d = JSON.parse(x.responseText);
+      document.getElementById('title').textContent = d.name || 'Suhbat-dosh';
+      document.getElementById('lead').textContent = T.lead;
+      var list = document.getElementById('list');
+      d.files.forEach(function (f) { if (!shown[f.id]) { shown[f.id] = 1; list.prepend(card(f)); } });
+      document.getElementById('empty').textContent = d.files.length ? '' : T.empty;
+    } catch (e) { /* the next try */ }
+  };
+  x.onerror = x.ontimeout = function () { document.getElementById('lead').textContent = T.lost; };
+  x.send();
+}
+function upload(file, next) {
+  var box = el('div', 'file');
+  var title = el('span', 'muted', file.name);
+  var bar = el('div', 'bar'); var fill = el('i'); bar.append(fill);
+  box.append(title, bar);
+  document.getElementById('up').append(box);
+  var x = new XMLHttpRequest();
+  x.open('PUT', 'u?name=' + encodeURIComponent(file.name));
+  if (file.type) x.setRequestHeader('Content-Type', file.type);
+  x.upload.onprogress = function (e) { if (e.lengthComputable) fill.style.width = (e.loaded * 100 / e.total) + '%'; };
+  x.onload = function () { title.textContent = (x.status === 200 ? T.sent : T.fail) + ': ' + file.name; if (x.status === 200) setTimeout(function () { box.remove(); }, 2500); refresh(); next(); };
+  x.onerror = function () { title.textContent = T.fail + ': ' + file.name; next(); };
+  x.send(file);
+}
+document.getElementById('pick').addEventListener('change', function (e) {
+  var q = Array.prototype.slice.call(e.target.files);
+  e.target.value = '';
+  (function go() { var f = q.shift(); if (f) upload(f, go); })();
+});
+refresh();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

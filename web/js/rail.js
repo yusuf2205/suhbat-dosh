@@ -7,7 +7,7 @@ import { icon } from './icons.js';
 import { avatar, toast, modal } from './ui.js';
 import { openSettings } from './dialogs.js';
 import { openCalendar } from './events.js';
-import { nearbyAvailable, openNearby } from './nearby.js';
+import { openNearby } from './nearby.js';
 import { openTasks, refreshTaskCount } from './tasks.js';
 import { focusOn, openFocus } from './focus.js';
 import { openRooms, roomsLive } from './rooms.js';
@@ -70,7 +70,7 @@ function tools() {
     { id: 'selfnotes', ico: 'edit', label: t('sn.title'), onclick: openSelfNotes },
     { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, dot: roomsLive() > 0 },
     { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, dot: focusOn() },
-    ...(nearbyAvailable() ? [{ id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: openNearby }] : []),
+    { id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: () => openNearby() },
     { id: 'archive', ico: 'archive', label: t('nav.archive'), onclick: () => setView('archive'), active: S.view === 'archive' },
     { id: 'settings', ico: 'settings', label: t('nav.settings'), onclick: openSettings },
   ].filter((x) => featureOn(x.id));

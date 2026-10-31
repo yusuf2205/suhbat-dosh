@@ -1703,6 +1703,36 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .nb-bar { display: block; height: 100%; width: 0; background: currentColor; transition: width .2s; }
 .nb-compose { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .nb-compose .input { flex: 1; resize: none; }
+.nb-tabs { position: sticky; top: 0; z-index: 1; }
+.nb-content { display: grid; gap: 8px; min-width: 0; }
+.nb-warn { margin: 0; padding: 8px 12px; border-radius: 12px; background: #fff0c2; color: #5c4400; }
+.nb-saved { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 14px; background: var(--brand); color: var(--brand-ink); }
+.nb-saved > div { display: grid; }
+.nb-saved .muted { color: inherit; opacity: .75; }
+.nb-grow { flex: 1; min-width: 0; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.nb-tr .drive-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.nb-got { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+.nb-card { display: grid; gap: 6px; align-content: start; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); min-width: 0; overflow-wrap: anywhere; }
+.nb-card audio, .nb-file audio { width: 100%; }
+.nb-thumb { width: 100%; max-height: 240px; object-fit: contain; border-radius: 10px; background: var(--surface-2); }
+.nb-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.nb-steps { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.nb-step { display: grid; gap: 6px; justify-items: center; padding: 12px; border-radius: 14px; background: var(--surface-2); text-align: center; overflow-wrap: anywhere; min-width: 0; }
+.nb-step canvas { max-width: 100%; height: auto; background: #fff; border-radius: 10px; padding: 6px; }
+.nb .drive-text { flex: 1; min-width: 0; display: grid; }
+.nb-open .dx-bars { display: none; }
+.nb-lan { display: grid; gap: 8px; }
+.nb-pair-read { display: grid; gap: 8px; }
+.nb-pair-read video { width: 100%; max-height: 260px; object-fit: cover; border-radius: 12px; background: #000; }
+.nb-pair-code { width: 100%; font-size: .7rem; resize: none; }
+.dx-bars { position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 1200; display: grid; gap: 6px; width: min(420px, calc(100vw - 24px)); pointer-events: none; }
+.dx-bar { pointer-events: auto; display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 6px 22px rgba(0, 0, 0, .22); }
+.dx-line { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; min-width: 0; }
+.dx-line b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dx-line small { flex: none; color: var(--muted); max-width: 60%; text-align: right; }
+.dx-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dx-bar .nb-track { background: var(--surface-2); }
+.dx-bar .nb-bar { background: var(--brand); }
 
 /* ===== tasks, focus, digest ===== */
 .task { display: grid; gap: 6px; min-width: min(260px, 70vw); }

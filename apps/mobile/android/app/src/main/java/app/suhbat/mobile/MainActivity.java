@@ -51,7 +51,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        nearby = new NearbyBridge(this, getBridge().getWebView());
+        nearby = NearbyBridge.get(this);
+        nearby.attach(this, getBridge().getWebView());
         getBridge().getWebView().addJavascriptInterface(new NativeBridge(), "SuhbatNative");
         Updater.restore(this);
         // Back: close the topmost thing inside the app (menu, dialog, settings page, chat); at the very top just go to the
@@ -82,6 +83,24 @@ public class MainActivity extends BridgeActivity {
                 return super.shouldOverrideUrlLoading(view, url);
             }
 
+            /** Previews of what came directly, and files handed over by another app (see NearbyBridge). Only our own pages may ask. */
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri u = request.getUrl();
+                String path = u.getPath();
+                if (path != null && path.startsWith("/__nb/") && ownHost(u)) return nearby.intercept(u, request.getRequestHeaders());
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            /** The messenger cannot be loaded and nothing was saved for a start without network yet: the local page still offers "Nearby". */
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request.isForMainFrame() && !"localhost".equals(request.getUrl().getHost())) {
+                    view.post(() -> view.loadUrl(getBridge().getLocalUrl() + "/offline.html"));
+                }
+            }
+
             /** Android may kill the web renderer while the app waits in the background (e.g. in Telegram): start over, not a white screen. */
             @Override
             public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
@@ -89,6 +108,32 @@ public class MainActivity extends BridgeActivity {
                 return true;
             }
         });
+    }
+
+    private boolean ownHost(Uri u) {
+        String host = u.getHost();
+        if ("localhost".equals(host)) return true;
+        String origin = getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_ORIGIN, null);
+        return host != null && host.equals(Uri.parse(origin != null ? origin : "https://suhbat-dosh.uz").getHost());
+    }
+
+    /** "Share" from another app: the files wait for the page, which asks where to send them. */
+    private void takeShareIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return;
+        java.util.ArrayList<Uri> uris = new java.util.ArrayList<>();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri u = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u != null) uris.add(u);
+        } else {
+            java.util.ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (list != null) uris.addAll(list);
+        }
+        String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+        intent.setAction(Intent.ACTION_MAIN);
+        intent.removeExtra(Intent.EXTRA_STREAM);
+        if (!uris.isEmpty() || text != null) nearby.setShared(uris, text);
     }
 
     /** Back from another app: if the page is empty or stranded on a foreign site, load the messenger again. */
@@ -160,6 +205,7 @@ public class MainActivity extends BridgeActivity {
         android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.cancel(PushService.ID_CALL);
         openChatFromIntent(getIntent());
+        takeShareIntent(getIntent());
     }
 
     @Override
@@ -455,17 +501,49 @@ public class MainActivity extends BridgeActivity {
         }
 
         // ---- messaging without internet between phones that are near each other (see NearbyBridge / nearby.js)
-        @JavascriptInterface public boolean nearbySupported() { return nearby != null && nearby.supported(); }
-        @JavascriptInterface public String nearbyStart(String name) { return nearby == null ? "unsupported" : nearby.start(name); }
-        @JavascriptInterface public void nearbyStopFinding() { if (nearby != null) nearby.stopFinding(); }
-        @JavascriptInterface public void nearbyStopAll() { if (nearby != null) nearby.stopAll(); }
-        @JavascriptInterface public void nearbyConnect(String id) { if (nearby != null) nearby.connect(id); }
-        @JavascriptInterface public void nearbyAccept(String id) { if (nearby != null) nearby.accept(id); }
-        @JavascriptInterface public void nearbyReject(String id) { if (nearby != null) nearby.reject(id); }
-        @JavascriptInterface public void nearbyDisconnect(String id) { if (nearby != null) nearby.disconnect(id); }
-        @JavascriptInterface public boolean nearbySend(String id, String text) { return nearby != null && nearby.sendBytes(id, text); }
-        @JavascriptInterface public void nearbyPickFile(String id) { runOnUiThread(() -> { if (nearby != null) nearby.pickFile(id); }); }
-        @JavascriptInterface public boolean nearbyOpenFile(String path) { return nearby != null && nearby.openReceived(path); }
+        @JavascriptInterface public boolean nearbySupported() { return nearby.supported(); }
+        @JavascriptInterface public String nearbyDeviceId() { return nearby.deviceId(); }
+        @JavascriptInterface public String nearbyKvGet(String k) { return nearby.kvGet(k); }
+        @JavascriptInterface public void nearbyKvSet(String k, String v) { nearby.kvSet(k, v); }
+        @JavascriptInterface public boolean nearbyHasPermissions() { return nearby.hasPermissions(); }
+        @JavascriptInterface public String nearbyRadios() { return nearby.radios(); }
+        @JavascriptInterface public String nearbyStart(String name, boolean advertise, boolean discover) { return nearby.start(name, advertise, discover); }
+        @JavascriptInterface public void nearbyStopFinding() { nearby.stopFinding(); }
+        @JavascriptInterface public void nearbyStopAll() { nearby.stopAll(); }
+        @JavascriptInterface public String nearbyState() { return nearby.state(); }
+        @JavascriptInterface public void nearbyConnect(String id) { nearby.connect(id); }
+        @JavascriptInterface public void nearbyJoinRoom(String id) { nearby.joinRoom(id); }
+        @JavascriptInterface public void nearbyAccept(String id) { nearby.accept(id); }
+        @JavascriptInterface public void nearbyReject(String id) { nearby.reject(id); }
+        @JavascriptInterface public void nearbyDisconnect(String id) { nearby.disconnect(id); }
+        @JavascriptInterface public void nearbyTrust(String id) { nearby.trust(id); }
+        @JavascriptInterface public void nearbyReady(String id) { nearby.ready(id); }
+        @JavascriptInterface public void nearbyLabel(String id, String name) { nearby.label(id, name); }
+        @JavascriptInterface public boolean nearbySend(String id, String text) { return nearby.sendBytes(id, text); }
+        @JavascriptInterface public void nearbySaveText(String peer, String name, String dir, String text) { nearby.saveText(peer, name, dir, text, 0); }
+        @JavascriptInterface public void nearbyPickFiles(String targets, long chatId) { runOnUiThread(() -> nearby.pickFiles(targets, chatId)); }
+        @JavascriptInterface public void nearbyAcceptFile(String tid, boolean yes) { nearby.acceptFile(tid, yes); }
+        @JavascriptInterface public void nearbyCancel(String tid) { nearby.cancel(tid); }
+        @JavascriptInterface public void nearbyRetry(String tid) { nearby.retry(tid); }
+        @JavascriptInterface public String nearbyItems(String peer) { return nearby.items(peer); }
+        @JavascriptInterface public String nearbyReceived() { return nearby.received(); }
+        @JavascriptInterface public String nearbyRecent() { return nearby.recent(); }
+        @JavascriptInterface public String nearbyStats() { return nearby.stats(); }
+        @JavascriptInterface public void nearbyImportOld(String json) { nearby.importOld(json); }
+        @JavascriptInterface public String nearbyImportBegin(String name, String mime, String from) { return nearby.importBegin(name, mime, from); }
+        @JavascriptInterface public boolean nearbyImportChunk(String handle, String base64) { return nearby.importChunk(handle, base64); }
+        @JavascriptInterface public String nearbyImportEnd(String handle) { return String.valueOf(nearby.importEnd(handle)); }
+        @JavascriptInterface public boolean nearbyOpenItem(long id) { return nearby.openItem(id); }
+        @JavascriptInterface public boolean nearbyShareItem(long id) { return nearby.shareItem(id); }
+        @JavascriptInterface public void nearbySaveItem(long id) { nearby.saveItem(id); }
+        @JavascriptInterface public void nearbyDeleteItem(long id) { nearby.deleteItem(id); }
+        @JavascriptInterface public String nearbySharedInfo() { return nearby.sharedInfo(); }
+        @JavascriptInterface public void nearbySendShared(String targets) { nearby.sendShared(targets); }
+        @JavascriptInterface public void nearbyClearShared() { nearby.clearShared(); }
+        @JavascriptInterface public void nearbyRoomStart(String name, String endpoint) { runOnUiThread(() -> nearby.roomStart(name, endpoint)); }
+        @JavascriptInterface public void nearbyRoomStop() { runOnUiThread(() -> nearby.roomStop()); }
+        @JavascriptInterface public String nearbyRoomInfo() { return nearby.roomInfo(); }
+        @JavascriptInterface public void nearbyRoomPick() { runOnUiThread(() -> nearby.pickForRoom()); }
 
         @JavascriptInterface
         public void stopBackground() {

@@ -18,6 +18,8 @@ import { beep, modal, toast } from './ui.js';
 import { openJoin, renderInfo } from './dialogs.js';
 import { drawEmail } from './settings.js';
 import { handleCallEvent } from './call.js';
+import { handleDirectSignal } from './direct.js';
+import { handleLanEvent, lanStart } from './lan.js';
 import { isQuietNow, loadFolders, playSound, setFolders } from './extras.js';
 import { handleGroupCallEvent, refreshGroupCalls } from './gcall.js';
 import { syncPush } from './push.js';
@@ -168,6 +170,7 @@ async function resync() {
   }
 }
 on('resync', resync);
+on('resync', lanStart);
 on('ws', (ev) => { if (ev.type === EVENTS.READY && ev.build) checkForUpdate({ build: ev.build, silent: true }); });
 
 on('outbox:sent', ({ message }) => upsert(message.chat_id, message));
@@ -195,6 +198,8 @@ function notify(chat, m) {
 async function onWs(ev) {
   if (typeof ev.type === 'string' && ev.type.startsWith('call.')) return handleCallEvent(ev);
   if (typeof ev.type === 'string' && ev.type.startsWith('gcall.')) return handleGroupCallEvent(ev);
+  if (ev.type === 'direct.signal') return handleDirectSignal(ev);
+  if (typeof ev.type === 'string' && ev.type.startsWith('direct.lan.')) return handleLanEvent(ev);
   switch (ev.type) {
     case EVENTS.MESSAGE_NEW: {
       const m = ev.message;

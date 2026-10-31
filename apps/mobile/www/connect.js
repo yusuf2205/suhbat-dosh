@@ -22,8 +22,8 @@ async function connectNow(target) {
     location.replace(target);
   } catch {
     clearTimeout(timer);
-    document.getElementById('lead').textContent = 'Нет подключения к серверу / Server bilan aloqa yo‘q';
-    retry.hidden = false;
+    // the saved copy of the messenger opens with no network; when there is none yet, the app falls back to its offline page
+    location.replace(target);
   }
 }
 if (params.has('change')) {

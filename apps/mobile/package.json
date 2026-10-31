@@ -1,10 +1,11 @@
 {
   "name": "suhbat-mobile",
-  "version": "0.2.24",
+  "version": "0.2.25",
   "private": true,
   "description": "Suhbat-dosh Android/iOS shell (Capacitor)",
   "scripts": {
-    "sync": "cap sync",
+    "offline": "node ../../scripts/sync-offline.mjs",
+    "sync": "node ../../scripts/sync-offline.mjs && cap sync",
     "android:debug": "cd android && gradlew.bat assembleDebug",
     "android:debug:unix": "cd android && ./gradlew assembleDebug",
     "ios:open": "cap open ios"

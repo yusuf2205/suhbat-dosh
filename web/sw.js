@@ -1,5 +1,5 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v137';
+const CACHE = 'suhbat-shell-v140';
 const SHELL = ['/', '/styles.css?v=25', '/splash.css?v=3', '/design2.css?v=14', '/js/main.js?v=7', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -25,7 +25,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws') || url.pathname.startsWith('/__nb/')) return; // /__nb/: files on this phone, served by the Android app
   // network-first so updates ship immediately; cache is the offline fallback
   e.respondWith(
     fetch(e.request)

@@ -257,26 +257,8 @@ export function openSettings() {
           row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
           featureOn('focus') && row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
           featureOn('digest') && row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
-        heading(t('st.sec_people')),
-        group(
-          featureOn('stories') && row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
-          featureOn('stories') && row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
-          row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
-          row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
-          row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
-          row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } })),
-        heading(t('st.sec_data')),
-        group(
-          featureOn('storage') && row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
-          row('mic', t('mc.title'), { hint: t('mc.row_hint'), onclick: () => { m.close(); openMediaCheck(); } }),
-          row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
-          row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
-          row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
-          row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
-          S.bridgeOk ? row('telegram', t('br.title'), { hint: t('br.hint'), onclick: () => { m.close(); openBridge(); } }) : null),
         heading(t('st.sec_app')),
         group(
-          row('speaker', t('st.av'), { onclick: () => go(pages.av) }),
           row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
           row('globe', t('settings.language'), { value: LANGS[getLang()], onclick: () => go(pages.language) })),
         S.me.is_admin ? group(row('shield', t('st.admin'), { onclick: () => window.open('/admin', 'suhbat-admin') })) : null,
@@ -696,6 +678,25 @@ export function openSettings() {
       const server = navigator.userAgent.includes('SuhbatShell/') ? shellNodes() : [];
       return {
         nodes: [
+          heading(t('st.sec_people')),
+          group(
+            featureOn('stories') && row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
+            featureOn('stories') && row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
+            row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
+            row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
+            row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
+            row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } })),
+          heading(t('st.sec_data')),
+          group(
+            featureOn('storage') && row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),
+            row('mic', t('mc.title'), { hint: t('mc.row_hint'), onclick: () => { m.close(); openMediaCheck(); } }),
+            row('download', t('dl.title'), { onclick: () => go(pages.transfers) }),
+            row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
+            row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
+            row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
+            S.bridgeOk ? row('telegram', t('br.title'), { hint: t('br.hint'), onclick: () => { m.close(); openBridge(); } }) : null),
+          heading(t('st.av')),
+          group(row('speaker', t('st.av'), { onclick: () => go(pages.av) })),
           heading(t('st.motion')),
           group(switchRow(t('st.motion_lite'), motionLevel() === 'lite', (v) => setLiteMotion(v), t('st.motion_hint'))),
           heading(t('st.updates')),

@@ -19,6 +19,7 @@ import { counters, setWsCounter, startMonitors } from './ops.js';
 import { startScheduler } from './features.js';
 import { startSafetyJobs } from './safety.js';
 import { handleGroupSignal, leave as leaveGroupCall } from './groupcalls.js';
+import { handleDirect, lanGone } from './nearby.js';
 import { ensureBotFather } from './botfather.js';
 import { startTurn } from './turn.js';
 import { attach, connectionCount, emit } from './realtime.js';
@@ -229,6 +230,11 @@ attach(server, {
   onGroupSignal(userId, m) {
     handleGroupSignal(userId, m);
   },
+  onDirect(userId, m, ws) {
+    handleDirect(userId, m, ws);
+  },
+  onSocketClose: lanGone,
+  clientIp: (req) => (config.trustProxy ? String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '') || req.socket.remoteAddress || '',
   onOffline(userId) {
     handleOffline(userId);
     leaveGroupCall(userId);

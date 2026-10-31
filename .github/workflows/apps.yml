@@ -52,6 +52,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - run: npm install --no-audit --no-fund
+      - run: npm run offline
       - run: npx cap sync android
       - run: ./gradlew assembleDebug
         working-directory: apps/mobile/android

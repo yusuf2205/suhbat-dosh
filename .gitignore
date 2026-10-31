@@ -13,6 +13,10 @@ dist-nas-suhbat.zip
 apps/*/dist/
 apps/*/node_modules/
 apps/mobile/android/local.properties
+# copied from web/ by scripts/sync-offline.mjs
+apps/mobile/www/js/
+apps/mobile/www/shared/
+apps/mobile/www/app/
 apps/mobile/android/.gradle/
 apps/mobile/android/app/build/
 apps/mobile/*.log

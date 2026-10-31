@@ -57,6 +57,7 @@ export function attach(server, h) {
       ws.sessionId = auth.session.id;
       ws.native = /^okhttp\//i.test(String(req.headers['user-agent'] || ''));   // the Android background service (a browser or the web view never says so)
       ws.since = Date.now();
+      ws.clientIp = hooks.clientIp?.(req) || '';
       wss.emit('connection', ws);
     });
   });
@@ -85,10 +86,12 @@ export function attach(server, h) {
       else if (m?.type === CLIENT_EVENTS.TYPING && Number.isInteger(m.chat_id)) hooks.onTyping(ws.userId, m.chat_id, m.action);
       else if (typeof m?.type === 'string' && m.type.startsWith('call.')) hooks.onSignal?.(ws.userId, m);
       else if (typeof m?.type === 'string' && m.type.startsWith('gcall.')) hooks.onGroupSignal?.(ws.userId, m);
+      else if (typeof m?.type === 'string' && m.type.startsWith('direct.')) hooks.onDirect?.(ws.userId, m, ws);
     });
 
     ws.on('close', () => {
       clearInterval(resetter);
+      hooks.onSocketClose?.(ws);
       const set = conns.get(ws.userId);
       set?.delete(ws);
       if (set && set.size === 0) {

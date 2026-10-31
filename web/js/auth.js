@@ -4,6 +4,7 @@ import { t, errText, LANGS, getLang } from './i18n.js';
 import { S, fire, savePrefs } from './state.js';
 import { api } from './net.js';
 import { qrLoginPanel } from './qrlogin.js';
+import { nativeApp, openNearby } from './nearby.js';
 /** A computer (a wide screen with a mouse): the QR code is on the sign-in screen at once, nothing to look for. */
 const wideScreen = () => matchMedia('(min-width: 900px) and (hover: hover)').matches;
 
@@ -182,7 +183,8 @@ export async function showLogin(root, { onLoggedIn }) {
       h('div', { class: 'auth-tools' }, langSel, inShell ? null : h('a', { class: 'btn secondary dl-link', href: '/download' }, icon('download', 18), h('span', null, t('login.download')))));
   }
 
-  clear(root).append(h('div', { class: 'auth' }, card));
+  // signed out and with no network: the Android app can still pass files to people nearby
+  clear(root).append(h('div', { class: 'auth' }, card, nativeApp() ? h('button', { class: 'btn link', type: 'button', onclick: () => openNearby() }, t('nb.title')) : null));
   draw();
 }
 

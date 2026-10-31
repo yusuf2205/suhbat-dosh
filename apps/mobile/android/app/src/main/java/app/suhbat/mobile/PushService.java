@@ -209,6 +209,26 @@ public class PushService extends Service {
         main.post(() -> schedule(d));
     }
 
+    /** Somebody wants to pass a file directly while the app is in the background: opening the notification shows the offer. */
+    private void onDirectOffer(JSONObject ev) {
+        JSONObject d = ev.optJSONObject("data");
+        if (appVisible || d == null || !"offer".equals(d.optString("t")) || !d.optBoolean("first")) return;
+        long chatId = ev.optLong("chat_id");
+        JSONObject chat = chats.get(chatId);
+        JSONObject peer = chat == null ? null : chat.optJSONObject("peer");
+        String title = peer == null ? "Suhbat-dosh" : peer.optString("name", "Suhbat-dosh");
+        Notification n = new NotificationCompat.Builder(this, CH_MESSAGES)
+                .setSmallIcon(R.drawable.ic_stat)
+                .setContentTitle(title)
+                .setContentText("\u26A1 " + d.optString("name"))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setContentIntent(openApp((int) chatId))
+                .build();
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify((int) (6000 + (chatId % 100000)), n);
+    }
+
     // ------------------------------------------------------------------ events
     private void handle(String text, String cookie, String origin) {
         try {
@@ -236,6 +256,9 @@ public class PushService extends Service {
                     break;
                 case "call.incoming":
                     onCall(ev);
+                    break;
+                case "direct.signal":
+                    onDirectOffer(ev);
                     break;
                 case "call.ended":
                     ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(ID_CALL);
