@@ -31,7 +31,13 @@ let nets = [];              // this device's public addresses: one Wi-Fi may loo
 export const onLan = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 const changed = () => listeners.forEach((f) => f());
 const signal = (to, data) => wsSend({ type: 'direct.lan.signal', to, data });
-const introduce = () => wsSend({ type: 'direct.lan.join', lid: LID, open, nets });
+let receiving = true;       // "Receive files": off means this device is listed only while it is looking for somebody itself
+const introduce = () => (receiving || open ? wsSend({ type: 'direct.lan.join', lid: LID, open, nets }) : wsSend({ type: 'direct.lan.leave' }));
+
+export function lanSetReceiving(on) {
+  receiving = on;
+  introduce();
+}
 
 /** Those who proved to be on this network. */
 export const lanPeers = () => [...peers.values()].filter((p) => p.ready && (p.local || p.self || p.paired));
@@ -374,6 +380,7 @@ function onOffer(p, j) {
   if (typeof j.tid !== 'string' || !/^[\w-]{8,64}$/.test(j.tid)) return;
   const cur = rx.get(j.tid);
   if (cur) { resumeIn(p, cur); return; } // the same file after a break
+  if (!receiving) { p.dc?.send(JSON.stringify({ t: 'decline', tid: j.tid })); return; }
   const task = { tid: j.tid, peer: p, name: String(j.name || 'file').slice(0, 200), size: Number(j.size) || 0, mime: String(j.mime || '').slice(0, 100), got: 0, flushed: 0, buf: [], bufBytes: 0, chain: Promise.resolve(), lastAck: 0 };
   // your own device or a contact: at once, like in a chat
   if (p.self || p.contact) { acceptIn(p, task); return; }

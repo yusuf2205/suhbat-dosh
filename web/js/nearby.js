@@ -3,17 +3,17 @@
 // - A room: one Android phone raises its own Wi-Fi and serves a page, so iPhones, computers and phones without the app can take and add files.
 // - Over the internet, on every platform: see direct.js.
 // Nothing here goes to the server. The module also runs on the offline page of the app (apps/mobile/www), so it may not import the chat.
-import { h, clear, formatBytes } from './dom.js';
+import { h, clear, formatBytes, formatDuration } from './dom.js';
 import { t } from './i18n.js';
 import { S } from './state.js';
 import { icon } from './icons.js';
-import { confirmDialog, modal, toast } from './ui.js';
+import { avatar, confirmDialog, modal, toast } from './ui.js';
 import { qrCanvas } from './qr.js';
 import { api } from './net.js';
 import { checkProof, makeProof, refreshTicket } from './identity.js';
-import { lanBlocked, lanLabel, lanPeers, lanSend, lanSetOpen, onLan } from './lan.js';
+import { lanBlocked, lanLabel, lanPeers, lanSend, lanSetOpen, lanSetReceiving, onLan } from './lan.js';
 import { openPairing } from './pair.js';
-import { deleteDirect, directBlob, directSaved, directSupported, listDirect, noteInChat, sendDirect, setBar, speedText } from './direct.js';
+import { barList, clearFinishedBars, deleteDirect, directBlob, directSaved, directSupported, finishedBars, listDirect, noteInChat, onBars, sendDirect, setBar, speedText } from './direct.js';
 
 const native = () => window.SuhbatNative;
 const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -104,6 +104,7 @@ async function onFound(id, name) {
 }
 
 function askConnection(ev) {
+  if (ev.incoming === '1' && !receivingOn()) { native().nearbyReject(ev.id); return; }
   const p = parseEndpoint(ev.name);
   // a contact connects at once; the signed identity is checked right after, before anything is sent
   const claimed = p.mode === 'c' ? found.get(ev.id)?.contact : p.uid ? contactOf(p.uid) : null;
@@ -155,6 +156,7 @@ function onConnected(ev) {
     setTimeout(() => { if (connected.get(ev.id) === p && !p.verified) askDigits(ev.id, p); }, 8000);
   } else {
     native().nearbyReady(ev.id);
+    flushTexts(ev.id);
     if (!p.room && !p.guest) toast(`${t('nb.connected')}: ${p.name}`);
   }
 }
@@ -170,6 +172,7 @@ function askDigits(eid, p) {
     p.auto = false;
     native().nearbyReady(eid);
     flushWaiting(p);
+    flushTexts(eid);
   };
   const m = modal({
     title: t('nb.confirm'),
@@ -204,6 +207,7 @@ async function onAuth(eid, j) {
   if (contactOf(who.uid)) native().nearbyTrust(eid);
   else native().nearbyReady(eid);
   flushWaiting(p);
+  flushTexts(eid);
   redraw();
 }
 
@@ -236,6 +240,7 @@ function onBytes(eid, data) {
 const RISKY = /\.(apk|exe|msi|bat|cmd|scr|js|vbs|jar|ps1)$/i;
 
 function askFile(ev) {
+  if (!receivingOn()) { native().nearbyAcceptFile(ev.tid, false); return; }
   const p = connected.get(ev.id);
   if (p?.auto && !p.verified) { (p.waiting ||= []).push(ev); return; } // its identity is being checked this very moment
   let answered = false;
@@ -259,18 +264,19 @@ function drawLive(tid) {
   if (!v) { setBar(`n-${tid}`, null); return; }
   setBar(`n-${tid}`, {
     title: v.name || t('nb.file'),
-    note: speedText(v.bps),
+    note: speedText(v.bps) || (v.state ? t(STATE_KEY[v.state] || 'nb.st_active') : ''),
     pct: v.size ? Math.round(v.done * 100 / v.size) : 0,
     actions: [{ label: t('common.cancel'), onclick: () => { native().nearbyCancel(tid); live.delete(tid); drawLive(tid); } }],
   });
 }
 
+const STATE_KEY = { pending: 'nb.st_pending', offered: 'nb.st_offered', active: 'nb.st_active', paused: 'nb.st_paused', verifying: 'nb.st_verifying', failed: 'nb.st_failed', done: 'nb.st_done' };
 const noted = () => parse(kv('noted'), []);
 function onItem(ev) {
   const tid = ev.tid;
-  const moving = ['active', 'verifying'].includes(ev.state);
+  const moving = ['pending', 'offered', 'active', 'verifying'].includes(ev.state);
   if (moving) {
-    live.set(tid, { ...(live.get(tid) || { done: ev.done, bps: 0 }), name: ev.name, size: ev.size });
+    live.set(tid, { ...(live.get(tid) || { done: ev.done, bps: 0 }), name: ev.name, size: ev.size, state: ev.state });
     drawLive(tid);
   } else if (live.has(tid)) {
     live.delete(tid);
@@ -323,6 +329,7 @@ window.__nearby = (ev) => {
     case 'transfer_failed': toast(t('nb.transfer_failed'), 5000); break;
     case 'saved': toast(ev.ok === '1' ? t('nb.saved_gallery') : t('nb.save_failed'), 4000); break;
     case 'shared': openSharedSheet(); return;
+    case 'picked': view?.onPicked?.(); return;
     case 'room': view?.roomChanged?.(); return;
     case 'error': if (!['discover', 'advertise'].includes(ev.where) || screenOpen) toast(`${t('nb.error')} (${ev.where}${ev.code ? ` ${ev.code}` : ''})`, 6000); break;
     default:
@@ -330,11 +337,24 @@ window.__nearby = (ev) => {
   redraw();
 };
 
+// ---------------------------------------------------------------- "Receive files": off means nobody can reach this device, it can still send
+const RECEIVE_KEY = 'suhbat.nearby.receive';
+function receivingOn() {
+  try { return localStorage.getItem(RECEIVE_KEY) !== '0'; } catch { return true; }
+}
+function setReceiving(on) {
+  try { localStorage.setItem(RECEIVE_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+  lanSetReceiving(on);
+  if (nearbyAvailable() && screenOpen && !roomOn()) native().nearbyStart(endpointAll(), on, true);
+  if (!screenOpen) tick();
+}
+lanSetReceiving(receivingOn());
+
 // ---------------------------------------------------------------- staying findable by contacts while the app is in front
 async function tick() {
   if (!nearbyAvailable() || screenOpen || roomOn()) return;
   if (document.hidden) { native().nearbyStopFinding(); return; }
-  if (!S.me || kv('auto') === '0' || !native().nearbyHasPermissions() || !crypto.subtle) return;
+  if (!S.me || kv('auto') === '0' || !receivingOn() || !native().nearbyHasPermissions() || !crypto.subtle) return;
   refreshTicket();
   native().nearbyStart(await endpointContacts(), true, true);
 }
@@ -388,8 +408,8 @@ function savedBanner() {
 }
 
 // ---------------------------------------------------------------- from a chat
-function pickWeb(onFiles) {
-  const input = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { onFiles([...input.files]); input.remove(); } });
+function pickWeb(onFiles, accept = '') {
+  const input = h('input', { type: 'file', multiple: true, hidden: true, accept: accept || null, onchange: () => { onFiles([...input.files]); input.remove(); } });
   document.body.append(input);
   input.click();
 }
@@ -490,6 +510,20 @@ function ensureSearching(after) {
 }
 
 // ---------------------------------------------------------------- text
+const waitingTexts = new Map(); // device -> texts to send as soon as it is connected and known
+function queueText(did, name, text) {
+  const eid = eidOfDid(did);
+  const p = eid && connected.get(eid);
+  if (p && (p.verified || !p.auto) && sendText(eid, text)) { native().nearbySaveText(did, name, 'out', text); return; }
+  waitingTexts.set(did, [...(waitingTexts.get(did) || []), { name, text }]);
+}
+function flushTexts(eid) {
+  const p = connected.get(eid);
+  const list = p && waitingTexts.get(p.did);
+  if (!list) return;
+  waitingTexts.delete(p.did);
+  for (const x of list) if (sendText(eid, x.text)) native().nearbySaveText(p.did, x.name, 'out', x.text);
+}
 const TEXT_PIECE = 20000;
 function sendText(id, text) {
   if (new TextEncoder().encode(text).length <= 28000) return native().nearbySend(id, JSON.stringify({ k: 't', text }));
@@ -501,30 +535,34 @@ function sendText(id, text) {
 }
 
 // ---------------------------------------------------------------- the screen
-const STATE_KEY = { pending: 'nb.st_pending', offered: 'nb.st_offered', active: 'nb.st_active', paused: 'nb.st_paused', verifying: 'nb.st_verifying', failed: 'nb.st_failed', done: 'nb.st_done' };
 const isImage = (m) => /^image\//.test(m || '') && !/svg/.test(m);
 const isVideo = (m) => /^video\//.test(m || '');
 const isAudio = (m) => /^audio\//.test(m || '');
 
 export async function openNearby(startTab = 'near') {
   if (view?.m) return;
-  const body = h('div', { class: 'nb' });
-  const tabsEl = h('div', { class: 'task-tabs nb-tabs', role: 'tablist' });
-  const content = h('div', { class: 'nb-content' });
-  body.append(tabsEl, content);
+  const heading = h('div', { class: 'nbx-head' });
+  const content = h('div', { class: 'nb-content nbx-body' });
+  const body = h('div', { class: 'nb nbx-wrap' }, heading, content);
   let tab = startTab;
+  let draft = null;     // what is being prepared on the "send" screen
+  let sendTarget = null;
   const urls = [];
   const m = modal({
     title: t('nb.title'),
-    className: 'drive',
+    className: 'nbx',
+    bare: true,
     body: [body],
     onClose: () => {
       screenOpen = false;
+      stopBars?.();
       view?.lanStop?.();
       lanSetOpen(false);
       document.body.classList.remove('nb-open');
+      if (draft?.kind === 'nearby') try { native().nearbyClearShared(); } catch { /* not the app */ }
       urls.forEach((u) => URL.revokeObjectURL(u));
       window.removeEventListener('suhbat:direct-received', onDirect);
+      clearFinishedBars();
       view = null;
       tick();
     },
@@ -534,22 +572,72 @@ export async function openNearby(startTab = 'near') {
   screenOpen = true;
   document.body.classList.add('nb-open');
   view = { m, chat: null };
+  let onBarChange = null;
+  const stopBars = onBars(() => onBarChange?.());
 
-  const tabButton = (id, label) => h('button', { class: 'chip', type: 'button', role: 'tab', 'aria-selected': String(tab === id), 'aria-pressed': String(tab === id), onclick: () => { tab = id; view.chat = null; draw(); } }, label);
+  const goTo = (next) => { tab = next; view.chat = null; draw(); };
+  const header = (title, sub, ent, back = () => goTo('near')) => put(clear(heading),
+    h('button', { class: 'icon-btn nbx-back', type: 'button', 'aria-label': t('nb.back'), onclick: back }, icon('back', 24)),
+    ent ? avatar(ent) : null,
+    h('div', { class: 'nbx-title' }, h('b', null, title), sub ? h('small', null, sub) : null),
+  );
   const draw = () => {
-    clear(tabsEl).append(tabButton('near', t('nb.tab_near')), tabButton('got', t('nb.tab_got')), ...(nativeApp() ? [tabButton('room', t('nb.tab_room'))] : []));
     view.transfers = null;
     view.reloadChat = null;
     view.roomChanged = null;
-    if (tab === 'got') drawReceived();
-    else if (tab === 'room') drawRoom();
-    else if (view.chat) drawChat(view.chat);
-    else drawNear();
+    view.onPicked = null;
+    view.lanStop?.();
+    view.lanStop = null;
+    onBarChange = null;
+    view.redraw = () => {};
+    heading.hidden = false;
+    if (tab === 'got') { header(t('nb.tab_got')); drawReceived(); }
+    else if (tab === 'room') { header(t('nb.tab_room')); drawRoom(); }
+    else if (tab === 'send') drawSend();
+    else if (tab === 'live') drawLive2();
+    else if (view.chat) { heading.hidden = true; drawChat(view.chat); }
+    else drawHome();
   };
-  view.redraw = () => { if (tab === 'near' && !view.chat) drawNear(); };
 
-  // ---- people around
+  // ---- who can be reached right now: one list, however they are connected
+  const entityOf = (uid, name) => {
+    const peer = [...S.chats.values()].find((c) => c.type === 'direct' && c.peer?.id === uid)?.peer;
+    return peer ? { ...peer, online: true } : { id: uid || name?.length || 0, name: name || '', online: true };
+  };
+  function targets() {
+    const out = [];
+    const uids = new Set();
+    for (const p of lanPeers()) {
+      if (p.uid) uids.add(p.uid);
+      const name = p.self ? t('nb.lan_my_device') : lanLabel(p);
+      out.push({ key: `l${p.lid}`, kind: 'lan', lid: p.lid, name, ent: entityOf(p.uid, name), note: t('nb.lan_title') });
+    }
+    if (nearbyAvailable()) {
+      for (const [eid, p] of connected) {
+        if (p.room || (p.uid && uids.has(p.uid))) continue;
+        if (p.uid) uids.add(p.uid);
+        out.push({ key: `n${eid}`, kind: 'nearby', eid, did: p.did, connected: true, name: p.name, ent: entityOf(p.uid, p.name), note: t('nb.near_note') });
+      }
+      for (const [eid, p] of found) {
+        if (p.mode === 'r' || connected.has(eid) || (p.contact && uids.has(p.contact.id))) continue;
+        if (p.contact) uids.add(p.contact.id);
+        out.push({ key: `n${eid}`, kind: 'nearby', eid, did: p.did, connected: false, contact: p.contact, name: p.name, ent: entityOf(p.contact?.id || p.uid, p.name), note: t('nb.near_note') });
+      }
+    }
+    if (directSupported() && S.net === 'online') {
+      for (const c of S.chats.values()) {
+        if (c.type !== 'direct' || !c.peer?.online || c.peer.is_bot || uids.has(c.peer.id)) continue;
+        out.push({ key: `o${c.id}`, kind: 'online', chat: c, name: c.peer.name, ent: c.peer, note: t('chat.online') });
+      }
+    }
+    return out;
+  }
+
+  const ROUTE = { nearby: 'nb.route_near', lan: 'nb.route_lan', online: 'nb.route_online' };
+
+  // ---- the first screen: a radar, who is there, and the way to everything else
   function radioHints() {
+    if (!nearbyAvailable()) return null;
     const r = parse(native().nearbyRadios(), {});
     const off = [];
     if (r.wifi === false) off.push(t('nb.turn_wifi'));
@@ -558,95 +646,226 @@ export async function openNearby(startTab = 'near') {
     return off.length ? h('p', { class: 'nb-warn' }, t('nb.turn_on', { what: off.join(', ') })) : null;
   }
 
-  function transfersBlock() {
-    if (!nativeApp()) return null;
-    const rows = parse(native().nearbyState(), {}).transfers || [];
-    if (!rows.length) return null;
-    return h('div', { class: 'nb-transfers' }, h('h3', null, t('nb.transfers')), rows.map((it) => {
-      const v = live.get(it.tid);
-      const done = v?.done ?? it.done ?? 0;
-      return h('div', { class: 'drive-row nb-tr' },
-        h('span', { class: 'drive-text' }, h('b', null, it.name),
-          h('small', { class: 'muted' }, `${it.dir === 'out' ? '↑' : '↓'} ${parseEndpoint(it.peer_name).name || ''} · ${formatBytes(done)} / ${formatBytes(it.size)} · ${t(STATE_KEY[it.state] || 'nb.st_active')}${v?.bps ? ` · ${speedText(v.bps)}` : ''}`),
-          h('span', { class: 'nb-track' }, h('i', { class: 'nb-bar', style: { width: `${it.size ? Math.round(done * 100 / it.size) : 0}%` } }))),
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.cancel'), onclick: () => confirmDialog(t('nb.cancel_ask'), { danger: true }).then((yes) => { if (yes) native().nearbyCancel(it.tid); }) }, '✕'));
-    }));
-  }
+  const SLOTS = [[-128, 40], [-38, 42], [52, 40], [142, 42], [-84, 30], [98, 30]];
 
-  function lanBlock() {
-    const box = h('div', { class: 'nb-lan' });
+  function drawHome() {
+    header(t('nb.title'), null, null, () => m.close());
+    clear(content);
+    const dots = h('div', { class: 'nbr-dots' });
+    const radar = h('div', { class: 'nbr', 'aria-hidden': 'true' },
+      h('i', { class: 'nbr-ring r3' }), h('i', { class: 'nbr-ring r2' }), h('i', { class: 'nbr-ring r1' }), h('i', { class: 'nbr-sweep' }),
+      h('img', { class: 'nbr-me', src: '/icon.svg?v=2', alt: '' }), dots);
+    const status = h('b', { class: 'nbx-status', role: 'status' });
+    const sub = h('small', { class: 'nbx-sub' });
+    const live2 = h('div');
+    const list = h('div', { class: 'nbx-card nbx-people' });
+    const extra = h('div', { class: 'nbx-extra' });
+
     const fill = () => {
-      const list = lanPeers();
-      put(clear(box),
-        h('h3', null, t('nb.lan_title')),
-        ...(list.length ? list.map((p) => h('div', { class: 'drive-row' },
-          h('span', { class: 'drive-text' }, h('b', null, p.self ? t('nb.lan_my_device') : lanLabel(p)), h('small', { class: 'muted' }, t('nb.no_traffic'))),
-          h('button', { class: 'btn small', type: 'button', onclick: () => pickWeb((files) => lanSend(p.lid, files)) }, t('nb.send_files')))) : [h('p', { class: 'muted' }, t('nb.lan_hint'))]),
-        lanBlocked() ? h('p', { class: 'nb-warn' }, t('nb.lan_blocked')) : null,
-        typeof RTCPeerConnection === 'function' ? h('button', { class: 'btn secondary', type: 'button', onclick: openPairing }, t('nb.pair_open')) : null);
+      const all = targets();
+      clear(dots).append(...all.slice(0, SLOTS.length).map((x, i) => {
+        const [deg, r] = SLOTS[i];
+        const a = avatar(x.ent);
+        a.classList.add('nbr-peer');
+        a.style.left = `${50 + r * Math.cos(deg * Math.PI / 180)}%`;
+        a.style.top = `${50 + r * Math.sin(deg * Math.PI / 180)}%`;
+        return a;
+      }));
+      const near = all.filter((x) => x.kind !== 'online').length;
+      status.textContent = near ? t('nb.found_n', { n: near }) : t('nb.searching_short');
+      sub.textContent = nearbyAvailable() ? t('nb.radar_near') : t('nb.radar_wifi');
+      clear(list).append(...(all.length ? all.map((x) => h('div', { class: 'nbx-person' }, avatar(x.ent),
+        h('span', { class: 'drive-text' }, h('b', null, x.name), h('small', { class: 'muted' }, x.note)),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { sendTarget = x; startDraft(x); goTo('send'); } }, t('nb.send_btn')))) : [h('p', { class: 'muted nbx-empty' }, t('nb.lan_hint'))]));
+      const rooms = nearbyAvailable() ? [...found].filter(([id, p]) => !connected.has(id) && p.mode === 'r') : [];
+      const blocked = lanBlocked();
+      const hints = radioHints();
+      put(clear(extra),
+        hints,
+        blocked ? h('p', { class: 'nb-warn' }, t('nb.lan_blocked')) : null,
+        nativeApp() && !nearbyAvailable() ? h('p', { class: 'nb-warn' }, t('nb.no_play_services')) : null,
+        rooms.length ? h('div', { class: 'nbx-card' }, rooms.map(([id, p]) => h('div', { class: 'nbx-person' },
+          h('span', { class: 'nbx-ico' }, icon('wifi', 22)),
+          h('span', { class: 'drive-text' }, h('b', null, p.name), h('small', { class: 'muted' }, t('nb.room_label'))),
+          h('button', { class: 'btn small', type: 'button', onclick: () => { native().nearbyJoinRoom(id); toast(t('nb.joining')); } }, t('nb.join'))))) : null);
+    };
+    const fillLive = () => {
+      const n = barList().length;
+      put(clear(live2), n ? h('button', { class: 'nbx-row nbx-live', type: 'button', onclick: () => goTo('live') }, icon('download', 22),
+        h('span', { class: 'drive-text' }, h('b', null, t('nb.transfers')), h('small', { class: 'muted' }, t('nb.n_moving', { n }))), icon('chevron', 18)) : null);
     };
     fill();
-    view.lanStop?.();
+    fillLive();
     view.lanStop = onLan(fill);
-    return box;
-  }
+    view.redraw = fill;
+    onBarChange = fillLive;
 
-  function browserHelp() {
-    const peers = [...S.chats.values()].filter((c) => c.type === 'direct' && c.peer && !c.peer.is_bot).sort((a, b) => Number(!!b.peer.online) - Number(!!a.peer.online)).slice(0, 8);
+    const receive = h('input', { class: 'nbx-switch', type: 'checkbox', checked: receivingOn(), 'aria-label': t('nb.receive_title'), onchange: (e) => { setReceiving(e.target.checked); } });
+    const total = totals();
     put(content,
-      h('p', { class: 'muted' }, t('nb.browser_intro')),
-      ...(directSupported() && S.net === 'online' ? [h('h3', null, t('nb.send_online'))].concat(peers.map((c) => h('button', { class: 'cal-row', type: 'button', onclick: () => pickWeb((files) => import('./chat.js').then(({ attachFiles }) => sendDirect(c.id, files, { fallback: (list) => attachFiles(c.id, list) }))) },
-        icon('bolt', 20), h('span', { class: 'cal-main' }, h('b', null, c.peer.name), h('small', { class: 'muted' }, c.peer.online ? t('chat.online') : t('nb.maybe_offline')))))) : []),
-      h('h3', null, t('nb.join_room_title')),
-      h('p', { class: 'muted' }, t('nb.join_room_how')));
-  }
-
-  function drawNear() {
-    clear(content);
-    const trBox = h('div');
-    const fillTr = () => put(clear(trBox), transfersBlock());
-    fillTr();
-    view.transfers = fillTr;
-    content.append(savedBanner(), lanBlock());
-    if (!nearbyAvailable()) {
-      if (nativeApp()) content.append(h('p', { class: 'nb-warn' }, t('nb.no_play_services')));
-      browserHelp();
-      if (nativeApp()) content.append(h('button', { class: 'btn', type: 'button', onclick: () => { tab = 'room'; draw(); } }, t('nb.open_room')));
-      return;
+      radar,
+      h('div', { class: 'nbx-center' }, status, sub),
+      live2,
+      list,
+      extra,
+      h('label', { class: 'nbx-row' }, h('span', { class: 'nbx-ico' }, icon('send', 22)),
+        h('span', { class: 'drive-text' }, h('b', null, t('nb.receive_title')), h('small', { class: 'muted' }, t('nb.receive_text'))), receive),
+      typeof RTCPeerConnection === 'function' ? h('button', { class: 'btn nbx-qr', type: 'button', onclick: openPairing }, icon('qr', 20), t('nb.pair_open')) : null,
+      h('div', { class: 'nbx-tiles' },
+        h('button', { class: 'nbx-tile', type: 'button', onclick: () => goTo('got') }, icon('download', 22), h('span', null, t('nb.tab_got'))),
+        nativeApp() ? h('button', { class: 'nbx-tile', type: 'button', onclick: () => goTo('room') }, icon('users', 22), h('span', null, t('nb.tab_room'))) : null),
+      h('div', { class: 'nbx-row nbx-saved' }, h('span', { class: 'nbx-ico' }, icon('bolt', 22)),
+        h('span', { class: 'drive-text' }, h('b', null, t('nb.saved_title', { size: formatBytes(total.bytes) })), h('small', { class: 'muted' }, t('nb.saved_files', { n: total.files })))));
+    if (nearbyAvailable() && S.me) {
+      const recent = parse(native().nearbyRecent(), []).filter((p) => p.id !== 'room-guest' && p.id !== 'wifi');
+      if (recent.length) {
+        content.append(h('h3', null, t('nb.recent')), h('div', { class: 'nbx-card' }, recent.slice(0, 8).map((p) => {
+          const name = parseEndpoint(p.name).name || p.name;
+          return h('button', { class: 'nbx-person nbx-plain', type: 'button', onclick: () => { view.chat = { did: p.id, name }; draw(); } },
+            avatar({ id: name.length, name }), h('span', { class: 'drive-text' }, h('b', null, name), h('small', { class: 'muted' }, new Date(p.last).toLocaleString())));
+        })));
+      }
     }
-    const dev = [...found].filter(([id, p]) => !connected.has(id) && p.mode !== 'r');
-    const rooms = [...found].filter(([id, p]) => !connected.has(id) && p.mode === 'r');
-    const hints = radioHints();
-    const auto = h('label', { class: 'focus-row' }, h('span', null, t('nb.auto_find')), h('input', { type: 'checkbox', checked: kv('auto') !== '0', onchange: (e) => kvSet('auto', e.target.checked ? '1' : '0') }));
+  }
+
+  // ---- what to send
+  function startDraft(target) {
+    if (draft?.kind === 'nearby') native().nearbyClearShared();
+    draft = { kind: target.kind, items: [], text: '' };
+  }
+
+  const held = () => parse(native().nearbySharedInfo(), {}).files || [];
+
+  /** A small picture of the file: the file itself for photos and videos, its type otherwise. */
+  function thumbOf(name, mime, src) {
+    const ext = (String(name).split('.').pop() || '').slice(0, 4).toUpperCase();
+    if (src && isImage(mime)) return h('img', { class: 'nbx-thumb', src, alt: '' });
+    if (src && isVideo(mime)) {
+      const time = h('small', { class: 'nbx-time' });
+      const v = h('video', { src: `${src}#t=0.5`, preload: 'metadata', muted: true, playsInline: true, onloadedmetadata: () => { if (Number.isFinite(v.duration)) time.textContent = formatDuration(v.duration); } });
+      return h('span', { class: 'nbx-thumb' }, v, time);
+    }
+    const kind = /PDF/.test(ext) ? 'pdf' : /ZIP|RAR|7Z|TAR|GZ/.test(ext) ? 'zip' : /TXT|DOC|DOCX|RTF|MD/.test(ext) ? 'doc' : /XLS|XLSX|CSV/.test(ext) ? 'xls' : isVideo(mime) ? 'vid' : isImage(mime) ? 'img' : 'bin';
+    return h('span', { class: `nbx-tile-file ${kind}` }, ext && ext !== String(name).toUpperCase() ? ext : icon('file', 20));
+  }
+
+  function drawSend() {
+    const target = sendTarget;
+    if (!target || !draft) { goTo('near'); return; }
+    header(t('nb.send_to', { name: target.name }), null, null, () => {
+      if (draft?.kind === 'nearby') native().nearbyClearShared();
+      draft = null;
+      goTo('near');
+    });
+    clear(content);
+    const list = h('div', { class: 'nbx-card nbx-files' });
+    const total = h('p', { class: 'muted nbx-total' });
+    const sendBtn = h('button', { class: 'btn nbx-send', type: 'button', onclick: send }, icon('send', 20), t('nb.send_btn'));
+    const usesHold = () => draft.kind === 'nearby' && !!native().nearbyPickHold;
+
+    const rows = () => {
+      if (draft.kind === 'nearby' && usesHold()) return held().map((f) => ({ name: f.name, size: f.size, mime: f.mime === 'null' ? '' : f.mime, src: `/__nb/shared/${f.i}`, remove: () => { native().nearbySharedRemove(f.i); fill(); } }));
+      return draft.items.map((f, i) => {
+        f.src ||= URL.createObjectURL(f);
+        if (!urls.includes(f.src)) urls.push(f.src);
+        return { name: f.name, size: f.size, mime: f.type, src: f.src, remove: () => { draft.items.splice(i, 1); fill(); } };
+      });
+    };
+    function fill() {
+      const all = rows();
+      const bytes = all.reduce((a, f) => a + (f.size || 0), 0);
+      const textBytes = draft.text ? new TextEncoder().encode(draft.text).length : 0;
+      const row = (thumb, name, size, remove) => h('div', { class: 'nbx-file' }, thumb,
+        h('span', { class: 'drive-text' }, h('b', null, name), h('small', { class: 'muted' }, size)),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.delete'), onclick: remove }, '✕'));
+      clear(list).append(...all.map((f) => row(thumbOf(f.name, f.mime, f.src), f.name, formatBytes(f.size || 0), f.remove)));
+      if (draft.text) list.append(row(thumbOf('Текст.txt', 'text/plain'), draft.text.slice(0, 40), formatBytes(textBytes), () => { draft.text = ''; fill(); }));
+      if (!all.length && !draft.text) list.append(h('p', { class: 'muted nbx-empty' }, t('nb.send_pick')));
+      total.textContent = all.length || draft.text ? t('nb.send_total', { size: formatBytes(bytes + textBytes) }) : '';
+      sendBtn.disabled = !all.length && !draft.text;
+    }
+    view.onPicked = fill;
+
+    const pick = (accept, mime) => {
+      if (draft.kind === 'nearby') {
+        if (usesHold()) native().nearbyPickHold(mime);
+        else { native().nearbyPickFiles(JSON.stringify([target.did]), target.kind === 'nearby' ? 0 : 0); connectIfNeeded(target); draft = null; goTo('live'); } // an app of version 0.2.25: the file goes as soon as it is chosen
+        return;
+      }
+      pickWeb((files) => { draft.items.push(...files); fill(); }, accept);
+    };
+    const typing = () => {
+      const ta = h('textarea', { class: 'input', rows: 5, maxLength: 1_000_000, value: draft.text, 'aria-label': t('nb.type_text') });
+      const w = modal({ title: t('nb.type_text'), body: [ta, h('button', { class: 'btn', type: 'button', style: { width: '100%', marginTop: '8px' }, onclick: () => { draft.text = ta.value.trim(); w.close(); fill(); } }, t('common.ok'))] });
+    };
+    const kindBtn = (ico, label, fn) => h('button', { class: 'nbx-kind', type: 'button', onclick: fn }, icon(ico, 24), h('span', null, label));
     put(content,
-      hints,
-      connected.size
-        ? h('button', { class: 'btn secondary', type: 'button', onclick: () => ensureSearching(drawNear) }, t('nb.search'))
-        : h('p', { class: 'nb-status', role: 'status' }, h('span', { class: 'tr-spin', 'aria-hidden': 'true' }), t('nb.searching')),
-      trBox,
-      rooms.length ? h('h3', null, t('nb.rooms_found')) : null,
-      ...rooms.map(([id, p]) => h('div', { class: 'drive-row' },
-        h('span', { class: 'drive-text' }, h('b', null, p.name), h('small', { class: 'muted' }, t('nb.room_label'))),
-        h('button', { class: 'btn small', type: 'button', onclick: () => { native().nearbyJoinRoom(id); toast(t('nb.joining')); } }, t('nb.join')))),
-      connected.size ? h('h3', null, t('nb.connected_list')) : null,
-      ...[...connected].map(([id, p]) => h('div', { class: 'drive-row' },
-        h('button', { class: 'nb-grow', type: 'button', onclick: () => { view.chat = { did: p.did, name: p.name }; draw(); } },
-          h('span', { class: 'drive-text' }, h('b', null, p.name, p.verified ? ' ✓' : ''), h('small', { class: 'muted' }, t('nb.tap_chat')))),
-        h('button', { class: 'btn small', type: 'button', onclick: () => native().nearbyPickFiles(JSON.stringify([p.did]), 0) }, t('nb.send_files')))),
-      h('h3', null, t('nb.found')),
-      ...(dev.length ? dev.map(([id, p]) => h('div', { class: 'drive-row' },
-        h('span', { class: 'drive-text' }, h('b', null, p.name), h('small', { class: 'muted' }, p.contact ? t('nb.contact_near') : t('nb.nearby_device'))),
-        h('button', { class: 'btn small', type: 'button', onclick: () => { if (p.contact) accepted.set(id, { auto: true, claim: p.contact.id }); native().nearbyConnect(id); toast(t('nb.request_sent')); } }, t('nb.connect')))) : [h('p', { class: 'muted' }, t('nb.nobody'))]),
-      h('h3', null, t('nb.recent')));
-    const recent = parse(native().nearbyRecent(), []).filter((p) => p.id !== 'room-guest');
-    if (recent.length) {
-      content.append(...recent.map((p) => {
-        const name = parseEndpoint(p.name).name || p.name;
-        return h('button', { class: 'cal-row', type: 'button', onclick: () => { view.chat = { did: p.id, name }; draw(); } },
-          h('span', { class: 'cal-main' }, h('b', null, name), h('small', { class: 'muted' }, new Date(p.last).toLocaleString())));
-      }));
-    } else content.append(h('p', { class: 'muted' }, t('nb.no_history')));
-    if (S.me) content.append(auto);
+      h('div', { class: 'nbx-kinds' },
+        kindBtn('image', t('nb.f_photo'), () => pick('image/*', 'image/*')),
+        kindBtn('video', t('nb.f_video'), () => pick('video/*', 'video/*')),
+        kindBtn('file', t('nb.f_file'), () => pick('', '*/*')),
+        kindBtn('edit', t('nb.f_text'), typing)),
+      list, total, sendBtn,
+      h('div', { class: 'nbx-row nbx-route' }, h('span', { class: 'nbx-ico' }, icon('bolt', 20)), h('span', { class: 'drive-text' }, h('b', null, t(ROUTE[draft.kind])))));
+    fill();
+
+    function send() {
+      if (draft.kind === 'lan') {
+        const files = [...draft.items];
+        if (draft.text) files.push(new File([draft.text], 'Текст.txt', { type: 'text/plain' }));
+        lanSend(target.lid, files);
+      } else if (draft.kind === 'online') {
+        const files = [...draft.items];
+        if (draft.text) files.push(new File([draft.text], 'Текст.txt', { type: 'text/plain' }));
+        import('./chat.js').then(({ attachFiles }) => sendDirect(target.chat.id, files, { fallback: (list2) => attachFiles(target.chat.id, list2) }));
+      } else {
+        if (held().length) native().nearbySendShared(JSON.stringify([target.did]));
+        if (draft.text) queueText(target.did, target.name, draft.text);
+        connectIfNeeded(target);
+      }
+      draft = null;
+      goTo('live');
+    }
+  }
+
+  function connectIfNeeded(target) {
+    if (target.connected) return;
+    if (target.contact) accepted.set(target.eid, { auto: true, claim: target.contact.id });
+    native().nearbyConnect(target.eid);
+  }
+
+  // ---- what is moving
+  function drawLive2() {
+    const target = sendTarget;
+    header(target?.name || t('nb.transfers'), target ? target.note : null, target?.ent);
+    clear(content);
+    const list = h('div', { class: 'nbx-card nbx-files' });
+    const title = h('b', { class: 'nbx-status' });
+    const speed = h('small', { class: 'nbx-sub' });
+    const fill = () => {
+      const bars = barList();
+      const finished = finishedBars();
+      const moving = bars.find((b) => b.pct > 0);
+      title.textContent = bars.length ? t('nb.moving_title') : finished.length ? t('nb.done_title') : t('nb.nothing_moving');
+      speed.textContent = moving?.note || '';
+      clear(list).append(
+        ...bars.map((b) => h('div', { class: 'nbx-file' }, thumbOf(b.title, ''),
+          h('span', { class: 'drive-text' }, h('b', null, b.title),
+            h('small', { class: 'muted' }, `${b.pct > 0 ? `${b.pct}%` : ''}${b.pct > 0 && b.note ? ' · ' : ''}${b.note || ''}`),
+            h('span', { class: 'nb-track' }, h('i', { class: 'nb-bar', style: { width: `${b.pct}%` } }))),
+          ...(b.actions || []).map((a) => h('button', { class: 'icon-btn', type: 'button', 'aria-label': a.label, title: a.label, onclick: a.onclick }, '✕')))),
+        ...finished.map((b) => h('div', { class: 'nbx-file' }, thumbOf(b.title, ''),
+          h('span', { class: 'drive-text' }, h('b', null, b.title), h('small', { class: 'muted' }, t('nb.st_done'))),
+          h('span', { class: 'nbx-ok' }, icon('check', 18)))));
+      if (!bars.length && !finished.length) list.append(h('p', { class: 'muted nbx-empty' }, t('nb.nothing_moving_hint')));
+    };
+    fill();
+    onBarChange = fill;
+    put(content,
+      h('div', { class: 'nbx-phones', 'aria-hidden': 'true' }, h('i', { class: 'nbx-phone' }), h('span', { class: 'nbx-wave' }, icon('wifi', 28)), h('i', { class: 'nbx-phone' })),
+      h('div', { class: 'nbx-center' }, title, speed),
+      list,
+      target ? h('div', { class: 'nbx-row nbx-route' }, h('span', { class: 'nbx-ico' }, icon('bolt', 20)), h('span', { class: 'drive-text' }, h('b', null, t(ROUTE[target.kind])))) : null);
   }
 
   // ---- a conversation

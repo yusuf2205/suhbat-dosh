@@ -123,6 +123,7 @@ final class NearbyBridge {
 
     private final Map<String, long[]> speed = new ConcurrentHashMap<>();  // tid -> { bytes, time } of the previous report
     private List<String> pickTargets = null;
+    private boolean pickHolding = false;
     private long pickChat = 0;
     private final List<Uri> shared = new ArrayList<>();
     private String sharedText = null;
@@ -481,7 +482,38 @@ final class NearbyBridge {
         return out;
     }
 
+    /** Choosing without sending yet: the page shows the list, and sendShared() sends it. */
+    void pickHold(String mime) {
+        Activity a = activity;
+        if (a == null) return;
+        pickHolding = true;
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType(mime == null || mime.isEmpty() ? "*/*" : mime);
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        a.startActivityForResult(i, REQ_PICK);
+    }
+
+    void sharedRemove(int i) {
+        if (i >= 0 && i < shared.size()) shared.remove(i);
+    }
+
     void onFilePicked(int resultCode, Intent data) {
+        if (pickHolding) {
+            pickHolding = false;
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                ClipData c = data.getClipData();
+                List<Uri> picked = new ArrayList<>();
+                if (c != null) for (int i = 0; i < c.getItemCount(); i++) picked.add(c.getItemAt(i).getUri());
+                else if (data.getData() != null) picked.add(data.getData());
+                for (Uri u : picked) {
+                    try { app.getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { /* a one-time grant */ }
+                    shared.add(u);
+                }
+            }
+            emit(obj("type", "picked"));
+            return;
+        }
         final List<String> targets = pickTargets;
         final long chat = pickChat;
         pickTargets = null;

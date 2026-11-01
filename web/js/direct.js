@@ -22,8 +22,18 @@ export const directSupported = () => typeof RTCPeerConnection === 'function';
 const bars = new Map();
 let barRoot = null;
 
+const barWatchers = new Set();
+let finished = [];
+export const onBars = (fn) => { barWatchers.add(fn); return () => barWatchers.delete(fn); };
+export const barList = () => [...bars.values()];
+export const finishedBars = () => finished;
+export const clearFinishedBars = () => { finished = []; };
+
 export function setBar(key, data) {
+  const before = bars.get(key);
+  if (!data && before?.pct >= 99) finished = [...finished.slice(-19), before];
   if (data) bars.set(key, data); else bars.delete(key);
+  barWatchers.forEach((f) => f());
   if (!barRoot) {
     barRoot = h('div', { class: 'dx-bars', role: 'status' });
     document.body.append(barRoot);

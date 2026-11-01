@@ -540,6 +540,8 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface public String nearbySharedInfo() { return nearby.sharedInfo(); }
         @JavascriptInterface public void nearbySendShared(String targets) { nearby.sendShared(targets); }
         @JavascriptInterface public void nearbyClearShared() { nearby.clearShared(); }
+        @JavascriptInterface public void nearbyPickHold(String mime) { runOnUiThread(() -> nearby.pickHold(mime)); }
+        @JavascriptInterface public void nearbySharedRemove(int i) { nearby.sharedRemove(i); }
         @JavascriptInterface public void nearbyRoomStart(String name, String endpoint) { runOnUiThread(() -> nearby.roomStart(name, endpoint)); }
         @JavascriptInterface public void nearbyRoomStop() { runOnUiThread(() -> nearby.roomStop()); }
         @JavascriptInterface public String nearbyRoomInfo() { return nearby.roomInfo(); }
