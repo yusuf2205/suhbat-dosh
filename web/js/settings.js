@@ -238,25 +238,14 @@ export function openSettings() {
             me.username ? h('span', { class: 'accent ellipsis' }, `@${me.username}`) : null)),
         heading(t('st.sec_quick')),
         group(
+          row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } }),
+          row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
+          row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
           row('bookmark', t('nav.saved'), { onclick: () => { m.close(); openSaved(); } }),
           featureOn('selfnotes') && row('edit', t('sn.title'), { onclick: () => { m.close(); openSelfNotes(); } }),
           featureOn('calendar') && row('clock', t('ev.calendar'), { onclick: () => { m.close(); openCalendar(); } }),
           featureOn('tasks') && row('tasks', t('task.title'), { onclick: () => { m.close(); openTasks(); } }),
           row('archive', t('nav.archive'), { onclick: () => { m.close(); setView('archive'); } })),
-        heading(t('st.sec_account')),
-        group(
-          row('user', t('st.account'), { onclick: () => go(pages.account) }),
-          row('lock', t('st.privacy'), { onclick: () => go(pages.privacy) }),
-          row('user', t('acc.title'), { onclick: () => { m.close(); openAccounts(); } }),
-          row('clock', t('pres.title'), { value: S.me.presence === 'busy' ? t('pres.busy') : S.me.presence === 'away' ? t('pres.away') : t('pres.online'), onclick: () => go(pages.presence) })),
-        heading(t('st.sec_chats')),
-        group(
-          row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
-          row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
-          row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
-          row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
-          featureOn('focus') && row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
-          featureOn('digest') && row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
         heading(t('st.sec_app')),
         group(
           row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
@@ -678,14 +667,26 @@ export function openSettings() {
       const server = navigator.userAgent.includes('SuhbatShell/') ? shellNodes() : [];
       return {
         nodes: [
+          heading(t('st.sec_account')),
+          group(
+            row('user', t('st.account'), { onclick: () => go(pages.account) }),
+            row('lock', t('st.privacy'), { onclick: () => go(pages.privacy) }),
+            row('user', t('acc.title'), { onclick: () => { m.close(); openAccounts(); } }),
+            row('clock', t('pres.title'), { value: S.me.presence === 'busy' ? t('pres.busy') : S.me.presence === 'away' ? t('pres.away') : t('pres.online'), onclick: () => go(pages.presence) })),
+          heading(t('st.sec_chats')),
+          group(
+            row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
+            row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
+            row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
+            row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
+            featureOn('focus') && row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
+            featureOn('digest') && row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
           heading(t('st.sec_people')),
           group(
             featureOn('stories') && row('camera', t('story.new'), { onclick: () => { composeStory(); } }),
             featureOn('stories') && row('clock', t('story.archive'), { onclick: () => { openStoryArchive(); } }),
             row('globe', t('dir.title'), { onclick: () => { m.close(); openDirectory(); } }),
-            row('search', t('gsearch.title'), { onclick: () => { m.close(); openGlobalSearch(); } }),
-            row('qr', t('scan.title'), { onclick: () => { m.close(); openScanner(); } }),
-            row('wifi', t('nb.title'), { hint: t('nb.hint'), onclick: () => { m.close(); openNearby(); } })),
+            ),
           heading(t('st.sec_data')),
           group(
             featureOn('storage') && row('disk', t('st.storage'), { onclick: () => { m.close(); openStorage(); } }),

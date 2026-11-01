@@ -8,6 +8,7 @@ import { avatar, toast, modal } from './ui.js';
 import { openSettings } from './dialogs.js';
 import { openCalendar } from './events.js';
 import { openNearby } from './nearby.js';
+import { openScanner } from './scanner.js';
 import { openTasks, refreshTaskCount } from './tasks.js';
 import { focusOn, openFocus } from './focus.js';
 import { openRooms, roomsLive } from './rooms.js';
@@ -59,7 +60,7 @@ function item(id, ico, label, { onclick, active, soon, dot } = {}) {
   return b;
 }
 
-const DEFAULT_PINS = [];
+const DEFAULT_PINS = ['nearby', 'scan'];
 const pins = () => (Array.isArray(S.prefs.railPins) ? S.prefs.railPins : DEFAULT_PINS).filter(featureOn);
 
 /** Everything beyond the four main places; each can be pinned to the rail from the "More" window. */
@@ -71,6 +72,7 @@ function tools() {
     { id: 'rooms', ico: 'speaker', label: t('room.title_all'), onclick: openRooms, dot: roomsLive() > 0 },
     { id: 'focus', ico: 'moon', label: t('focus.title'), onclick: openFocus, dot: focusOn() },
     { id: 'nearby', ico: 'wifi', label: t('nb.title'), onclick: () => openNearby() },
+    { id: 'scan', ico: 'qr', label: t('nb.qr_short'), onclick: () => openScanner() },
     { id: 'archive', ico: 'archive', label: t('nav.archive'), onclick: () => setView('archive'), active: S.view === 'archive' },
     { id: 'settings', ico: 'settings', label: t('nav.settings'), onclick: openSettings },
   ].filter((x) => featureOn(x.id));

@@ -253,3 +253,56 @@ test('one Wi-Fi seen as IPv4 and IPv6: the addresses the devices saw themselves 
   wa.ws.close();
   wb.ws.close();
 });
+
+test('five digits: they bring two devices together from any network, once, and guessing stops quickly', async () => {
+  const a = await signup('Показал');
+  const b = await signup('Ввёл');
+  const c = await signup('Угадывает');
+  const [la, lb, lc] = [lid(), lid(), lid()];
+  const wa = await lanOpen(a.cookie, '198.51.100.40');
+  const wb = await lanOpen(b.cookie, '203.0.113.40');
+  const wc = await lanOpen(c.cookie, '192.0.2.40');
+  await sleep(100);
+  for (const [w, l] of [[wa, la], [wb, lb], [wc, lc]]) w.ws.send(JSON.stringify({ type: 'direct.lan.join', lid: l, open: false }));
+  await sleep(150);
+  wa.ws.send(JSON.stringify({ type: 'direct.lan.code' }));
+  await sleep(150);
+  const code = wa.got.find((e) => e.type === 'direct.lan.code')?.code;
+  assert.match(String(code), /^\d{5}$/);
+
+  const claim = async (w, value) => {
+    const before = w.got.filter((e) => e.type === 'direct.lan.claimed').length;
+    w.ws.send(JSON.stringify({ type: 'direct.lan.claim', code: value }));
+    await sleep(120);
+    return w.got.filter((e) => e.type === 'direct.lan.claimed')[before];
+  };
+  assert.equal((await claim(wb, code === '11111' ? '22222' : '11111')).ok, false, 'a wrong code');
+  assert.deepEqual(lastPeers(wb), []);
+  assert.equal((await claim(wa, code)).ok, false, 'your own code does nothing');
+
+  const good = await claim(wb, code);
+  assert.equal(good.ok, true);
+  assert.equal(good.lid, la);
+  await sleep(120);
+  assert.equal(lastPeers(wb)[0].paired, true);
+  assert.equal(lastPeers(wa)[0].lid, lb);
+  assert.equal(lastPeers(wa)[0].name, undefined, 'the server still tells no names');
+  assert.equal((await claim(wc, code)).ok, false, 'it worked only once');
+
+  // introduced: signalling passes, though the networks differ and no screen is open
+  wb.ws.send(JSON.stringify({ type: 'direct.lan.signal', to: la, data: { t: 'x' } }));
+  await sleep(120);
+  assert.equal(wa.got.filter((e) => e.type === 'direct.lan.signal').length, 1);
+
+  // nobody can walk through the codes
+  let answers = 0;
+  for (let i = 0; i < 30; i += 1) { wc.ws.send(JSON.stringify({ type: 'direct.lan.claim', code: String(30000 + i) })); }
+  await sleep(300);
+  answers = wc.got.filter((e) => e.type === 'direct.lan.claimed' && e.ok).length;
+  assert.equal(answers, 0);
+  wa.ws.send(JSON.stringify({ type: 'direct.lan.code' }));
+  await sleep(120);
+  const fresh = wa.got.filter((e) => e.type === 'direct.lan.code').pop().code;
+  assert.equal((await claim(wc, fresh)).ok, false, 'after too many wrong tries even a right code is refused for a while');
+  for (const w of [wa, wb, wc]) w.ws.close();
+});

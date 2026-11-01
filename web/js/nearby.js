@@ -815,7 +815,7 @@ export async function openNearby(startTab = 'near') {
       content.append(h('p', { class: 'muted' }, t('nb.room_intro')), h('label', null, t('nb.room_name'), name), h('button', { class: 'btn', type: 'button', onclick: start }, t('nb.open_room')));
       return;
     }
-    const step = (title, text, qr) => h('div', { class: 'nb-step' }, h('b', null, title), text ? h('small', { class: 'muted' }, text) : null, qr ? qrCanvas(qr, 220, { logo: false, animate: false }) : null);
+    const step = (title, text, qr) => h('div', { class: 'nb-step' }, h('b', null, title), text ? h('small', { class: 'muted' }, text) : null, qr ? qrCanvas(qr, 240) : null);
     put(content,
       h('div', { class: 'nb-head' }, h('b', null, info.name), h('small', { class: 'muted' }, t('nb.room_guests', { n: info.guests || 0 }))),
       h('div', { class: 'nb-steps' },

@@ -10,6 +10,8 @@ import { avatar, callLabel, confirmDialog, fmtListTime, matchLine, popMenu, prev
 import { startCall } from './call.js';
 import { icon } from './icons.js';
 import { openInfo, openNewChat, openNewGroup, openSettings } from './dialogs.js';
+import { openNearby } from './nearby.js';
+import { openScanner } from './scanner.js';
 import { openSaved, setView } from './rail.js';
 import { folderPicker, openFolders, openGlobalSearch } from './extras.js';
 import { groupCallOf } from './gcall.js';
@@ -81,6 +83,7 @@ export function mount(sidebar) {
   composeBtn.onclick = () => composeMenu(composeBtn);
   const fab = h('button', { class: 'fab', type: 'button', 'aria-label': t('menu.new_chat'), 'aria-haspopup': 'menu', onclick: () => composeMenu(fab) }, icon('compose', 24));
   // phone layout: the search field is hidden until the magnifier is tapped (more room for chats, like Telegram)
+  const scanBtn = h('button', { class: 'icon-btn scan-head', type: 'button', 'aria-label': t('scan.title'), title: t('scan.title'), onclick: () => openScanner() }, icon('qr', 24));
   const searchBtn = h('button', { class: 'icon-btn only-mobile', type: 'button', 'aria-label': t('search.chats'), onclick: () => { el.dataset.search = 'open'; setCompact(false); listEl.scrollTo({ top: 0 }); searchInput.focus(); } }, icon('search', 24));
   searchInput.addEventListener('focus', () => setCompact(false));
   searchInput.addEventListener('blur', () => { if (!searchInput.value && el) delete el.dataset.search; });
@@ -99,13 +102,14 @@ export function mount(sidebar) {
     navBtn('chat', t('nav.messages'), () => setView('chats'), 'chats'),
     navBtn('phone', t('nav.calls'), () => setView('calls'), 'calls'),
     navBtn('users', t('nav.contacts'), () => setView('contacts'), 'contacts'),
+    navBtn('wifi', t('nb.title'), () => openNearby()),
     navBtn('settings', t('nav.settings'), openSettings));
 
   greetEl = h('div', { class: 'greet' }, h('span', { class: 'greet-hi' }), h('b', { class: 'greet-main' }), h('span', { class: 'greet-sub' }));
   const searchBox = h('div', { class: 'search' }, icon('search', 18), searchInput);
   clear(el).append(
     (heroEl = h('div', { class: 'hero' },
-    h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), searchBtn, composeBtn),
+    h('div', { class: 'side-head2' }, h('span', { class: 'brand-word' }, h('img', { class: 'brand-logo sm', src: '/icon.svg?v=2', alt: '', width: 32, height: 32 }), 'Suhbat-dosh'), titleEl, h('span', { class: 'grow' }), scanBtn, searchBtn, composeBtn),
     h('div', { class: 'hero-body' }, h('div', { class: 'hero-inner' }, greetEl, searchBox, featureOn('stories') ? storiesBar() : null)))),
     tabsEl, netEl, notifyBar(), listEl, nav, fab,
   );
@@ -130,7 +134,7 @@ export function mount(sidebar) {
 }
 
 function navBtn(ico, label, onclick, view) {
-  return h('button', { type: 'button', dataset: { view: view || '' }, onclick },
+  return h('button', { type: 'button', 'aria-label': label, dataset: { view: view || '' }, onclick },
     h('span', { class: 'nb-ico' }, icon(ico, 24), view === 'chats' ? h('span', { class: 'nb-badge', hidden: true }) : null),
     h('span', { class: 'nb-label' }, label));
 }

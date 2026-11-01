@@ -34,7 +34,7 @@ const signal = (to, data) => wsSend({ type: 'direct.lan.signal', to, data });
 const introduce = () => wsSend({ type: 'direct.lan.join', lid: LID, open, nets });
 
 /** Those who proved to be on this network. */
-export const lanPeers = () => [...peers.values()].filter((p) => p.ready && (p.local || p.self));
+export const lanPeers = () => [...peers.values()].filter((p) => p.ready && (p.local || p.self || p.paired));
 /** Devices of the same address that could not be reached directly: the router separates them (a guest network). */
 export const lanBlocked = () => open && [...peers.values()].some((p) => p.failed && p.same_ip);
 export const lanLabel = (p) => p.name || p.label || t('nb.nearby_device');
@@ -84,7 +84,7 @@ export function lanSetOpen(on) {
 const deviceLabel = () => (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : t('nb.computer'));
 
 async function sendProof(p) {
-  const reveal = open || p.contact || p.self || p.qr;
+  const reveal = open || p.contact || p.self || p.qr || p.paired;
   const proof = reveal ? await makeProof(p.theirNonce, AUTH_CODE) : {};
   if (p.dc?.readyState === 'open') p.dc.send(JSON.stringify({ ...proof, t: 'auth', anon: !proof.ticket, label: deviceLabel() }));
 }
@@ -509,6 +509,59 @@ async function dropIn(tid, removePart, message) {
   if (message) toast(message, 5000);
 }
 
+// ---------------------------------------------------------------- a short code: the server only introduces the two devices
+let codeWaiter = null;
+let claimWaiter = null;
+
+/** Right after the start of the app the connection to the server may not be up yet. */
+async function sendSoon(obj) {
+  for (let i = 0; i < 30; i += 1) {
+    if (wsSend(obj)) return;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error('offline');
+}
+
+function answerFromServer(setWaiter, message) {
+  return new Promise((resolve, reject) => {
+    const limit = setTimeout(() => { setWaiter(null); reject(new Error('offline')); }, 12_000);
+    setWaiter((v) => { clearTimeout(limit); setWaiter(null); resolve(v); });
+    sendSoon({ type: 'direct.lan.join', lid: LID, open, nets }).then(() => sendSoon(message)).catch((e) => { clearTimeout(limit); setWaiter(null); reject(e); });
+  });
+}
+
+/** The 5 digits of this device, for somebody else to type. */
+export async function pairCode() {
+  if (typeof RTCPeerConnection !== 'function') throw new Error('unsupported');
+  refreshTicket();
+  const r = await answerFromServer((f) => { codeWaiter = f; }, { type: 'direct.lan.code' });
+  if (!r.code) throw new Error('offline');
+  return r.code;
+}
+
+/** Says when somebody who typed our code is connected; returns how to stop watching. */
+export function waitPaired(fn) {
+  const known = new Set(lanPeers().filter((p) => p.paired).map((p) => p.lid));
+  const stop = onLan(() => { if (lanPeers().some((p) => p.paired && !known.has(p.lid))) { stop(); fn(); } });
+  return stop;
+}
+
+/** Typing the digits of the other device. */
+export async function pairClaim(code) {
+  await refreshTicket();
+  const r = await answerFromServer((f) => { claimWaiter = f; }, { type: 'direct.lan.claim', code });
+  if (!r.ok) throw new Error('bad');
+  await new Promise((resolve, reject) => {
+    const check = () => {
+      const p = peers.get(r.lid);
+      if (p?.ready) { stop(); clearTimeout(limit); resolve(); } else if (p?.failed) { stop(); clearTimeout(limit); reject(new Error('failed')); }
+    };
+    const stop = onLan(check);
+    const limit = setTimeout(() => { stop(); reject(new Error('failed')); }, 25_000);
+    check();
+  });
+}
+
 // ---------------------------------------------------------------- with no server: the devices show each other a code
 const SDP_DROP = /^(a=msid-semantic|a=extmap-allow-mixed|a=ice-options|a=setup:actpass-unused)/;
 
@@ -578,5 +631,7 @@ export async function pairAnswer(offer) {
 // ---------------------------------------------------------------- from the server
 export function handleLanEvent(ev) {
   if (ev.type === 'direct.lan.peers') onPeers(ev);
+  else if (ev.type === 'direct.lan.code') codeWaiter?.(ev);
+  else if (ev.type === 'direct.lan.claimed') claimWaiter?.(ev);
   else if (ev.type === 'direct.lan.signal') onSignal(ev);
 }

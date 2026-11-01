@@ -496,6 +496,11 @@ document.addEventListener('suhbat:logout-local', () => fire('logged-out-request'
       } catch { /* not found */ }
       history.replaceState(null, '', '/');
     }
+    const pairing = new URLSearchParams(location.search).get('pair');
+    if (pairing && /^\d{5}$/.test(pairing)) {
+      history.replaceState(null, '', '/');
+      import('./pair.js').then((m) => m.claimPairCode(pairing));
+    }
     const wanted = Number(new URLSearchParams(location.search).get('chat'));
     if (Number.isInteger(wanted) && wanted > 0 && S.chats.has(wanted)) fire('open-chat', wanted);
   } catch (e) {

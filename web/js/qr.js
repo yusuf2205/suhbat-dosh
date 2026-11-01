@@ -5,31 +5,37 @@ import { t } from './i18n.js';
 import { modal, toast } from './ui.js';
 
 /**
- * A QR code on a canvas: rounded dots, our emblem in the middle, a gentle moving glint and a blinking logo.
- * It stays readable: error correction level H (a third of the code may be lost) and the emblem covers well under 5% of the area.
- * { logo: false } draws a plain code (for very long texts), { animate: false } a still picture.
+ * A QR code in our colours on a canvas: a golden frame with the name, rounded dots, yellow eyes, our emblem in the middle, a moving glint and a blinking logo.
+ * It stays readable: what matters to a scanner is that the dots stay dark on a light ground, and the emblem covers well under 5% of the area
+ * (a long text gets a smaller emblem, because it has a lower level of error correction and already has many dots).
+ * { logo: false } draws a plain code, { animate: false } a still picture.
  */
 export function qrCanvas(text, px = 280, { logo = true, animate = true } = {}) {
-  const qr = qrcode(0, logo ? 'H' : 'M');
+  const long = String(text).length > 240;
+  const qr = qrcode(0, !logo || long ? 'M' : 'H');
   qr.addData(text);
   qr.make();
   const n = qr.getModuleCount();
   const quiet = 3;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const cell = Math.max(4, Math.floor((px * dpr) / (n + quiet * 2)));
-  const size = cell * (n + quiet * 2);
+  const band = logo ? 0.085 : 0; // the golden frame, of the whole width
+  const cell = Math.max(logo ? 4 : 3, Math.floor((px * dpr * (1 - band * 2)) / (n + quiet * 2)));
+  const inner = cell * (n + quiet * 2);
+  const pad = logo ? Math.round((inner * band) / (1 - band * 2)) : 0;
+  const size = inner + pad * 2;
   const cv = document.createElement('canvas');
   cv.width = size;
   cv.height = size;
-  cv.className = 'qr-canvas';
+  cv.className = logo ? 'qr-canvas qr-brand' : 'qr-canvas';
   cv.setAttribute('role', 'img');
   cv.setAttribute('aria-label', 'QR');
   const ctx = cv.getContext('2d');
   const isFinder = (r, c) => (r < 7 && c < 7) || (r < 7 && c >= n - 7) || (r >= n - 7 && c < 7);
-  const plateR = logo ? size * 0.115 : 0; // the emblem plate: 23% of the width
+  const plateR = logo ? inner * (long ? 0.055 : 0.115) : 0;
   const mid = size / 2;
   const hidden = (x, y) => logo && Math.hypot(x - mid, y - mid) < plateR * 1.12;
   const rr = (path, x, y, w, h2, r) => { if (path.roundRect) path.roundRect(x, y, w, h2, r); else path.rect(x, y, w, h2); };
+  const px0 = (i) => pad + (i + quiet) * cell;
 
   // all dark dots in one path: the glint is just a moving gradient used as its fill
   const dark = new Path2D();
@@ -37,22 +43,33 @@ export function qrCanvas(text, px = 280, { logo = true, animate = true } = {}) {
   for (let r = 0; r < n; r += 1) {
     for (let c = 0; c < n; c += 1) {
       if (!qr.isDark(r, c) || isFinder(r, c)) continue;
-      const x = (c + quiet) * cell;
-      const y = (r + quiet) * cell;
+      const x = px0(c);
+      const y = px0(r);
       if (hidden(x + cell / 2, y + cell / 2)) continue;
-      rr(dark, x + gap, y + gap, cell - gap * 2, cell - gap * 2, cell * 0.3);
+      rr(dark, x + gap, y + gap, cell - gap * 2, cell - gap * 2, cell * 0.3); // round dots look nice but are read much worse
     }
   }
-  // the three eyes of the code: rounded rings with a rounded centre
-  const finder = new Path2D();
-  const hole = new Path2D();
-  for (const [r0, c0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
-    const x = (c0 + quiet) * cell;
-    const y = (r0 + quiet) * cell;
-    rr(finder, x, y, cell * 7, cell * 7, cell * 2);
-    rr(hole, x + cell, y + cell, cell * 5, cell * 5, cell * 1.3);
-    rr(finder, x + cell * 2, y + cell * 2, cell * 3, cell * 3, cell * 1);
-  }
+  const eyes = [[0, 0], [0, n - 7], [n - 7, 0]].map(([r0, c0]) => [px0(c0), px0(r0)]);
+
+  const drawFrame = () => {
+    if (!logo) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, size); return; }
+    ctx.clearRect(0, 0, size, size);
+    const g = ctx.createLinearGradient(0, 0, size, size);
+    g.addColorStop(0, '#ffe44d'); g.addColorStop(0.55, '#fbc700'); g.addColorStop(1, '#f5a800');
+    ctx.fillStyle = g;
+    const outer = new Path2D();
+    rr(outer, 0, 0, size, size, pad * 1.1);
+    ctx.fill(outer);
+    ctx.fillStyle = '#fff';
+    const card = new Path2D();
+    rr(card, pad, pad, inner, inner, pad * 0.55);
+    ctx.fill(card);
+    ctx.fillStyle = '#2b2b2e';
+    ctx.font = `800 ${Math.round(pad * 0.56)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Suhbat-dosh', mid, size - pad / 2);
+  };
 
   const drawLogo = (t) => {
     if (!logo) return;
@@ -83,8 +100,7 @@ export function qrCanvas(text, px = 280, { logo = true, animate = true } = {}) {
   };
 
   const frame = (t) => {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, size, size);
+    drawFrame();
     // a dark golden glint sweeps over the dots; it never gets lighter than a strong contrast to the white background
     const phase = animate ? ((t % 3600) / 3600) * 1.6 - 0.3 : -1;
     const grad = ctx.createLinearGradient(0, 0, size, size);
@@ -96,16 +112,19 @@ export function qrCanvas(text, px = 280, { logo = true, animate = true } = {}) {
     grad.addColorStop(1, '#16161a');
     ctx.fillStyle = grad;
     ctx.fill(dark);
-    ctx.fill(finder, 'evenodd');
-    ctx.fillStyle = '#fff';
-    ctx.fill(hole);
-    ctx.fillStyle = grad;
-    // the centre of each eye is dark again
-    for (const [r0, c0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
-      const x = (c0 + quiet) * cell;
-      const y = (r0 + quiet) * cell;
+    // the three eyes of the code: a dark ring, a light middle (yellow in our colours), a dark centre
+    for (const [x, y] of eyes) {
+      const ring = new Path2D();
+      rr(ring, x, y, cell * 7, cell * 7, cell * 2);
+      ctx.fillStyle = grad;
+      ctx.fill(ring);
+      const hole = new Path2D();
+      rr(hole, x + cell, y + cell, cell * 5, cell * 5, cell * 1.3);
+      ctx.fillStyle = logo ? '#ffdf0b' : '#fff';
+      ctx.fill(hole);
       const centre = new Path2D();
       rr(centre, x + cell * 2, y + cell * 2, cell * 3, cell * 3, cell);
+      ctx.fillStyle = grad;
       ctx.fill(centre);
     }
     drawLogo(t);

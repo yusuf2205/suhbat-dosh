@@ -58,6 +58,10 @@ nearby.post('/nearby/ticket', (req, res) => {
 const LID_RE = /^[a-f0-9]{16,40}$/;
 const SAME_IP_LIMIT = 40;
 const lobby = new Map();   // lid -> { lid, ws, userId, name, nets, open, contacts }
+const codes = new Map();   // 5 digits -> { lid, exp }
+const pairs = new Map();   // lid -> Set of lids it was connected to by a code: they stay introduced across a reconnection
+const CODE_MS = 10 * 60_000;
+const PAIR_MS = 6 * 3600_000;
 
 /** The same home or office: the whole address for IPv4, the first 64 bits for IPv6. */
 function networkOf(ip) {
@@ -87,7 +91,33 @@ const contactsOf = (userId) => new Set(q.all(
 ).map((r) => r.id));
 
 const sameNet = (a, b) => [...a.nets].some((n) => b.nets.has(n));
-const related = (a, b) => a.lid !== b.lid && (a.open || b.open) && (a.userId === b.userId || sameNet(a, b) || a.contacts.has(b.userId)) && !isBlockedEitherWay(a.userId, b.userId);
+const paired = (a, b) => !!pairs.get(a.lid)?.has(b.lid);
+const related = (a, b) => a.lid !== b.lid && (paired(a, b) || ((a.open || b.open) && (a.userId === b.userId || sameNet(a, b) || a.contacts.has(b.userId)))) && !isBlockedEitherWay(a.userId, b.userId);
+
+const addPair = (a, b) => { if (!pairs.has(a)) pairs.set(a, new Set()); pairs.get(a).add(b); };
+
+/** A code is short so that a person can type it: guessing is held back by a low limit on tries, and it works once. */
+function makeCode(e) {
+  const t = now();
+  for (const [c, v] of codes) if (v.exp < t || v.lid === e.lid) codes.delete(c);
+  if (codes.size > 50_000) return null;
+  for (let i = 0; i < 40; i += 1) {
+    const c = String(crypto.randomInt(10000, 100000));
+    if (!codes.has(c)) { codes.set(c, { lid: e.lid, exp: t + CODE_MS }); return c; }
+  }
+  return null;
+}
+
+function claimCode(e, code) {
+  const c = codes.get(String(code));
+  const other = c && c.exp > now() ? lobby.get(c.lid) : null;
+  if (!other || other.lid === e.lid || isBlockedEitherWay(e.userId, other.userId)) return null;
+  codes.delete(String(code));
+  addPair(e.lid, other.lid);
+  addPair(other.lid, e.lid);
+  setTimeout(() => { pairs.get(e.lid)?.delete(other.lid); pairs.get(other.lid)?.delete(e.lid); }, PAIR_MS).unref();
+  return other;
+}
 
 /** What the socket shows, plus the addresses the device saw through STUN (one Wi-Fi may be two networks: IPv4 and IPv6). */
 function netsOf(ws, claimed) {
@@ -110,6 +140,7 @@ function tellPeers(e) {
     peers: [...known, ...strangers].map((o) => ({
       lid: o.lid,
       same_ip: sameNet(e, o),
+      paired: paired(e, o),
       ...(known.includes(o) ? { uid: o.userId, name: o.name, contact: o.userId !== e.userId, self: o.userId === e.userId } : {}),
     })),
   }));
@@ -139,6 +170,18 @@ function handleLan(userId, m, ws) {
     for (const o of new Set([...was, ...[...lobby.values()].filter((x) => related(e, x))])) tellPeers(o);
   } else if (m.type === 'direct.lan.leave') {
     lanGone(ws);
+  } else if (m.type === 'direct.lan.code') {
+    const e = [...lobby.values()].find((x) => x.ws === ws);
+    if (!e || !rateLimit(`lan-code:${userId}`, 30, 3600_000)) return;
+    const code = makeCode(e);
+    if (code) ws.send(JSON.stringify({ type: 'direct.lan.code', code }));
+  } else if (m.type === 'direct.lan.claim') {
+    const e = [...lobby.values()].find((x) => x.ws === ws);
+    if (!e) return;
+    const allowed = /^\d{5}$/.test(String(m.code)) && rateLimit(`lan-claim:${userId}`, 8, 60_000) && rateLimit(`lan-claim-h:${userId}`, 40, 3600_000);
+    const other = allowed ? claimCode(e, m.code) : null;
+    ws.send(JSON.stringify({ type: 'direct.lan.claimed', ok: !!other, ...(other ? { lid: other.lid } : {}) }));
+    if (other) { tellPeers(e); tellPeers(other); }
   } else if (m.type === 'direct.lan.signal') {
     const from = [...lobby.values()].find((x) => x.ws === ws);
     const to = lobby.get(String(m.to || ''));
