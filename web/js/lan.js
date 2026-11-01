@@ -8,7 +8,7 @@ import { t } from './i18n.js';
 import { S } from './state.js';
 import { wsSend } from './net.js';
 import { modal, toast } from './ui.js';
-import { addSaved, iceServers, openSink, saveDirectItem, setBar, speedText, wentLocally } from './direct.js';
+import { addSaved, alertOffer, iceServers, openSink, saveDirectItem, setBar, speedText, wentLocally } from './direct.js';
 import { checkProof, makeProof, refreshTicket } from './identity.js';
 
 const LID = uuid().replace(/-/g, '');
@@ -370,12 +370,6 @@ function failTransfers(p) {
 }
 
 // ---------------------------------------------------------------- receiving
-/** The app is open but behind another window. */
-function notifyHidden(title, body) {
-  if (!document.hidden || !('serviceWorker' in navigator) || Notification?.permission !== 'granted') return;
-  navigator.serviceWorker.ready.then((r) => r.showNotification(title, { body, icon: '/icon.svg?v=2', tag: 'lan-offer' })).catch(() => {});
-}
-
 function onOffer(p, j) {
   if (typeof j.tid !== 'string' || !/^[\w-]{8,64}$/.test(j.tid)) return;
   const cur = rx.get(j.tid);
@@ -384,7 +378,7 @@ function onOffer(p, j) {
   const task = { tid: j.tid, peer: p, name: String(j.name || 'file').slice(0, 200), size: Number(j.size) || 0, mime: String(j.mime || '').slice(0, 100), got: 0, flushed: 0, buf: [], bufBytes: 0, chain: Promise.resolve(), lastAck: 0 };
   // your own device or a contact: at once, like in a chat
   if (p.self || p.contact) { acceptIn(p, task); return; }
-  notifyHidden(t('nb.file_offer'), `${lanLabel(p)}: ${task.name}`);
+  alertOffer(t('nb.file_offer'), `${lanLabel(p)}: ${task.name}`);
   let answered = false;
   const reply = (yes) => {
     if (answered) return;

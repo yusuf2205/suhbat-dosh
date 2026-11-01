@@ -1,5 +1,6 @@
 // Super-admin console (separate window). All data comes from /api/admin/*, which the server restricts to admins.
-import { h, clear } from './dom.js';
+import { h, clear, linkify } from './dom.js';
+import { speedRow } from './speed.js';
 import './ripple.js';
 import { icon } from './icons.js';
 import { qrCanvas } from './qr.js';
@@ -543,10 +544,10 @@ async function exportsPanel() {
 }
 
 /** A question with a text field (a reason): resolves to the text ('' if left empty) or null when cancelled. Esc cancels, Enter confirms. */
-function askText(text, label, ok = 'Подтвердить') {
+function askText(text, label, ok = 'Подтвердить', value = '') {
   return new Promise((resolve) => {
     const done = (v) => { document.removeEventListener('keydown', key, true); box.remove(); resolve(v); };
-    const input = h('input', { class: 'input', placeholder: label, maxLength: 200, 'aria-label': label });
+    const input = h('input', { class: 'input', placeholder: label, maxLength: 200, value, 'aria-label': label });
     const key = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
       else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); done(input.value.trim()); }
@@ -697,6 +698,40 @@ const clock = (ts) => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit'
 /** Who wrote a message: the Telegram name for copied chats, else the account. */
 const authorOf = (m) => m.import_author || m.sender?.name || '—';
 
+/** Text with working links, and the words searched for marked. */
+function richText(text, term) {
+  const parts = linkify(String(text ?? ''));
+  if (!term) return parts;
+  const low = term.toLowerCase();
+  return parts.flatMap((p) => {
+    if (typeof p !== 'string') return [p];
+    const out = [];
+    let at = 0;
+    const lower = p.toLowerCase();
+    for (let i = lower.indexOf(low); i >= 0; i = lower.indexOf(low, at)) {
+      if (i > at) out.push(p.slice(at, i));
+      out.push(h('mark', null, p.slice(i, i + term.length)));
+      at = i + term.length;
+    }
+    if (at < p.length) out.push(p.slice(at));
+    return out;
+  });
+}
+// in a conversation: @name opens the person here when there is such a person, otherwise in Telegram; a number is copied
+document.addEventListener('suhbat:mention', (e) => {
+  const name = String(e.detail?.username || '').toLowerCase();
+  const u = [...state.users.values()].find((x) => (x.username || '').toLowerCase() === name);
+  if (u) openUser(u.id); else window.open(`https://t.me/${encodeURIComponent(e.detail.username)}`, '_blank', 'noopener');
+});
+document.addEventListener('suhbat:phone', async (e) => {
+  try { await navigator.clipboard.writeText(e.detail.phone); notify(`Номер ${e.detail.phone} скопирован`, 2500); } catch { notify(e.detail.phone); }
+});
+
+/** A player with the speed under it. */
+function player(media) {
+  return h('div', { class: 'abub-player' }, media, speedRow(media));
+}
+
 /** One message as a chat bubble: the owner of the chat on the right, everybody else on the left. */
 function messageNode(m, ctx, prev) {
   const kindIcon = { image: '🖼', video: '🎬', audio: '🎵', voice: '🎤', file: '📎' }[m.kind] || '';
@@ -704,25 +739,26 @@ function messageNode(m, ctx, prev) {
   const sameAuthor = prev && authorOf(prev) === authorOf(m) && dayOf(prev.created_at) === dayOf(m.created_at) && m.created_at - prev.created_at < 5 * 60_000;
   const nodes = [];
   if (!prev || dayOf(prev.created_at) !== dayOf(m.created_at)) nodes.push(h('div', { class: 'aday' }, h('span', null, DAY_FMT.format(new Date(m.created_at)).replace(/^./, (c) => c.toUpperCase()).replace(/ г\.$/, ''))));
-  const showName = !sameAuthor && (!mine || ctx.group);
-  const name = m.sender && !ctx.imported ? userLink(m.sender.id) : h('b', null, authorOf(m));
-  nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}`, dataset: { id: String(m.id) } },
+  const showName = !sameAuthor; // always say who wrote it: somebody reading it has no "own" side
+  const name = m.sender && !ctx.imported ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openUser(Number(m.sender.id)); } }, m.sender.name || uname(m.sender.id)) : h('b', null, authorOf(m));
+  nodes.push(h('div', { class: `abub ${mine ? 'mine' : 'theirs'}${sameAuthor ? ' cont' : ''}${m.mark ? ' marked' : ''}`, dataset: { id: String(m.id), marked: m.mark ? '1' : '' } },
+    m.mark ? h('div', { class: 'abub-mark' }, '\u2B50 ', m.mark.note || 'Помечено') : '',
     m.score != null ? h('div', { class: 'abub-score', title: 'насколько близко по смыслу' }, `${Math.round(m.score * 100)}%`) : '',
     showName ? h('div', { class: 'abub-who' }, name) : '',
     m.forward_from ? h('div', { class: 'abub-quote' }, `Переслано от ${m.forward_from}`) : '',
-    m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', m.reply_to.text) : '',
+    m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', ...richText(m.reply_to.text)) : '',
     m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
     m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
-    m.file && (m.kind === 'voice' || m.kind === 'audio') ? h('audio', { class: 'abub-audio', controls: true, preload: 'metadata', src: `/api/admin/files/${m.file.id}` }) : '',
-    m.file && m.kind === 'video' ? h('div', { class: 'abub-video' }, h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
+    m.file && (m.kind === 'voice' || m.kind === 'audio') ? player(h('audio', { class: 'abub-audio', controls: true, preload: 'metadata', src: `/api/admin/files/${m.file.id}` })) : '',
+    m.file && m.kind === 'video' ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
     m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
-    m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, m.text) : '',
+    m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
-    h('div', { class: 'abub-act' }, h('button', { class: 'abub-copy', type: 'button', 'data-what': 'export', title: 'Скачать это сообщение или дать ссылку на него', 'aria-label': 'Скачать это сообщение или дать ссылку' }, '⇪'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'text', title: 'Копировать текст', 'aria-label': 'Копировать текст' }, '⧉'), h('button', { class: 'abub-copy', type: 'button', 'data-what': 'id', title: 'Копировать номер', 'aria-label': 'Копировать номер' }, '№')),
-    h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at))));
+    h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at),
+      h('button', { class: 'abub-more', type: 'button', title: 'Действия', 'aria-label': 'Действия с сообщением', 'aria-haspopup': 'menu' }, '⋯'))));
   return nodes;
 }
 
@@ -734,7 +770,7 @@ function locationLine(text) {
     h('a', { href: `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, `${g[1]}, ${g[2]}`), ' ', h('small', { class: 'muted' }, 'Яндекс Карты'));
 }
 
-const CHAT_KINDS = [['', 'Всё'], ['image', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['voice', 'Голос и аудио'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
+const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['image', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['voice', 'Голос и аудио'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
 
 /** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
 function openLightbox(imgs, start) {
@@ -759,8 +795,34 @@ function openLightbox(imgs, start) {
   show();
 }
 
+const SUMMARY_KINDS = { text: 'Текст', image: 'Фото', video: 'Видео', voice: 'Голосовые', audio: 'Аудио', file: 'Файлы', location: 'Геопозиции', call: 'Звонки', sticker: 'Стикеры', poll: 'Опросы' };
+
+/** Who wrote how much and of what kind. A tap on a person leaves only their messages. */
+async function openChatSummary(id, title, onAuthor) {
+  let s;
+  try { s = await get(`/api/admin/chats/${id}/stats`); } catch (e) { notify(errMsg(e)); return; }
+  const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const tile = (value, label) => h('div', { class: 'asum-tile' }, h('b', null, String(value)), h('small', null, label));
+  const box = h('div', { class: 'adlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Сводка', onclick: (e) => { if (e.target === box) close(); } },
+    h('div', { class: 'adlg-card asum' },
+      h('h2', null, `Сводка: ${title}`),
+      h('p', { class: 'muted' }, s.first_at ? `С ${fmtDT(s.first_at)} по ${fmtDT(s.last_at)}` : 'Сообщений нет'),
+      h('div', { class: 'asum-tiles' }, tile(s.total, 'сообщений'), tile(s.edited, 'изменено'), tile(s.deleted, 'удалено'), tile(s.links, 'со ссылками'), tile(s.marked, 'помечено'), tile(fmtBytes(s.files_bytes), 'файлы')),
+      h('h3', null, 'Кто сколько написал'),
+      h('div', { class: 'tablewrap' }, h('table', { class: 't' },
+        h('thead', null, h('tr', null, ['Автор', 'Сообщений', 'Первое', 'Последнее'].map((x) => h('th', null, x)))),
+        h('tbody', null, s.by_author.map((a) => h('tr', { class: 'click', title: 'Показать только этого автора', onclick: () => { close(); onAuthor(a.name); } }, h('td', null, h('b', null, a.name)), h('td', null, String(a.n)), h('td', { class: 'ev-time' }, fmtShort(a.first_at)), h('td', { class: 'ev-time' }, fmtShort(a.last_at))))))),
+      h('h3', null, 'Что отправляли'),
+      h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('tbody', null, s.by_kind.map((k) => h('tr', null, h('td', null, SUMMARY_KINDS[k.kind] || k.kind), h('td', null, String(k.n))))))),
+      h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '10px' } }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Закрыть'))));
+  document.addEventListener('keydown', key, true);
+  document.body.append(box);
+}
+
 async function showChat(id, focus = null) {   // focus: a message to scroll to (a search result)
   showTab(state.tab === 'users' ? 'users' : 'chats', false);
+  await loadDirectories(); // a conversation may be opened straight from a link: names come from here
   const f = { q: '', kind: '', author: '', since: '', until: '', meaning: false };
   let jumpMode = !!focus;   // a part of the conversation around a message, or search results: the live feed is off
   const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([k, v]) => k !== 'meaning' && v !== '' && v !== undefined && v !== null)).toString();
@@ -777,7 +839,15 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   };
   const draw = () => {
     clear(list);
-    if (!all.length) list.append(h('p', { class: 'muted' }, 'Ничего не найдено'));
+    list.classList.toggle('agal', f.kind === 'media');
+    if (!all.length) list.append(h('p', { class: 'muted' }, f.kind === 'marked' ? 'Помеченных сообщений нет. Откройте меню ⋯ у сообщения и выберите «Пометить».' : 'Ничего не найдено'));
+    if (f.kind === 'media') {
+      list.append(...all.filter((m) => m.file).map((m) => h('div', { class: 'agal-item abub', dataset: { id: String(m.id) } },
+        m.kind === 'image' ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })),
+        h('div', { class: 'abub-time' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`, h('button', { class: 'abub-more', type: 'button', 'aria-label': 'Действия с сообщением' }, '⋯')))));
+      return;
+    }
+    ctx.term = f.meaning ? '' : f.q;
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
   };
   const heading = h('h2');
@@ -884,6 +954,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const day = (v, end) => (v ? new Date(`${v}T${end ? '23:59:59.999' : '00:00:00'}`).getTime() : '');
   const since = h('input', { class: 'as-date', type: 'date', 'aria-label': 'С даты', onchange: (e) => { f.since = String(day(e.target.value, false)); reload(); } });
   const until = h('input', { class: 'as-date', type: 'date', 'aria-label': 'По дату', onchange: (e) => { f.until = String(day(e.target.value, true)); reload(); } });
+  const goTo = async (query) => {
+    try { go(`#/chat/${id}/${(await get(`/api/admin/chats/${id}/find?${query}`)).id}`); } catch { notify('Такого сообщения в этом чате нет'); }
+  };
+  const toDate = h('input', { class: 'as-date', type: 'date', 'aria-label': 'Перейти к дате', title: 'Перейти к дате', onchange: (e) => { if (e.target.value) goTo(`at=${new Date(`${e.target.value}T00:00:00`).getTime()}`); } });
+  const toNumber = h('input', { class: 'as-date as-num', type: 'number', min: 1, placeholder: '№ сообщения', 'aria-label': 'Перейти к сообщению по номеру', onkeydown: (e) => { if (e.key === 'Enter' && e.target.value) goTo(`id=${Number(e.target.value)}`); } });
   const clearBtn = h('button', { class: 'chip reset', type: 'button', hidden: true, onclick: () => {
     Object.assign(f, { q: '', kind: '', author: '', since: '', until: '', meaning: false });
     search.value = ''; authorSel.value = ''; since.value = ''; until.value = '';
@@ -902,21 +977,69 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const tools = h('div', { class: 'achat-tools' },
     h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), exportMenu),
     h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
-    h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn));
+    h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn),
+    h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber));
 
-  // a message: copy its text or its number; and a way back to the newest
-  list.addEventListener('click', async (e) => {
-    const btn = e.target.closest?.('button.abub-copy');
+  // a message: its menu, on the three dots or the right mouse button; nothing lies over the text
+  let popup = null;
+  const closePopup = () => { popup?.remove(); popup = null; document.removeEventListener('keydown', popupKey, true); };
+  const popupKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePopup(); } };
+  const copy = async (text, done) => { try { await navigator.clipboard.writeText(text); notify(done, 2000); } catch { notify('Не удалось скопировать'); } };
+  const openMessageMenu = (bub, x, y) => {
+    closePopup();
+    const mid = Number(bub.dataset.id);
+    const msg = all.find((m) => m.id === mid);
+    const item = (label, fn) => h('button', { class: 'amenu-item', type: 'button', role: 'menuitem', onclick: () => { closePopup(); fn(); } }, label);
+    const text = () => msg?.text || [...bub.querySelectorAll('.abub-text')].map((n) => n.textContent).join('\n');
+    const setMark = async (note) => {
+      try {
+        await send('POST', `/api/admin/messages/${mid}/mark`, { note });
+        msg.mark = { note };
+        paintMessage(msg);
+      } catch (e) { notify(errMsg(e)); }
+    };
+    popup = h('div', { class: 'amenu-list abub-menu', role: 'menu' },
+      !msg?.mark ? item('⭐ Пометить', () => setMark('')) : null,
+      item(msg?.mark ? '📝 Изменить заметку' : '📝 Пометить с заметкой', async () => {
+        const note = await askText('Заметка к сообщению', 'Например: проверить ссылку', 'Сохранить', msg?.mark?.note || '');
+        if (note !== null && note !== undefined) setMark(note);
+      }),
+      msg?.mark ? item('Снять пометку', async () => {
+        try { await send('DELETE', `/api/admin/messages/${mid}/mark`); msg.mark = null; paintMessage(msg); } catch (e) { notify(errMsg(e)); }
+      }) : null,
+      active() || jumpMode ? item('↗ Показать в переписке', () => { go(`#/chat/${id}/${mid}`); }) : null,
+      item('Копировать текст', () => copy(text(), 'Текст скопирован')),
+      item('Копировать номер', () => copy(`№${mid}`, 'Номер скопирован')),
+      item('🔗 Ссылка на сообщение (для админов)', () => copy(`${location.origin}${location.pathname}#/chat/${id}/${mid}`, 'Ссылка скопирована')),
+      item('⇪ Скачать или дать ссылку', () => {
+        const who = bub.querySelector('.abub-who')?.textContent || (msg ? authorOf(msg) : '');
+        openExportDialog({ scope: 'message', id: mid, title: `Сообщение №${mid}${who ? ` · ${who}` : ''}` });
+      }));
+    document.body.append(popup);
+    const r = popup.getBoundingClientRect();
+    popup.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+    popup.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+    document.addEventListener('keydown', popupKey, true);
+    setTimeout(() => document.addEventListener('click', closePopup, { once: true }));
+  };
+  const paintMessage = (msg) => {
+    const i = all.indexOf(msg);
+    const old = bubbleOf(msg.id);
+    if (f.kind === 'marked' && !msg.mark) { all.splice(i, 1); draw(); return; }
+    if (old) old.replaceWith(messageNode(msg, ctx, { ...all[i - 1], created_at: all[i - 1]?.created_at ?? 0 }).at(-1));
+  };
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('button.abub-more');
     if (!btn) return;
-    const bub = btn.closest('.abub');
-    if (btn.dataset.what === 'export') {   // one message: download it, or hand out a link to it
-      const who = bub.querySelector('.abub-who')?.textContent;
-      openExportDialog({ scope: 'message', id: Number(bub.dataset.id), title: `Сообщение №${bub.dataset.id}${who ? ` · ${who}` : ''}` });
-      return;
-    }
-    const text = btn.dataset.what === 'id' ? `№${bub.dataset.id}` : [...bub.querySelectorAll('.abub-text')].map((x) => x.textContent).join('\n');
-    try { await navigator.clipboard.writeText(text); btn.textContent = '✓'; } catch { btn.textContent = '!'; }
-    setTimeout(() => { btn.textContent = btn.dataset.what === 'id' ? '№' : '⧉'; }, 1200);
+    e.stopPropagation();
+    const r = btn.getBoundingClientRect();
+    openMessageMenu(btn.closest('.abub'), r.right - 230, r.bottom + 4);
+  });
+  list.addEventListener('contextmenu', (e) => {
+    const bub = e.target.closest?.('.abub');
+    if (!bub || e.target.closest('a, video, audio')) return;
+    e.preventDefault();
+    openMessageMenu(bub, e.clientX, e.clientY);
   });
   const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { if (jumpMode) { if (focus) go(`#/chat/${id}`); else reload(); } else { stick = true; toEnd(); } } }, '↓');
   document.body.append(jump);
@@ -945,17 +1068,38 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   }, 3000);
 
   const c = info.chat;
+  const chatName = c.title || state.chats.get(id)?.title || `Чат #${id}`;
+  // who is being read stays on top while reading: which side is whose in a personal chat, the name and the people in a group
+  const person = (uid, name) => (uid ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openUser(Number(uid)); } }, name || uname(uid)) : h('b', null, name));
+  const directSides = () => {
+    if (ctx.imported) return { right: person(null, c.import_me || 'Владелец'), left: person(null, c.title || 'Собеседник') };
+    const other = info.members.find((x) => x.id !== ctx.me);
+    return { right: person(ctx.me, info.members.find((x) => x.id === ctx.me)?.name), left: person(other?.id, other?.name || '—') };
+  };
+  const whoBar = h('div', { class: 'achat-who' },
+    c.type === 'direct'
+      ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
+      : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
+    h('button', { class: 'chip', type: 'button', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, '📊 Сводка'));
+  // on a phone the menu of the console stays on top: the bar goes right under it
+  const placeBar = () => {
+    if (!whoBar.isConnected) { window.removeEventListener('resize', placeBar); return; }
+    const side = document.querySelector('.adm-side');
+    const onTop = side && getComputedStyle(side).position === 'sticky' && side.getBoundingClientRect().width > innerWidth * 0.8;
+    whoBar.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) : 0}px`);
+  };
+  window.addEventListener('resize', placeBar);
   paintHeading();
   draw();
   setView(
     backCrumb('#/chats', '← Чаты'),
-    h('div', { class: 'panel' }, h('h2', null, c.title || state.chats.get(id)?.title || `Чат #${id}`),
-      h('p', { class: 'muted' }, `${c.type} · создан ${fmtDT(c.created_at)}${c.description ? ` · ${c.description}` : ''}`),
+    h('details', { class: 'panel afold' }, h('summary', null, h('b', null, chatName), h('span', { class: 'muted' }, ` · ${c.type} · участники: ${info.members.length}`)),
+      h('p', { class: 'muted' }, `Создан ${fmtDT(c.created_at)}${c.description ? ` · ${c.description}` : ''}`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, heading, tools, moreBtn, list),
+    h('div', { class: 'panel' }, whoBar, heading, tools, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),
@@ -964,6 +1108,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
           h('td', null, e.details?.author ? userLink(e.details.author) : '—'), h('td', { class: 'ev-time' }, fmtDT(e.details?.sent_at)),
           h('td', null, e.details?.text || (e.details?.file ? `[файл ${e.details.file.name}]` : '')))))))) : '',
   );
+  placeBar();
   if (focus) {
     // a search result: the conversation opens on that message and marks it
     stick = false;

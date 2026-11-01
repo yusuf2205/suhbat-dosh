@@ -199,7 +199,7 @@ admin.get('/chats/:id', (req, res) => {
 });
 
 // Filters of the admin's conversation view: text, kind, author, dates. Shared by the page and the export.
-const KIND_SQL = { image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
+const KIND_SQL = { marked: 'm.id IN (SELECT message_id FROM admin_marks)', edited: 'm.edited_at IS NOT NULL', media: "m.kind IN ('image','video')", image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
 function chatFilter(id, query) {
   const where = ['m.chat_id = ?'];
   const params = [id];
@@ -223,7 +223,7 @@ function chatFilter(id, query) {
 
 const adminMessage = (m, history = {}) => {
   const s = m.sender_id ? getUser(m.sender_id) : null;
-  return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [] };
+  return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [], mark: q.get('SELECT note, created_at FROM admin_marks WHERE message_id = ?', m.id) || null };
 };
 const editHistory = (chatId) => {
   const history = {};
@@ -274,6 +274,57 @@ admin.get('/chats/:id/messages', (req, res) => {
     out.total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
   } else out.deleted = [];
   res.json(out);
+});
+
+// A message an administrator wants to come back to, with a note. The people in the chat never see it.
+admin.post('/messages/:id/mark', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const m = q.get('SELECT chat_id FROM messages WHERE id = ?', id);
+  if (!m) throw new HttpError(404, 'not_found');
+  const note = str(String(req.body?.note ?? ''), 'note', { max: 500 });
+  q.run('INSERT INTO admin_marks (message_id, chat_id, note, admin_id, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET note = excluded.note, admin_id = excluded.admin_id, created_at = excluded.created_at', id, m.chat_id, note, req.user.id, now());
+  audit(req.user.id, 'admin.message_mark', { target_type: 'message', target_id: String(id), chat_id: m.chat_id, ip: req.ip });
+  res.json({ ok: true });
+});
+admin.delete('/messages/:id/mark', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const m = q.get('SELECT chat_id FROM admin_marks WHERE message_id = ?', id);
+  q.run('DELETE FROM admin_marks WHERE message_id = ?', id);
+  if (m) audit(req.user.id, 'admin.message_unmark', { target_type: 'message', target_id: String(id), chat_id: m.chat_id, ip: req.ip });
+  res.json({ ok: true });
+});
+
+// A summary of a conversation: who wrote how much, of what kind, from when to when.
+admin.get('/chats/:id/stats', (req, res) => {
+  const id = int(req.params.id, 'id');
+  if (!q.get('SELECT 1 AS x FROM chats WHERE id = ?', id)) throw new HttpError(404, 'not_found');
+  const one = (sql) => q.get(sql, id).n;
+  res.json({
+    total: one('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ?'),
+    edited: one('SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND edited_at IS NOT NULL'),
+    links: one("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND text LIKE '%http%'"),
+    marked: one('SELECT COUNT(*) AS n FROM admin_marks WHERE chat_id = ?'),
+    deleted: one("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'message.delete' AND chat_id = ?"),
+    files_bytes: one('SELECT COALESCE(SUM(f.size), 0) AS n FROM messages m JOIN files f ON f.id = m.file_id WHERE m.chat_id = ?'),
+    first_at: one('SELECT MIN(created_at) AS n FROM messages WHERE chat_id = ?'),
+    last_at: one('SELECT MAX(created_at) AS n FROM messages WHERE chat_id = ?'),
+    by_author: q.all(`SELECT COALESCE(m.import_author, u.name, '—') AS name, MIN(u.id) AS user_id, COUNT(*) AS n, MIN(m.created_at) AS first_at, MAX(m.created_at) AS last_at
+      FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? GROUP BY 1 ORDER BY n DESC LIMIT 50`, id),
+    by_kind: q.all('SELECT kind, COUNT(*) AS n FROM messages WHERE chat_id = ? GROUP BY kind ORDER BY n DESC', id),
+  });
+});
+
+// Where to go: a message by its number, or the first one from a moment on (the last one when there is none after it).
+admin.get('/chats/:id/find', (req, res) => {
+  const id = int(req.params.id, 'id');
+  const mid = int(req.query.id, 'id', { optional: true });
+  const at = int(req.query.at, 'at', { optional: true });
+  if (mid === undefined && at === undefined) throw new HttpError(400, 'invalid_input');
+  const row = mid !== undefined
+    ? q.get('SELECT id FROM messages WHERE id = ? AND chat_id = ?', mid, id)
+    : q.get('SELECT id FROM messages WHERE chat_id = ? AND created_at >= ? ORDER BY created_at, id LIMIT 1', id, at) || q.get('SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', id);
+  if (!row) throw new HttpError(404, 'not_found');
+  res.json({ id: row.id });
 });
 
 // Exports of messages: download at once, or hand out a link with limits (time, number of downloads, password); links can be revoked.

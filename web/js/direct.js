@@ -5,7 +5,7 @@ import { h, formatBytes, uuid } from './dom.js';
 import { t } from './i18n.js';
 import { S } from './state.js';
 import { api, flushOutbox, outbox, wsSend } from './net.js';
-import { modal, toast } from './ui.js';
+import { beep, modal, toast } from './ui.js';
 
 const SID = uuid();              // this tab or app: a person may have several devices, and the first to accept takes the file
 const CHUNK = 64 * 1024;
@@ -45,6 +45,18 @@ export function setBar(key, data) {
 }
 
 export const speedText = (bps) => (bps > 0 ? `${formatBytes(bps)}/${t('nb.sec')}` : '');
+
+// ---------------------------------------------------------------- telling a person that a file is waiting
+/** Sound and vibration always; a system notification when the app is not what the person is looking at. */
+export function alertOffer(title, body, chatId) {
+  try { if (S.prefs.sound !== false) beep(); } catch { /* no sound here */ }
+  try { navigator.vibrate?.([200, 100, 200]); } catch { /* not a phone */ }
+  if (!document.hidden && document.hasFocus()) return;
+  const tag = chatId ? `direct-${chatId}` : 'direct-offer'; // the same tag as the notification from the server: one, not two
+  if (window.suhbatShell?.notify) { window.suhbatShell.notify({ title, body, chat_id: chatId }); return; }
+  if (typeof Notification !== 'function' || Notification.permission !== 'granted' || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then((r) => r.showNotification(title, { body, icon: '/icon.svg?v=2', badge: '/icon.svg?v=2', tag, renotify: true, data: { chat_id: chatId } })).catch(() => {});
+}
 
 // ---------------------------------------------------------------- what came in stays on the device
 let dbp = null;
@@ -228,7 +240,7 @@ function offerFile(task) {
   send();
   task.offered = true;
   clearTimeout(task.slowTimer);
-  task.slowTimer = setTimeout(() => { if (!task.pc) drawOut(task, t('nb.no_answer'), true); }, SLOW_ANSWER);
+  task.slowTimer = setTimeout(() => { if (!task.pc && !task.seen) drawOut(task, t('nb.no_answer'), true); }, SLOW_ANSWER);
   // the app of the other person may be closed: they get a notification, open it, and find the offer still standing
   clearInterval(task.offerTimer);
   task.offerTimer = setInterval(() => { if (!task.pc && outgoing.has(task.tid)) send(); else clearInterval(task.offerTimer); }, OFFER_AGAIN);
@@ -347,6 +359,8 @@ function askIncoming(ev, d) {
   const sender = S.chats.get(ev.chat_id)?.peer?.name || '';
   const task = { tid: d.tid, chatId: ev.chat_id, senderSid: d.from, name: String(d.name || 'file').slice(0, 200), size: Number(d.size) || 0, mime: String(d.mime || '').slice(0, 100), sender, got: 0 };
   incoming.set(d.tid, task);
+  alertOffer(sender || t('nb.file_offer'), `\u26A1 ${task.name} · ${formatBytes(task.size)}`, ev.chat_id);
+  signal(ev.chat_id, { t: 'seen', tid: d.tid, to: d.from }); // the sender may stop wondering
   let answered = false;
   task.closeAsk = () => { answered = true; incoming.delete(d.tid); m.close(); };
   const m = modal({
@@ -428,6 +442,9 @@ export async function handleDirectSignal(ev) {
       case 'offer':
         // the same offer again: while the question is open, nothing; after a break in a transfer that was accepted, go on
         if (inc) { if (inc.accepted) { inc.senderSid = d.from; acceptIn(inc); } } else if (directSupported()) askIncoming(ev, d);
+        break;
+      case 'seen':
+        if (out && !out.pc) { out.seen = true; clearTimeout(out.slowTimer); drawOut(out, t('nb.peer_sees')); }
         break;
       case 'accept':
         if (out && !out.pc) await connectOut(out, d.from, Math.min(Number(d.offset) || 0, out.size));

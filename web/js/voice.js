@@ -1,19 +1,18 @@
 // Voice messages and audio files: waveform bubble + one shared player with a top bar
 // (play/pause, previous/next, 1x/1.5x/2x speed, seek by tapping the waveform), like Telegram.
+import { SPEEDS, currentSpeed, setSpeed } from './speed.js';
 import { h } from './dom.js';
 import { t } from './i18n.js';
 import { S, bucket } from './state.js';
 import { icon } from './icons.js';
 
 const BARS = 44;
-const SPEEDS = [1, 1.5, 2];
 const nodes = new Map(); // message id -> { setProgress, setPlaying, setSpeed }
 
 let audio = null;
 let current = null; // message being played
-let speed = 1;
+let speed = currentSpeed();
 let bar = null;
-try { speed = SPEEDS.includes(Number(localStorage.getItem('suhbat.speed'))) ? Number(localStorage.getItem('suhbat.speed')) : 1; } catch { /* storage blocked */ }
 
 // ---------------------------------------------------------------- waveform data
 /** 0..1 loudness samples -> compact base64url string sent with the message. */
@@ -164,7 +163,7 @@ export function toggleMessage(m, { at = 0 } = {}) {
 
 function cycleSpeed() {
   speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
-  try { localStorage.setItem('suhbat.speed', String(speed)); } catch { /* ignore */ }
+  setSpeed(speed);
   if (audio) audio.playbackRate = speed;
   nodes.forEach((n) => n.setSpeed(speed));
   updateBar();

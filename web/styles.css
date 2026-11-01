@@ -1721,6 +1721,10 @@ html:has(.call-overlay) .overlay { z-index: 150; }
 .nb-step canvas { max-width: 100%; height: auto; }
 .nb .drive-text { flex: 1; min-width: 0; display: grid; }
 .nb-open .dx-bars { display: none; }
+.spd { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 6px; }
+.spd-btn { min-height: 30px; padding: 0 10px; border: 1px solid rgba(255, 255, 255, .3); border-radius: 15px; background: rgba(0, 0, 0, .45); color: #fff; font: inherit; font-size: .8rem; font-variant-numeric: tabular-nums; cursor: pointer; }
+.viewer-spd { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 3; }
+.spd-btn[aria-pressed='true'] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 700; }
 /* ===== "Nearby": black and our yellow, on any theme ===== */
 .modal.nbx {
   --surface: #1c1c20; --surface-2: #26262c; --line: rgba(255, 255, 255, .1); --text: #f5f5f6; --muted: #a6a6b0; --brand: #fbc700; --brand-ink: #2b2b2e;

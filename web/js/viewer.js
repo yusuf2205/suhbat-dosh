@@ -1,3 +1,4 @@
+import { speedRow } from './speed.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { canOpenNative, openNative } from './native.js';
 import { h, clear, formatBytes } from './dom.js';
@@ -161,15 +162,18 @@ export async function openViewer(chatId, messageId, single = null) {
         }
       });
       v.addEventListener('error', () => { if (my === token) fail(m); });
-      stage.append(v);
+      const rate = speedRow(v);
+      rate.classList.add('viewer-spd');
+      stage.append(v, rate);
       status.textContent = t('viewer.loading');
       v.addEventListener('loadedmetadata', () => { status.textContent = ''; });
       return;
     }
 
     if (isAudio(f)) {
+      const sound = h('audio', { controls: true, src: f.url, preload: 'metadata' });
       stage.append(h('div', { class: 'viewer-doc' }, h('div', { class: 'big-ico' }, fileIcon(f.name, f.mime, 72)), h('b', null, f.name),
-        h('audio', { controls: true, src: f.url, preload: 'metadata' })));
+        sound, speedRow(sound)));
       return;
     }
 
