@@ -195,7 +195,7 @@ api.post('/auth/verify', (req, res) => {
     user = getUser(Number(r.lastInsertRowid));
     consumeInvite(inv);
     if (config.superAdminPhones.includes(phone)) {
-      q.run('UPDATE users SET is_admin = 1 WHERE id = ?', user.id);
+      q.run('UPDATE users SET is_admin = 1, admin_owner = 1 WHERE id = ?', user.id);
       user = getUser(user.id);
     }
     aud(req, 'user.register', { actor: user.id, target_type: 'user', target_id: user.id, details: { name: user.name } });

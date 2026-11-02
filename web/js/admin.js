@@ -81,11 +81,14 @@ async function send(method, url, body) {
   return data;
 }
 const ERR = {
+  no_permission: 'На это нет прав: их выдаёт главный администратор',
   cannot_self: 'Нельзя применить к самому себе', cannot_ban_admin: 'Нельзя применить к администратору', last_admin: 'Нельзя убрать последнего администратора',
   confirm_required: 'Нужно подтверждение',
 };
 const errMsg = (e) => ERR[e.message] || ('Ошибка: ' + e.message);
-const state = { tab: 'overview', users: new Map(), chats: new Map(), live: null };
+const state = { tab: 'overview', users: new Map(), chats: new Map(), live: null, owner: false, perms: new Set(), catalog: [] };
+/** What this administrator may do. The server checks every request as well: this only keeps the page from offering what would be refused. */
+const may = (perm) => state.owner || state.perms.has(perm);
 
 const uname = (id) => {
   if (id === null || id === undefined) return 'система';
@@ -196,7 +199,8 @@ function setView(...nodes) {
 }
 
 async function loadDirectories() {
-  const [u, c] = await Promise.all([get('/api/admin/users'), get('/api/admin/chats')]);
+  // names and titles for the whole console; somebody without the right simply sees numbers
+  const [u, c] = await Promise.all([may('users_view') ? get('/api/admin/users') : { users: [] }, may('chats_read') ? get('/api/admin/chats') : { chats: [] }]);
   state.users = new Map(u.users.map((x) => [x.id, x]));
   state.chats = new Map(c.chats.map((x) => [x.id, x]));
   return { users: u.users, chats: c.chats };
@@ -356,7 +360,7 @@ function attentionPanels(o) {
 
 async function viewOverview() {
   const tz = -new Date().getTimezoneOffset();
-  const [o, st, , ev] = await Promise.all([get('/api/admin/overview'), get(`/api/admin/stats?tz=${tz}&days=14`), loadDirectories(), get('/api/admin/audit?limit=12')]);
+  const [o, st, , ev] = await Promise.all([get('/api/admin/overview'), get(`/api/admin/stats?tz=${tz}&days=14`), loadDirectories(), may('journal') ? get('/api/admin/audit?limit=12') : { events: [] }]);
   let series = 'messages';
   const chartHolder = h('div');
   const totalLabel = h('span', { class: 'muted' });
@@ -417,7 +421,7 @@ async function viewOverview() {
     h('div', { class: 'note' }, icon('shield', 18), h('span', null, 'Журнал фиксирует вход и выход, изменения профилей и чатов, отправку, правку и удаление сообщений (с прежним текстом). Просмотр переписки администратором тоже записывается.')),
   );
   applyDynamicStyles();
-  startLive(async () => { drawFeed((await get('/api/admin/audit?limit=12')).events); }, 8000);
+  if (may('journal')) startLive(async () => { drawFeed((await get('/api/admin/audit?limit=12')).events); }, 8000);
 }
 
 async function viewUsers() {
@@ -588,24 +592,24 @@ async function showUser(id) {
           u.online ? h('span', { class: 'pill ok' }, 'в сети') : h('span', { class: 'pill' }, `был(а) ${fmtShort(u.last_seen)}`),
           u.banned_at ? h('span', { class: 'pill warn', title: u.ban_reason || '' }, 'заблокирован') : null))),
     h('div', { class: 'ud-actions' },
-      act('list', 'Журнал', 'secondary', () => { state.preset = { actor: id }; setTab('journal'); }, 'Действия этого пользователя в журнале'),
-      act('download', 'Выгрузить', 'secondary', () => openExportDialog({ scope: 'user', id, title: `Всё, что написал ${u.name}: в личных чатах, группах и каналах` }), 'Скачать сообщения пользователя или дать ссылку на них'),
-      act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
-      u.is_bot ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
+      !may('journal') ? null : act('list', 'Журнал', 'secondary', () => { state.preset = { actor: id }; setTab('journal'); }, 'Действия этого пользователя в журнале'),
+      !may('chats_export') ? null : act('download', 'Выгрузить', 'secondary', () => openExportDialog({ scope: 'user', id, title: `Всё, что написал ${u.name}: в личных чатах, группах и каналах` }), 'Скачать сообщения пользователя или дать ссылку на них'),
+      !may('users_manage') ? null : act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
+      u.is_bot || !state.owner ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
       h('span', { class: 'ud-sp' }),
-      u.banned_at
+      !may('users_manage') ? null : u.banned_at
         ? act('block', 'Разблокировать', '', run(null, () => send('POST', `/api/admin/users/${id}/ban`, { banned: false })))
         : act('block', 'Заблокировать', 'danger-o', async () => {
           const reason = await askText('Заблокировать аккаунт? Все сессии будут завершены.', 'Причина (необязательно)', 'Заблокировать');
           if (reason === null) return;
           try { await send('POST', `/api/admin/users/${id}/ban`, { banned: true, reason }); await openUser(id); } catch (e) { notify(errMsg(e)); }
         }),
-      act('trash', 'Удалить', 'danger-o', run('Удалить аккаунт навсегда? Личные чаты будут удалены, сообщения в группах останутся.', () => send('DELETE', `/api/admin/users/${id}`), () => setTab('users')))));
+      !may('users_delete') ? null : act('trash', 'Удалить', 'danger-o', run('Удалить аккаунт навсегда? Личные чаты будут удалены, сообщения в группах останутся.', () => send('DELETE', `/api/admin/users/${id}`), () => setTab('users')))));
 
   // chats: the most useful part, right under the top
   const typeName = { direct: 'личный', group: 'группа', channel: 'канал' };
   const chatsPanel = h('section', { class: 'panel' }, h('h2', null, `Чаты · ${d.chats.length}`),
-    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', onclick: () => openChat(c.id) },
+    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', disabled: !may('chats_read'), onclick: () => openChat(c.id) },
       h('span', { class: `ud-ci ${c.type}`, 'aria-hidden': 'true' }, (c.title || '#').slice(0, 1).toUpperCase()),
       h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || `#${c.id}`),
         h('small', { class: 'muted ellipsis' }, `${typeName[c.type] || c.type}${c.role && c.role !== 'member' ? ` · ${c.role}` : ''} · с ${fmtShort(c.joined_at)}`)),
@@ -975,7 +979,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('details').open = false; openExportDialog({ scope: 'chat', id, title: c0.title || state.chats.get(id)?.title || `Чат #${id}` }); } }, 'Архив с файлами, ссылка…')));
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
   const tools = h('div', { class: 'achat-tools' },
-    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), exportMenu),
+    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), may('chats_export') ? exportMenu : null),
     h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
     h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn),
     h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber));
@@ -1011,7 +1015,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       item('Копировать текст', () => copy(text(), 'Текст скопирован')),
       item('Копировать номер', () => copy(`№${mid}`, 'Номер скопирован')),
       item('🔗 Ссылка на сообщение (для админов)', () => copy(`${location.origin}${location.pathname}#/chat/${id}/${mid}`, 'Ссылка скопирована')),
-      item('⇪ Скачать или дать ссылку', () => {
+      !may('chats_export') ? null : item('⇪ Скачать или дать ссылку', () => {
         const who = bub.querySelector('.abub-who')?.textContent || (msg ? authorOf(msg) : '');
         openExportDialog({ scope: 'message', id: mid, title: `Сообщение №${mid}${who ? ` · ${who}` : ''}` });
       }));
@@ -1247,7 +1251,12 @@ function bridgePanel(data) {
 }
 
 async function viewAccess() {
-  const [st, inv, br] = await Promise.all([get('/api/admin/settings'), get('/api/admin/invites'), get('/api/admin/bridge').catch(() => ({ configured: false, users: [] }))]);
+  if (!may('access')) {
+    const only = await get('/api/admin/bridge').catch(() => ({ configured: false, users: [] }));
+    setView(bridgePanel(only));
+    return;
+  }
+  const [st, inv, br] = await Promise.all([get('/api/admin/settings'), get('/api/admin/invites'), !may('bridge') ? { configured: false, users: [] } : get('/api/admin/bridge').catch(() => ({ configured: false, users: [] }))]);
   const MODES = {
     open: ['Открыта', 'Любой может зарегистрироваться'],
     invite: ['По приглашениям', 'Только по ссылке-приглашению'],
@@ -1338,7 +1347,7 @@ async function viewAccess() {
     h('div', { class: 'panel' }, h('h2', null, icon('phone', 18), 'Групповые звонки и голосовые комнаты'),
       h('p', { class: 'muted' }, `Сколько человек может быть в одном звонке или комнате (от 2 до ${st.gcall_max_top ?? 25}). Каждый участник отправляет своё видео всем остальным, поэтому при больших значениях нужен быстрый интернет у людей и на сервере TURN. Действует для новых входов, идущие звонки не прерываются.`),
       h('div', { class: 'toolbar' }, gcIn, gcSave, gcMsg)),
-    bridgePanel(br),
+    may('bridge') ? bridgePanel(br) : '',
     await exportsPanel(),
     h('div', { class: 'panel' }, h('h2', null, icon('lock', 18), 'Вход администратора'),
       h('p', { class: 'muted' }, cred.has_password
@@ -1553,7 +1562,68 @@ function stopLive() {
   state.live = null;
 }
 
-const VIEWS = { overview: viewOverview, users: viewUsers, chats: viewChats, journal: viewJournal, access: viewAccess, server: viewServer, quality: viewQuality, reports: viewReports };
+const VIEWS = { admins: viewAdmins, overview: viewOverview, users: viewUsers, chats: viewChats, journal: viewJournal, access: viewAccess, server: viewServer, quality: viewQuality, reports: viewReports };
+/** Which right opens which part of the console. */
+const TAB_RIGHT = { overview: ['overview'], users: ['users_view'], chats: ['chats_read'], journal: ['journal'], access: ['access', 'bridge'], server: ['server'], quality: ['quality'], reports: ['reports'] };
+const tabAllowed = (k) => (k === 'admins' ? state.owner : (TAB_RIGHT[k] || []).some(may));
+
+const PRESETS = [
+  ['Только смотреть', ['overview', 'users_view', 'journal', 'quality']],
+  ['Модератор', ['overview', 'users_view', 'users_manage', 'reports', 'journal']],
+  ['Техник', ['overview', 'server', 'quality']],
+];
+
+/** The main administrator gives each of the others exactly the rights they need. */
+async function viewAdmins() {
+  const [{ admins, catalog }] = await Promise.all([get('/api/admin/admins'), loadDirectories()]);
+  const save = async (a, perms, box) => {
+    try {
+      const r = await send('PUT', `/api/admin/users/${a.id}/admin-perms`, { perms });
+      a.perms = r.perms;
+      paint(a, box);
+      notify('Права сохранены', 1800);
+    } catch (e) { notify(errMsg(e)); paint(a, box); }
+  };
+  function paint(a, box) {
+    clear(box).append(
+      h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Быстро:'),
+        PRESETS.map(([label, list]) => h('button', { class: 'chip', type: 'button', onclick: () => save(a, list, box) }, label)),
+        h('button', { class: 'chip reset', type: 'button', onclick: () => save(a, [], box) }, 'Снять все')),
+      h('div', { class: 'aperm-list' }, catalog.map((p) => h('label', { class: `aperm${p.danger ? ' danger' : ''}` },
+        h('input', { type: 'checkbox', checked: a.perms.includes(p.id), onchange: (e) => save(a, e.target.checked ? [...a.perms, p.id] : a.perms.filter((x) => x !== p.id && !catalog.find((c) => c.id === x)?.needs?.includes(p.id)), box) }),
+        h('span', null, h('b', null, p.label), h('small', { class: 'muted' }, p.hint))))));
+  }
+  const card = (a) => {
+    const rights = h('div', { class: 'aperm-box' });
+    if (!a.owner) paint(a, rights);
+    return h('section', { class: 'panel' },
+      h('div', { class: 'at-row aperm-head' },
+        h('h2', null, a.name), a.username ? h('span', { class: 'muted' }, `@${a.username}`) : null,
+        a.owner ? h('span', { class: 'pill ok' }, 'главный админ') : a.online ? h('span', { class: 'pill ok' }, 'в сети') : null,
+        h('span', { class: 'ud-sp' }),
+        a.owner ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
+          if (!await askConfirm(`Снять права администратора у ${a.name}?`)) return;
+          try { await send('POST', `/api/admin/users/${a.id}/admin`, { is_admin: false }); viewAdmins(); } catch (e) { notify(errMsg(e)); }
+        } }, 'Снять админа')),
+      a.owner ? h('p', { class: 'muted' }, 'Может всё и один выдаёт права. Только главный админ меняет вход в админку, назначает админов, восстанавливает и удаляет резервные копии. Его личную переписку другие админы не видят.') : rights);
+  };
+  const results = h('div', { class: 'ud-chats' });
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя, @username или телефон', 'aria-label': 'Кого назначить администратором', oninput: (e) => {
+    const q2 = e.target.value.trim().toLowerCase();
+    clear(results).append(...(q2.length < 2 ? [] : [...state.users.values()]
+      .filter((u) => !u.is_admin && !u.is_bot && !u.banned && [u.name, u.username, u.phone].some((x) => String(x || '').toLowerCase().includes(q2))).slice(0, 8)
+      .map((u) => h('div', { class: 'ud-chat find' }, h('span', { class: 'ud-cm' }, h('b', null, u.name), h('small', { class: 'muted' }, u.username ? `@${u.username}` : u.phone || '')),
+        h('button', { class: 'btn small', type: 'button', onclick: async () => {
+          try { await send('POST', `/api/admin/users/${u.id}/admin`, { is_admin: true }); notify(`${u.name} теперь администратор. Выберите права ниже`); viewAdmins(); } catch (e2) { notify(errMsg(e2)); }
+        } }, 'Назначить')))));
+  } });
+  setView(
+    h('section', { class: 'panel' }, h('h2', null, 'Новый администратор'),
+      h('p', { class: 'muted' }, 'Новый администратор сначала не может ничего: вы сами отмечаете, что ему разрешено. Права действуют сразу, а все изменения записываются в журнал.'),
+      h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), results),
+    ...admins.map(card));
+}
+
 const TABS = {
   overview: ['Обзор', 'grid', 'Состояние сервера и активность'],
   users: ['Пользователи', 'users', 'Все аккаунты, сессии и действия'],
@@ -1563,6 +1633,7 @@ const TABS = {
   server: ['Сервер и копии', 'disk', 'Нагрузка, диск и резервные копии'],
   quality: ['Качество звонков', 'phone', 'Показатели связи по пользователям'],
   reports: ['Жалобы', 'shield', 'Сообщения, на которые пожаловались пользователи'],
+  admins: ['Администраторы', 'key', 'Кто что может: права выдаёт главный админ'],
 };
 let view;
 let navEl;
@@ -1580,6 +1651,10 @@ function showTab(tab, render = true) {
 // ---------------------------------------------------------------- navigation: every screen has an address, so "Back" (the browser, the phone) steps out of it
 const depth = () => history.state?.d ?? 0;
 /** Open an address; the same one again only redraws it (after a change). */
+function showNoRights() {
+  setView(h('div', { class: 'panel' }, h('h2', null, 'Нет доступа'), h('p', { class: 'muted' }, 'На это у вас нет прав. Их выдаёт главный администратор.')));
+}
+
 function go(hash) {
   if (location.hash === hash) return route();
   history.pushState({ d: depth() + 1 }, '', hash);
@@ -1593,8 +1668,14 @@ async function route() {
   try {
     if (u) await showUser(Number(u[1]));
     else if (c) await showChat(Number(c[1]), c[2] ? Number(c[2]) : null);
-    else showTab(t && TABS[t[1]] ? t[1] : 'overview');
-  } catch (e) { setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)); }
+    else {
+      const first = Object.keys(TABS).find(tabAllowed);
+      if (!first) { showNoRights(); return; }
+      showTab(t && TABS[t[1]] && tabAllowed(t[1]) ? t[1] : first);
+    }
+  } catch (e) {
+    if (String(e.message) === '403') showNoRights(); else setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`));
+  }
 }
 window.addEventListener('popstate', route);
 const setTab = (tab) => go(`#/${tab}`);
@@ -1646,8 +1727,14 @@ async function boot() {
     showLogin('Этот раздел только для супер-администратора. Войдите под учётной записью администратора.');
     return;
   }
+  try {
+    const rights = await get('/api/admin/me');
+    state.owner = rights.owner;
+    state.perms = new Set(rights.perms);
+    state.catalog = rights.catalog;
+  } catch { /* an older server: everything is refused by it anyway */ }
   navEl = h('nav', { class: 'adm-nav', 'aria-label': 'Разделы' },
-    Object.entries(TABS).map(([k, [l, ico]]) => h('button', { type: 'button', dataset: { tab: k }, onclick: () => setTab(k) }, icon(ico, 20), h('span', null, l))));
+    Object.entries(TABS).filter(([k]) => tabAllowed(k)).map(([k, [l, ico]]) => h('button', { type: 'button', dataset: { tab: k }, onclick: () => setTab(k) }, icon(ico, 20), h('span', null, l))));
   titleEl = h('h1');
   subEl = h('p', { class: 'muted' });
   view = h('main', { class: 'adm-view' });
@@ -1660,9 +1747,9 @@ async function boot() {
         h('span', null, h('b', null, 'Suhbat-dosh'), h('small', null, 'Администратор'))),
       navEl,
       h('div', { class: 'adm-grow' }),
-      h('div', { class: 'adm-side-card' }, icon('key', 20), h('b', null, 'Доступ супер-админа'),
-        h('span', null, 'Каждый ваш просмотр переписки записывается в журнал.')),
-      h('div', { class: 'adm-me' }, h('span', { class: 'av' }, initials(me.name)), h('span', null, h('b', null, me.name), h('small', null, 'Супер-админ'))),
+      h('div', { class: 'adm-side-card' }, icon('key', 20), h('b', null, state.owner ? 'Доступ главного админа' : 'Доступ администратора'),
+        h('span', null, 'Каждый просмотр переписки записывается в журнал.')),
+      h('div', { class: 'adm-me' }, h('span', { class: 'av' }, initials(me.name)), h('span', null, h('b', null, me.name), h('small', null, state.owner ? 'Главный админ' : 'Администратор'))),
       h('a', { href: '/', class: 'btn secondary adm-back' }, icon('back', 18), 'В мессенджер')),
     h('div', { class: 'adm-main' },
       h('header', { class: 'adm-head' }, h('div', null, titleEl, subEl), h('div', { class: 'adm-head-r' }, clock)),

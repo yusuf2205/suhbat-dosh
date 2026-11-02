@@ -38,7 +38,7 @@ ensureBotFather();
 
 // SUPERADMIN_PHONES (comma-separated, E.164) marks existing accounts as super admins at startup;
 // accounts created later with those numbers are promoted at registration.
-for (const p of config.superAdminPhones) q.run('UPDATE users SET is_admin = 1 WHERE phone = ?', p);
+for (const p of config.superAdminPhones) q.run('UPDATE users SET is_admin = 1, admin_owner = 1 WHERE phone = ?', p);
 
 const app = express();
 app.disable('x-powered-by');
