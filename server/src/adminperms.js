@@ -85,19 +85,40 @@ export function adminGate(req, _res, next) {
   if (!rule || !permsOf(u).includes(rule[2])) return next(new HttpError(403, 'no_permission'));
   // what the bridge copied from the main administrator's own Telegram stays closed too
   const bridged = /^\/bridge\/(\d+)/.exec(req.path);
-  if (bridged && q.get('SELECT 1 AS x FROM users WHERE id = ? AND admin_owner = 1', Number(bridged[1]))) return next(new HttpError(403, 'no_permission'));
+  if (bridged && personHiddenFrom(Number(bridged[1]), u)) return next(new HttpError(403, 'no_permission'));
   return next();
 }
 
-/** The personal conversations of the main administrator are not for the other administrators. */
+export const READ_MODES = ['all', 'except', 'only'];
+const PEOPLE = 'SELECT user_id FROM admin_read_people WHERE admin_id = ?';
+
+/**
+ * The chats closed to this administrator, as a condition on `chats c`.
+ * The main administrator's personal conversations are always closed. "Except": a closed person closes every chat they are in or wrote in, so a group never shows what they said.
+ * "Only": a chat opens when a listed person is in it. A deleted account or a former administrator sees nothing.
+ */
+export function hiddenChatSql(u) {
+  if (!u?.is_admin) return { sql: '1', params: [] };
+  if (isOwner(u)) return { sql: '0', params: [] };
+  const main = `(c.type = 'direct' AND EXISTS (SELECT 1 FROM members x JOIN users o ON o.id = x.user_id WHERE x.chat_id = c.id AND o.admin_owner = 1))
+    OR (c.imported_from IS NOT NULL AND COALESCE(c.owner_id, 0) IN (SELECT id FROM users WHERE admin_owner = 1))`;
+  const inside = `EXISTS (SELECT 1 FROM members x WHERE x.chat_id = c.id AND x.user_id IN (${PEOPLE})) OR COALESCE(c.owner_id, 0) IN (${PEOPLE})`;
+  if (u.admin_read_mode === 'only') return { sql: `(${main} OR NOT (${inside}))`, params: [u.id, u.id] };
+  if (u.admin_read_mode === 'except') return { sql: `(${main} OR ${inside} OR EXISTS (SELECT 1 FROM messages x WHERE x.chat_id = c.id AND x.sender_id IN (${PEOPLE})))`, params: [u.id, u.id, u.id] };
+  return { sql: `(${main})`, params: [] };
+}
+
 export function chatHiddenFrom(chatId, u) {
+  const { sql, params } = hiddenChatSql(u);
+  return !!q.get(`SELECT 1 AS x FROM chats c WHERE c.id = ? AND ${sql}`, chatId, ...params);
+}
+
+/** May this administrator take everything one person wrote? */
+export function personHiddenFrom(personId, u) {
   if (isOwner(u)) return false;
-  return !!q.get(
-    `SELECT 1 AS x FROM chats c WHERE c.id = ? AND (
-       (c.type = 'direct' AND EXISTS (SELECT 1 FROM members m JOIN users o ON o.id = m.user_id WHERE m.chat_id = c.id AND o.admin_owner = 1))
-       OR (c.imported_from IS NOT NULL AND c.owner_id IN (SELECT id FROM users WHERE admin_owner = 1)))`,
-    chatId,
-  );
+  if (!u?.is_admin || q.get('SELECT 1 AS x FROM users WHERE id = ? AND admin_owner = 1', personId)) return true;
+  const listed = !!q.get('SELECT 1 AS x FROM admin_read_people WHERE admin_id = ? AND user_id = ?', u.id, personId);
+  return u.admin_read_mode === 'only' ? !listed : u.admin_read_mode === 'except' && listed;
 }
 
 /** Another administrator's account is out of reach for anybody but the main administrator. */

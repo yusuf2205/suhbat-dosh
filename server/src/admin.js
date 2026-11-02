@@ -15,7 +15,7 @@ import { quotaFor, safetyAdmin, usedBytes } from './safety.js';
 import { transcriberReady } from './transcribe.js';
 import { translatorReady } from './translate.js';
 import { embedderReady, rankByMeaning } from './semantic.js';
-import { ADMIN_PERMS, adminGate, chatHiddenFrom, cleanPerms, isOwner, permsOf } from './adminperms.js';
+import { ADMIN_PERMS, READ_MODES, adminGate, chatHiddenFrom, cleanPerms, hiddenChatSql, isOwner, permsOf, personHiddenFrom } from './adminperms.js';
 import { integrityState, lastRuns, runIntegrity } from './integrity.js';
 import { FORMATS, createLink, describeScope, extendLink, listLinks, revokeLink, streamExport } from './exports.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
@@ -33,9 +33,10 @@ const target = (req) => {
 
 // ---- who may do what: only the main administrator hands out rights
 const ownerOnly = (req) => { if (!isOwner(req.user)) throw new HttpError(403, 'no_permission'); };
-const adminOut = (u) => ({ ...userRef(u), owner: isOwner(u), perms: permsOf(u), last_seen: u.last_seen, online: isOnline(u.id) });
+const readOut = (u) => ({ mode: u.admin_read_mode, people: q.all('SELECT u.* FROM admin_read_people r JOIN users u ON u.id = r.user_id WHERE r.admin_id = ? ORDER BY u.name', u.id).map(userRef) });
+const adminOut = (u) => ({ ...userRef(u), owner: isOwner(u), perms: permsOf(u), read: readOut(u), last_seen: u.last_seen, online: isOnline(u.id) });
 const hiddenChat = (req, chatId) => { if (chatHiddenFrom(chatId, req.user)) throw new HttpError(403, 'no_permission'); };
-admin.get('/me', (req, res) => res.json({ owner: isOwner(req.user), perms: permsOf(req.user), catalog: ADMIN_PERMS }));
+admin.get('/me', (req, res) => res.json({ owner: isOwner(req.user), perms: permsOf(req.user), read_limited: !isOwner(req.user) && req.user.admin_read_mode !== 'all', catalog: ADMIN_PERMS }));
 admin.get('/admins', (req, res) => {
   ownerOnly(req);
   const list = q.all('SELECT id FROM users WHERE is_admin = 1 AND is_bot = 0 ORDER BY admin_owner DESC, id').map((r) => getUser(r.id));
@@ -50,7 +51,23 @@ admin.put('/users/:id/admin-perms', (req, res) => {
   audit(req.user.id, 'admin.set_perms', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { perms } });
   res.json({ perms });
 });
-// a conversation of the main administrator, whichever way it is asked for
+admin.put('/users/:id/admin-read', (req, res) => {
+  ownerOnly(req);
+  const u = target(req);
+  if (!u.is_admin || isOwner(u)) throw new HttpError(400, 'invalid_input');
+  const { mode, people } = req.body || {};
+  if (!READ_MODES.includes(mode) || !Array.isArray(people) || people.length > 1000) throw new HttpError(400, 'invalid_input');
+  const ids = mode === 'all' ? [] : [...new Set(people)].filter((id) => { const p = Number.isInteger(id) ? getUser(id) : null; return p && p.id !== u.id && !isOwner(p); });
+  tx(() => {
+    q.run('UPDATE users SET admin_read_mode = ? WHERE id = ?', mode, u.id);
+    q.run('DELETE FROM admin_read_people WHERE admin_id = ?', u.id);
+    for (const id of ids) q.run('INSERT INTO admin_read_people (admin_id, user_id) VALUES (?, ?)', u.id, id);
+  });
+  const read = readOut(getUser(u.id));
+  audit(req.user.id, 'admin.set_read', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { mode, people: read.people.map((p) => p.name) } });
+  res.json({ read });
+});
+// a conversation closed to this administrator, whichever way it is asked for
 admin.param('id', (req, _res, next, value) => {
   if (isOwner(req.user)) return next();
   const id = Number(value);
@@ -179,7 +196,7 @@ admin.get('/users/:id', (req, res) => {
        (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.sender_id = ?) AS sent
      FROM members mb JOIN chats c ON c.id = mb.chat_id WHERE mb.user_id = ? ORDER BY c.last_message_at DESC`,
     u.id, u.id,
-  ).map((c) => {
+  ).filter((c) => !chatHiddenFrom(c.id, req.user)).map((c) => {
     let title = c.title;
     if (c.type === 'direct') {
       const peer = q.get('SELECT u.* FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? AND m.user_id != ?', c.id, u.id);
@@ -202,14 +219,15 @@ admin.get('/users/:id', (req, res) => {
 admin.get('/chats', (req, res) => {
   const term = req.query.q ? str(String(req.query.q), 'q', { max: 64 }) : '';
   const like = `%${escapeLike(term)}%`;
+  const hidden = hiddenChatSql(req.user); // in the query, so closed chats do not use up the 500
   const rows = q.all(
     `SELECT c.*, (SELECT COUNT(*) FROM members WHERE chat_id = c.id AND banned = 0) AS members,
        (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages
-     FROM chats c WHERE ? = '' OR c.title LIKE ? ESCAPE '\\' ORDER BY c.last_message_at DESC LIMIT 500`,
-    term, like,
+     FROM chats c WHERE (? = '' OR c.title LIKE ? ESCAPE '\\') AND NOT ${hidden.sql} ORDER BY c.last_message_at DESC LIMIT 500`,
+    term, like, ...hidden.params,
   );
   res.json({
-    chats: rows.filter((c) => !chatHiddenFrom(c.id, req.user)).map((c) => {
+    chats: rows.map((c) => {
       let title = c.title;
       let people = [];
       if (c.type === 'direct') {
@@ -371,19 +389,24 @@ const exportSpec = (src) => ({
   scope: src.scope === 'user' ? 'user' : src.scope === 'message' ? 'message' : 'chat', scope_id: int(src.scope_id ?? src.id, 'scope_id'), format: FORMATS[src.format] ? src.format : 'zip', media: src.media === true || src.media === '1',
   since: src.since ? int(src.since, 'since', { min: 0 }) : null, until: src.until ? int(src.until, 'until', { min: 0 }) : null,
 });
-admin.get('/exports', (_req, res) => res.json({ links: listLinks() }));
+// a link carries its secret address, so the others see and change only the links they made themselves
+admin.get('/exports', (req, res) => res.json({ links: listLinks().filter((l) => isOwner(req.user) || l.created_by === req.user.id) }));
+const ownLink = (req, id) => {
+  const l = q.get('SELECT created_by FROM export_links WHERE id = ?', id);
+  if (l && !isOwner(req.user) && l.created_by !== req.user.id) throw new HttpError(403, 'no_permission');
+};
 const exportAllowed = (req, spec) => {
   if (isOwner(req.user)) return;
   if (spec.scope === 'chat') hiddenChat(req, spec.scope_id);
   if (spec.scope === 'message') hiddenChat(req, q.get('SELECT chat_id FROM messages WHERE id = ?', spec.scope_id)?.chat_id ?? 0);
-  if (spec.scope === 'user' && isOwner(getUser(spec.scope_id))) throw new HttpError(403, 'no_permission');
+  if (spec.scope === 'user' && personHiddenFrom(spec.scope_id, req.user)) throw new HttpError(403, 'no_permission');
 };
 admin.get('/exports/now', async (req, res) => {
   const spec = exportSpec(req.query);
   exportAllowed(req, spec);
   const about = describeScope(spec.scope, spec.scope_id);
   audit(req.user.id, 'admin.export_data', { target_type: spec.scope, target_id: String(spec.scope_id), chat_id: spec.scope === 'chat' ? spec.scope_id : null, ip: req.ip, details: { title: about.title, format: spec.format, media: spec.media } });
-  await streamExport(res, spec);
+  await streamExport(res, { ...spec, viewer: req.user });
 });
 admin.post('/exports', (req, res) => {
   exportAllowed(req, exportSpec(req.body || {}));
@@ -393,12 +416,14 @@ admin.post('/exports', (req, res) => {
 });
 admin.patch('/exports/:id', (req, res) => {
   const id = int(req.params.id, 'id');
+  ownLink(req, id);
   const l = extendLink(id, req.body?.extend_hours);
   audit(req.user.id, 'admin.export_extend', { target_type: 'export', target_id: String(id), ip: req.ip, details: { expires_at: l.expires_at } });
   res.json({ link: l });
 });
 admin.delete('/exports/:id', (req, res) => {
   const id = int(req.params.id, 'id');
+  ownLink(req, id);
   revokeLink(id);
   audit(req.user.id, 'admin.export_revoke', { target_type: 'export', target_id: String(id), ip: req.ip });
   res.json({ ok: true });
@@ -428,7 +453,8 @@ admin.get('/search', async (req, res) => {
     scores = new Map(ranked.map((r) => [r.id, r.score]));
   } else {
     const like = `%${escapeLike(term.toLowerCase())}%`;
-    rows = q.all(`SELECT * FROM messages WHERE kind = 'text' AND lc(text) LIKE ? ESCAPE '\\' ${chatId !== undefined ? 'AND chat_id = ?' : ''} ORDER BY id DESC LIMIT 30`, like, ...(chatId !== undefined ? [chatId] : []));
+    const hidden = hiddenChatSql(req.user);
+    rows = q.all(`SELECT * FROM messages WHERE kind = 'text' AND lc(text) LIKE ? ESCAPE '\\' ${chatId !== undefined ? 'AND chat_id = ?' : ''} AND chat_id NOT IN (SELECT c.id FROM chats c WHERE ${hidden.sql}) ORDER BY id DESC LIMIT 30`, like, ...(chatId !== undefined ? [chatId] : []), ...hidden.params);
   }
   rows = rows.filter((m) => !chatHiddenFrom(m.chat_id, req.user));
   res.json({ results: rows.map((m) => ({ ...adminMessage(m), score: scores.get(m.id) ?? null })), mode: meaning ? 'meaning' : 'text' });
@@ -487,6 +513,7 @@ admin.get('/audit', (req, res) => {
 admin.get('/files/:id', (req, res) => {
   const f = q.get('SELECT * FROM files WHERE id = ?', str(req.params.id, 'id', { min: 8, max: 40 }));
   if (!f || !fs.existsSync(filePath(f.id))) throw new HttpError(404, 'not_found');
+  if (f.chat_id) hiddenChat(req, f.chat_id);
   for (const m of q.all('SELECT DISTINCT chat_id FROM messages WHERE file_id = ?', f.id)) hiddenChat(req, m.chat_id);
   audit(req.user.id, 'admin.view_file', { target_type: 'file', target_id: f.id, ip: req.ip, details: { name: f.name } });
   const inline = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
@@ -532,7 +559,8 @@ admin.post('/users/:id/admin', (req, res) => {
   if (u.is_bot) throw new HttpError(400, 'invalid_input');
   if (!on && isOwner(u)) throw new HttpError(400, 'last_admin');
   if (!on && u.is_admin && q.get('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').n <= 1) throw new HttpError(400, 'last_admin');
-  q.run('UPDATE users SET is_admin = ?, admin_perms = NULL WHERE id = ?', on ? 1 : 0, u.id); // rights are chosen each time, they do not come back by themselves
+  q.run("UPDATE users SET is_admin = ?, admin_perms = NULL, admin_read_mode = 'all' WHERE id = ?", on ? 1 : 0, u.id); // rights are chosen each time, they do not come back by themselves
+  q.run('DELETE FROM admin_read_people WHERE admin_id = ?', u.id);
   audit(req.user.id, on ? 'admin.grant_admin' : 'admin.revoke_admin', { target_type: 'user', target_id: String(u.id), ip: req.ip });
   res.json({ ok: true, is_admin: on });
 });

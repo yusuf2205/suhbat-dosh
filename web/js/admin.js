@@ -595,7 +595,7 @@ async function showUser(id) {
       !may('journal') ? null : act('list', 'Журнал', 'secondary', () => { state.preset = { actor: id }; setTab('journal'); }, 'Действия этого пользователя в журнале'),
       !may('chats_export') ? null : act('download', 'Выгрузить', 'secondary', () => openExportDialog({ scope: 'user', id, title: `Всё, что написал ${u.name}: в личных чатах, группах и каналах` }), 'Скачать сообщения пользователя или дать ссылку на них'),
       !may('users_manage') ? null : act('logout', 'Завершить сессии', 'secondary', run('Завершить все сессии пользователя?', () => send('POST', `/api/admin/users/${id}/logout`))),
-      u.is_bot || !state.owner ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { admin: !u.is_admin }))),
+      u.is_bot || !state.owner ? null : act('shield', u.is_admin ? 'Снять админа' : 'Сделать админом', 'secondary', run(u.is_admin ? 'Снять права администратора?' : 'Выдать права администратора?', () => send('POST', `/api/admin/users/${id}/admin`, { is_admin: !u.is_admin }))),
       h('span', { class: 'ud-sp' }),
       !may('users_manage') ? null : u.banned_at
         ? act('block', 'Разблокировать', '', run(null, () => send('POST', `/api/admin/users/${id}/ban`, { banned: false })))
@@ -688,7 +688,8 @@ async function viewChats() {
   let timer = 0;
   search.addEventListener('input', () => { draw(); clearTimeout(timer); timer = setTimeout(findMessages, 450); });
   draw();
-  setView(h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
+  setView(state.readLimited ? h('p', { class: 'muted' }, 'Вам открыта только часть переписки: это решает главный администратор.') : '',
+    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
     found,
     h('div', { class: 'panel tablewrap' }, h('table', { class: 't' },
       h('thead', null, h('tr', null, ['Чат', 'Тип', 'Участников', 'Сообщений', 'Владелец', 'Последняя активность'].map((x) => h('th', null, x)))), body)));
@@ -1574,8 +1575,48 @@ const PRESETS = [
 ];
 
 /** The main administrator gives each of the others exactly the rights they need. */
+const READ_CHOICES = [['all', 'Всех'], ['except', 'Всех, кроме…'], ['only', 'Только этих…']];
+const READ_HINT = {
+  all: 'Открыта вся переписка, кроме вашей личной.',
+  except: 'Закрыты все чаты этих людей: личные, а также группы и каналы, где они состоят или писали. Выгрузки и жалобы тоже закрыты.',
+  only: 'Открыты только чаты этих людей, в том числе с теми, кого нет в списке, и группы, где они состоят. Пока список пуст, закрыто всё.',
+};
+
 async function viewAdmins() {
   const [{ admins, catalog }] = await Promise.all([get('/api/admin/admins'), loadDirectories()]);
+  const ownerIds = new Set(admins.filter((a) => a.owner).map((a) => a.id));
+  /** Whose conversations this administrator may read. Painted on its own, so typing in the search keeps its place. */
+  function paintRead(a, box) {
+    const saveRead = async (mode, people) => {
+      try {
+        const r = await send('PUT', `/api/admin/users/${a.id}/admin-read`, { mode, people });
+        a.read = r.read;
+        notify('Сохранено, действует сразу', 1800);
+      } catch (e) { notify(errMsg(e)); }
+      paintRead(a, box);
+    };
+    const listed = new Set(a.read.people.map((p) => p.id));
+    const ids = [...listed];
+    const found = h('div', { class: 'ud-chats' });
+    const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя, @username или телефон', 'aria-label': a.read.mode === 'only' ? 'Кого можно читать' : 'Кого нельзя читать', oninput: (e) => {
+      const term = e.target.value.trim().toLowerCase();
+      clear(found).append(...(term.length < 2 ? [] : [...state.users.values()]
+        .filter((u) => u.id !== a.id && !ownerIds.has(u.id) && !listed.has(u.id) && !u.is_bot && [u.name, u.username, u.phone].some((x) => String(x || '').toLowerCase().includes(term))).slice(0, 8)
+        .map((u) => h('div', { class: 'ud-chat find' }, h('span', { class: 'ud-cm' }, h('b', null, u.name), h('small', { class: 'muted' }, u.username ? `@${u.username}` : u.phone || '')),
+          h('button', { class: 'btn small', type: 'button', onclick: () => saveRead(a.read.mode, [...ids, u.id]) }, 'Добавить')))));
+    } });
+    clear(box).append(
+      h('b', null, 'Чью переписку можно читать'),
+      h('div', { class: 'chips' }, READ_CHOICES.map(([mode, label]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(a.read.mode === mode), onclick: () => { if (mode !== a.read.mode) saveRead(mode, []); } }, label))),
+      h('small', { class: 'muted' }, READ_HINT[a.read.mode]),
+      ...(a.read.mode === 'all' ? [] : [
+        h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search),
+        found,
+        a.read.people.length
+          ? h('div', { class: 'chips' }, a.read.people.map((p) => h('button', { class: 'chip', type: 'button', 'aria-label': `Убрать из списка: ${p.name}`, onclick: () => saveRead(a.read.mode, ids.filter((x) => x !== p.id)) }, `${p.name} ✕`)))
+          : h('small', { class: 'muted' }, 'В списке пока никого нет'),
+      ]));
+  }
   const save = async (a, perms, box) => {
     try {
       const r = await send('PUT', `/api/admin/users/${a.id}/admin-perms`, { perms });
@@ -1585,13 +1626,16 @@ async function viewAdmins() {
     } catch (e) { notify(errMsg(e)); paint(a, box); }
   };
   function paint(a, box) {
+    const reading = h('div', { class: 'aread' });
+    if (a.perms.includes('chats_read')) paintRead(a, reading);
     clear(box).append(
       h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Быстро:'),
         PRESETS.map(([label, list]) => h('button', { class: 'chip', type: 'button', onclick: () => save(a, list, box) }, label)),
         h('button', { class: 'chip reset', type: 'button', onclick: () => save(a, [], box) }, 'Снять все')),
       h('div', { class: 'aperm-list' }, catalog.map((p) => h('label', { class: `aperm${p.danger ? ' danger' : ''}` },
         h('input', { type: 'checkbox', checked: a.perms.includes(p.id), onchange: (e) => save(a, e.target.checked ? [...a.perms, p.id] : a.perms.filter((x) => x !== p.id && !catalog.find((c) => c.id === x)?.needs?.includes(p.id)), box) }),
-        h('span', null, h('b', null, p.label), h('small', { class: 'muted' }, p.hint))))));
+        h('span', null, h('b', null, p.label), h('small', { class: 'muted' }, p.hint))))),
+      ...(a.perms.includes('chats_read') ? [reading] : []));
   }
   const card = (a) => {
     const rights = h('div', { class: 'aperm-box' });
@@ -1731,6 +1775,7 @@ async function boot() {
     const rights = await get('/api/admin/me');
     state.owner = rights.owner;
     state.perms = new Set(rights.perms);
+    state.readLimited = !!rights.read_limited;
     state.catalog = rights.catalog;
   } catch { /* an older server: everything is refused by it anyway */ }
   navEl = h('nav', { class: 'adm-nav', 'aria-label': 'Разделы' },

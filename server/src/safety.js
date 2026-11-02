@@ -8,6 +8,7 @@ import {
   HttpError, int, log, now, rateLimit, rid, str,
 } from './util.js';
 import { dropSession, emit } from './realtime.js';
+import { chatHiddenFrom } from './adminperms.js';
 import {
   audit, chatOut, getMessage, getUser, isContact, isBlockedEitherWay, memberIds, membership, publicUser, refreshLastMessage, requireMember,
 } from './service.js';
@@ -136,7 +137,7 @@ safetyAdmin.get('/reports', (req, res) => {
   const rows = q.all('SELECT * FROM reports WHERE status = ? ORDER BY id DESC LIMIT 200', status);
   const who = (id) => { const u = id ? getUser(id) : null; return u ? { id: u.id, name: u.name, username: u.username } : null; };
   res.json({
-    reports: rows.map((r) => ({
+    reports: rows.filter((r) => !r.chat_id || !chatHiddenFrom(r.chat_id, req.user)).map((r) => ({
       id: r.id, reason: r.reason, snapshot: r.snapshot, status: r.status, resolution: r.resolution, created_at: r.created_at,
       chat_id: r.chat_id, message_id: r.message_id, reporter: who(r.reporter_id), sender: who(r.sender_id),
     })),
@@ -146,6 +147,7 @@ safetyAdmin.get('/reports', (req, res) => {
 safetyAdmin.post('/reports/:id/resolve', (req, res) => {
   const r = q.get('SELECT * FROM reports WHERE id = ?', int(req.params.id, 'id'));
   if (!r) throw new HttpError(404, 'not_found');
+  if (r.chat_id && chatHiddenFrom(r.chat_id, req.user)) throw new HttpError(403, 'no_permission');
   const action = ['dismiss', 'delete', 'ban'].includes(req.body?.action) ? req.body.action : 'dismiss';
   if (action === 'delete' && r.message_id) {
     const m = getMessage(r.message_id);

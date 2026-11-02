@@ -9,6 +9,7 @@ import { alert } from './ops.js';
 import { HttpError, int, now, rateLimit, rid, str } from './util.js';
 import { filePath } from './files.js';
 import { audit, getUser } from './service.js';
+import { chatHiddenFrom } from './adminperms.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { ZipWriter } from '../../web/js/zip.js';
 
@@ -63,6 +64,16 @@ function* messagesOf({ scope, scope_id: id, since, until }) {
   }
 }
 
+/** What is closed to whoever asks for it now, or to whoever made the link: a link gives no more than its author may read today. */
+function closedTo(spec) {
+  const who = spec.viewer ?? getUser(spec.created_by);
+  const seen = new Map();
+  return (chatId) => {
+    if (!seen.has(chatId)) seen.set(chatId, chatHiddenFrom(chatId, who));
+    return seen.get(chatId);
+  };
+}
+
 function shape(m, chats) {
   let c = chats.get(m.chat_id);
   if (!c) {
@@ -106,7 +117,9 @@ function gather(spec) {
   const chats = new Map();
   const groups = new Map();
   let count = 0;
+  const closed = closedTo(spec);
   for (const m of messagesOf(spec)) {
+    if (closed(m.chat_id)) continue;
     const e = shape(m, chats);
     if (!groups.has(e.chat_id)) groups.set(e.chat_id, { chat: e.chat, type: e.chat_type, chat_id: e.chat_id, items: [] });
     groups.get(e.chat_id).items.push(e);
@@ -172,7 +185,7 @@ const link = (r) => {
   const viewUsed = r.max_views !== null && r.views >= r.max_views;
   const dlUsed = r.max_downloads !== null && r.downloads >= r.max_downloads;
   return {
-    id: r.id, token: r.token, scope: r.scope, scope_id: r.scope_id, title: r.title, format: r.format, media: !!r.media, since: r.since, until: r.until, note: r.note,
+    id: r.id, token: r.token, created_by: r.created_by, scope: r.scope, scope_id: r.scope_id, title: r.title, format: r.format, media: !!r.media, since: r.since, until: r.until, note: r.note,
     created_at: r.created_at, expires_at: r.expires_at, password: !!r.pass_hash, revoked_at: r.revoked_at,
     view: !!r.view, allow_download: !!r.allow_download, hide_names: !!r.hide_names, notify: !!r.notify,
     max_downloads: r.max_downloads, downloads: r.downloads, last_download_at: r.last_download_at, max_views: r.max_views, views: r.views, first_view_at: r.first_view_at, last_view_at: r.last_view_at,
@@ -241,10 +254,12 @@ const signed = (token, exp, what, k) => { const want = sign(token, exp, what); r
 
 /** Does this file belong to what the link gives? (a link to one message never opens the other files of the chat) */
 function inScope(r, fid) {
-  const base = `SELECT 1 AS x FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.file_id = ? AND m.kind != 'secret' AND c.e2e = 0`;
-  if (r.scope === 'message') return !!q.get(`${base} AND m.id = ?`, fid, r.scope_id);
-  if (r.scope === 'chat') return !!q.get(`${base} AND m.chat_id = ?`, fid, r.scope_id);
-  return !!q.get(`${base} AND m.sender_id = ?`, fid, r.scope_id);
+  const base = `SELECT m.chat_id FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.file_id = ? AND m.kind != 'secret' AND c.e2e = 0`;
+  const closed = closedTo(r);
+  const open = (rows) => rows.some((m) => !closed(m.chat_id));
+  if (r.scope === 'message') return open(q.all(`${base} AND m.id = ?`, fid, r.scope_id));
+  if (r.scope === 'chat') return open(q.all(`${base} AND m.chat_id = ?`, fid, r.scope_id));
+  return open(q.all(`${base} AND m.sender_id = ?`, fid, r.scope_id));
 }
 
 /** The last messages of what the link gives (at most `n`), oldest first. */
@@ -256,7 +271,8 @@ function recent(r, n = 300) {
   if (r.until) { where.push('m.created_at <= ?'); params.push(r.until); }
   const rows = q.all(`SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT ?`, ...params, n + 1);
   const chats = new Map();
-  return { items: rows.slice(0, n).reverse().map((m) => shape(m, chats)), more: rows.length > n };
+  const closed = closedTo(r);
+  return { items: rows.slice(0, n).reverse().filter((m) => !closed(m.chat_id)).map((m) => shape(m, chats)), more: rows.length > n };
 }
 
 const INLINE = /^(image\/(jpeg|png|gif|webp)|video\/|audio\/)/;

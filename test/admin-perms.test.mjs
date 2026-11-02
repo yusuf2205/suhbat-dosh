@@ -139,6 +139,91 @@ test('the personal chats of the main administrator are closed to the others', as
   assert.ok(events.every((e) => e.chat_id !== ownerChat));
 });
 
+test('the main administrator chooses whose conversations each administrator reads', async () => {
+  const setRead = (mode, people, who = owner) => call(who.cookie, 'PUT', `/api/admin/users/${helper.id}/admin-read`, { mode, people });
+  const chatIds = async () => (await call(helper.cookie, 'GET', '/api/admin/chats')).data.chats.map((c) => c.id);
+  const found = async (word) => (await call(helper.cookie, 'GET', `/api/admin/search?q=${encodeURIComponent(word)}`)).data.results.length;
+  const closed = async (id) => {
+    for (const url of [`/chats/${id}`, `/chats/${id}/messages`, `/chats/${id}/stats`, `/chats/${id}/export`, `/exports/now?scope=chat&scope_id=${id}`]) assert.equal((await call(helper.cookie, 'GET', `/api/admin${url}`)).status, 403, url);
+  };
+  await setPerms(owner, helper.id, ['chats_read', 'chats_export', 'users_view', 'reports', 'bridge', 'journal']);
+  const c13 = (await call(u1.cookie, 'POST', '/api/chats/direct', { user_id: u3.id })).data.chat.id; // Люда and Жасур
+  const c23 = (await call(u2.cookie, 'POST', '/api/chats/direct', { user_id: u3.id })).data.chat.id; // Камол and Жасур
+  await say(u1, c13, 'слово-люды-жасуру');
+  await say(u2, c23, 'слово-камола-жасуру');
+  await say(u1, chat, 'слово-люды-камолу');
+  const grp = (await call(u2.cookie, 'POST', '/api/chats', { type: 'group', title: 'Группа Камола', member_ids: [u3.id] })).data.chat.id;
+  await say(u2, grp, 'слово-в-группе');
+
+  // nobody but the main administrator chooses, and the rule cannot be nonsense
+  assert.equal((await setRead('all', [], helper)).status, 403);
+  assert.equal((await setRead('nobody', [])).status, 400);
+  assert.equal((await call(owner.cookie, 'PUT', `/api/admin/users/${u3.id}/admin-read`, { mode: 'all', people: [] })).status, 400, 'not an administrator');
+
+  // everybody but Камол: his personal chats, his group, his files and what was reported in them
+  const r = await setRead('except', [u2.id, owner.id, helper.id, 99999]);
+  assert.deepEqual(r.data.read.people.map((p) => p.id), [u2.id], 'the main one, oneself and strangers are not listed');
+  assert.equal((await call(helper.cookie, 'GET', '/api/admin/me')).data.read_limited, true);
+  let list = await chatIds();
+  assert.ok(list.includes(c13));
+  for (const id of [chat, c23, grp]) { assert.ok(!list.includes(id), `chat ${id}`); await closed(id); }
+  assert.equal(await found('слово-люды-жасуру'), 1);
+  assert.equal(await found('слово-камола'), 0);
+  assert.equal(await found('слово-люды-камолу'), 0, 'what is said to a closed person is closed too');
+  assert.equal(await found('слово-в-группе'), 0);
+  assert.equal((await call(helper.cookie, 'GET', `/api/admin/exports/now?scope=user&scope_id=${u2.id}&format=json`)).status, 403);
+  assert.equal((await call(helper.cookie, 'GET', `/api/admin/bridge/${u2.id}/chats`)).status, 403);
+  const openUser = await call(helper.cookie, 'GET', `/api/admin/exports/now?scope=user&scope_id=${u1.id}&format=json`);
+  assert.deepEqual(openUser.data.chats.map((c) => c.chat_id).sort(), [c13].sort(), 'an export of an open person leaves out the closed chats');
+  const profile = (await call(helper.cookie, 'GET', `/api/admin/users/${u1.id}`)).data;
+  assert.ok(profile.chats.every((c) => c.id !== chat), 'the profile does not name them either');
+  assert.ok((await call(helper.cookie, 'GET', '/api/admin/audit?limit=200')).data.events.every((e) => ![chat, c23, grp].includes(e.chat_id)));
+  const hiddenMsg = (await call(owner.cookie, 'GET', `/api/admin/chats/${c23}/messages`)).data.messages[0];
+  assert.equal((await call(helper.cookie, 'POST', `/api/admin/messages/${hiddenMsg.id}/mark`, {})).status, 403);
+  u3 = await login('+998900000005', 'Жасур'); // the earlier test blocked and unblocked him, which ended his session
+  assert.equal((await call(u3.cookie, 'POST', `/api/messages/${hiddenMsg.id}/report`, { reason: 'spam' })).status, 200);
+  assert.ok((await call(helper.cookie, 'GET', '/api/admin/reports')).data.reports.every((x) => x.chat_id !== c23), 'a report does not open it');
+  const report = (await call(owner.cookie, 'GET', '/api/admin/reports')).data.reports.find((x) => x.chat_id === c23);
+  assert.equal((await call(helper.cookie, 'POST', `/api/admin/reports/${report.id}/resolve`, { action: 'delete' })).status, 403);
+  assert.equal((await call(owner.cookie, 'POST', `/api/admin/reports/${report.id}/resolve`, { action: 'dismiss' })).status, 200);
+
+  // only Люда: her chats, with whoever, and nothing else; the main administrator's stay closed
+  await setRead('only', [u1.id]);
+  list = await chatIds();
+  assert.ok(list.includes(chat) && list.includes(c13));
+  assert.ok(!list.includes(c23) && !list.includes(grp) && !list.includes(ownerChat));
+  await closed(c23); await closed(ownerChat);
+  assert.equal(await found('слово-люды-камолу'), 1);
+  assert.equal(await found('слово-камола'), 0);
+  assert.equal((await call(helper.cookie, 'GET', `/api/admin/exports/now?scope=user&scope_id=${u2.id}&format=json`)).status, 403);
+
+  // nobody listed: nothing is open
+  await setRead('only', []);
+  assert.deepEqual(await chatIds(), []);
+
+  // a link stops giving what its author may no longer read
+  await setRead('all', []);
+  const made = await call(helper.cookie, 'POST', '/api/admin/exports', { scope: 'chat', scope_id: c23, view: true, allow_download: true, format: 'json' });
+  assert.equal(made.status, 201);
+  const page = async () => (await fetch(`${BASE}/x/${made.data.link.token}`)).text();
+  assert.ok((await page()).includes('слово-камола-жасуру'));
+  await setRead('except', [u2.id]);
+  assert.ok(!(await page()).includes('слово-камола-жасуру'));
+
+  // somebody else's link is not shown or changed: it carries its secret address
+  const mine = await call(owner.cookie, 'POST', '/api/admin/exports', { scope: 'chat', scope_id: ownerChat, allow_download: true, format: 'json' });
+  assert.ok((await call(helper.cookie, 'GET', '/api/admin/exports')).data.links.every((l) => l.id !== mine.data.link.id));
+  assert.equal((await call(helper.cookie, 'DELETE', `/api/admin/exports/${mine.data.link.id}`)).status, 403);
+
+  // the main administrator sees the list, the journal keeps the choice, and the rule goes with the rights
+  assert.deepEqual((await call(owner.cookie, 'GET', '/api/admin/admins')).data.admins.find((a) => a.id === helper.id).read.people.map((p) => p.id), [u2.id]);
+  assert.deepEqual((await call(owner.cookie, 'GET', '/api/admin/audit?limit=50')).data.events.find((e) => e.action === 'admin.set_read').details, { mode: 'except', people: ['Камол'] });
+  await call(owner.cookie, 'POST', `/api/admin/users/${helper.id}/admin`, { is_admin: false });
+  await call(owner.cookie, 'POST', `/api/admin/users/${helper.id}/admin`, { is_admin: true });
+  assert.equal((await call(owner.cookie, 'GET', '/api/admin/admins')).data.admins.find((a) => a.id === helper.id).read.mode, 'all');
+  await setPerms(owner, helper.id, ['chats_read']);
+});
+
 test('the list of administrators; taking the rights away works at once', async () => {
   const list = (await call(owner.cookie, 'GET', '/api/admin/admins')).data.admins;
   assert.deepEqual(list.map((a) => [a.id, a.owner]), [[owner.id, true], [helper.id, false]]);
