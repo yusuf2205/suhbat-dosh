@@ -8,7 +8,7 @@ if (!/^\+\d{8,15}$/.test(phone || '')) {
   console.error('usage: node scripts/make-admin.mjs +<phone in E.164> [--revoke]');
   process.exit(2);
 }
-const db = new DatabaseSync(path.join(path.resolve(process.env.DATA_DIR || './data'), 'suhbat.db'));
+const db = new DatabaseSync(path.join(path.resolve(process.env.DB_DIR || process.env.DATA_DIR || './data'), 'suhbat.db'));
 db.exec('PRAGMA busy_timeout = 5000');
 const u = db.prepare('SELECT id, name, is_admin FROM users WHERE phone = ?').get(phone);
 if (!u) {

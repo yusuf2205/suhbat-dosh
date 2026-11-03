@@ -179,11 +179,16 @@ export function messageOut(row) {
   if (!row) return null;
   let file = null;
   if (row.file_id) {
-    const f = q.get('SELECT id, name, mime, size, width, height FROM files WHERE id = ?', row.file_id);
+    const f = q.get('SELECT id, name, mime, size, width, height, has_thumb, tiny FROM files WHERE id = ?', row.file_id);
     if (f) {
+      // the disk is asked once per file, not for every message on every page
+      if (f.has_thumb === null) {
+        f.has_thumb = fs.existsSync(thumbPath(f.id)) ? 1 : 0;
+        q.run('UPDATE files SET has_thumb = ? WHERE id = ?', f.has_thumb, f.id);
+      }
       file = {
         id: f.id, name: f.name, mime: f.mime, size: f.size, url: `/api/files/${f.id}`, width: f.width, height: f.height,
-        thumb: fs.existsSync(thumbPath(f.id)) ? `/api/files/${f.id}/thumb` : null,
+        thumb: f.has_thumb ? `/api/files/${f.id}/thumb` : null, tiny: f.tiny || null,
       };
     }
   }

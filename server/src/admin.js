@@ -17,6 +17,7 @@ import { translatorReady } from './translate.js';
 import { embedderReady, rankByMeaning } from './semantic.js';
 import { ADMIN_PERMS, READ_MODES, adminGate, chatHiddenFrom, cleanPerms, hiddenChatSql, isOwner, permsOf, personHiddenFrom } from './adminperms.js';
 import { integrityState, lastRuns, runIntegrity } from './integrity.js';
+import { timingSummary } from './timing.js';
 import { FORMATS, createLink, describeScope, extendLink, listLinks, revokeLink, streamExport } from './exports.js';
 import { backupPath, createBackup, deleteBackup, filesMirror, listBackups, mirrorConfig, mirrorStatus, scheduleRestore, systemSnapshot, verifyBackup, verifyStatus } from './ops.js';
 
@@ -653,6 +654,7 @@ admin.post('/broadcast', (req, res) => {
 
 // ------------------------------------------------------------------ server health & backups
 admin.get('/system', (_req, res) => res.json(systemSnapshot()));
+admin.get('/speed', (_req, res) => res.json(timingSummary()));
 
 admin.get('/backups', (_req, res) => res.json({ backups: listBackups(), mirror: { ...mirrorConfig(), last: mirrorStatus.last }, files_mirror: filesMirror.last, verify: verifyStatus.last }));
 

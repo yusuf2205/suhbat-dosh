@@ -1419,7 +1419,7 @@ async function integrityPanel() {
 }
 
 async function viewServer() {
-  const [sys, bk, st] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups'), get('/api/admin/storage').catch(() => null)]);
+  const [sys, bk, st, sp] = await Promise.all([get('/api/admin/system'), get('/api/admin/backups'), get('/api/admin/storage').catch(() => null), get('/api/admin/speed').catch(() => null)]);
   const n = sys.now;
   const fmtUp = (s) => (s >= 86400 ? `${Math.floor(s / 86400)} д ${Math.floor((s % 86400) / 3600)} ч` : s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин` : `${Math.max(1, Math.floor(s / 60))} мин`);
   const used = n.disk_total ? Math.round(((n.disk_total - n.disk_free) / n.disk_total) * 100) : 0;
@@ -1492,8 +1492,16 @@ async function viewServer() {
     h('h3', null, 'Самые тяжёлые чаты'),
     h('div', { class: 'tablewrap' }, h('table', { class: 't' }, h('thead', null, h('tr', null, ['Чат', 'Сообщений', 'Файлов', 'Размер'].map((x) => h('th', null, x)))),
       h('tbody', null, ...st.chats.map((c) => h('tr', null, h('td', null, c.title || `чат ${c.id}`, c.bridge ? [' ', h('span', { class: 'pill' }, 'Телеграм')] : ''), h('td', null, String(c.messages)), h('td', null, String(c.files)), h('td', null, fmtBytes(c.bytes)))))))) : null;
+  const ms = (v) => (v === undefined ? '—' : v >= 1000 ? `${(v / 1000).toFixed(1)} с` : `${v < 10 ? v : Math.round(v)} мс`);
+  const speedRow = (name, r) => h('tr', null, h('td', null, name), h('td', null, h('b', null, ms(r.p50))), h('td', null, ms(r.p90)), h('td', null, ms(r.p99)), h('td', { class: 'muted' }, String(r.n || 0)));
+  const speedHead = (first) => h('thead', null, h('tr', null, [first, 'Обычно', '9 из 10 быстрее', '99 из 100 быстрее', 'Замеров'].map((x) => h('th', null, x))));
+  const speedPanel = sp ? h('div', { class: 'panel' }, h('h2', null, icon('bolt', 18), 'Скорость за сутки'),
+    h('p', { class: 'muted' }, 'Сколько ждут люди: замеры с их телефонов и компьютеров. «Обычно» — половина случаев быстрее этого. Сохраняются только длительности и только до перезапуска сервера.'),
+    h('div', { class: 'tablewrap' }, h('table', { class: 't' }, speedHead('Что ждут'), h('tbody', null, ...sp.client.map((r) => speedRow(r.label, r))))),
+    sp.server.length ? [h('h3', null, 'Сколько из этого занимает сам сервер'),
+      h('div', { class: 'tablewrap' }, h('table', { class: 't' }, speedHead('Запрос'), h('tbody', null, ...sp.server.map((r) => speedRow(r.route, r)))))] : '') : null;
   const integrity = await integrityPanel();
-  setView(healthPanel, integrity, kpis, turnPanel, storagePanel,
+  setView(healthPanel, speedPanel, integrity, kpis, turnPanel, storagePanel,
     h('div', { class: 'grid2' },
       h('div', { class: 'panel' }, h('h2', null, 'Процессор, % (последние сутки)'), spark(S.map((x) => x.cpu), { max: 100, unit: '%' })),
       h('div', { class: 'panel' }, h('h2', null, 'Память, %'), spark(S.map((x) => x.mem), { max: 100, unit: '%', color: '#3b82f6' }))),

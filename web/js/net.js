@@ -1,5 +1,6 @@
 import { EVENTS, CLIENT_EVENTS } from '/shared/contracts.js';
 import { S, currentTopic, fire } from './state.js';
+import { measure } from './timing.js';
 
 export class ApiError extends Error {
   constructor(status, code) {
@@ -42,6 +43,7 @@ export async function api(method, url, body, opts = {}) {
 let ws = null;
 let retry = 0;
 let pingTimer = null;
+let pingAt = 0;
 let stopped = false;
 
 function setNet(v) {
@@ -60,7 +62,11 @@ export function connect() {
   ws.onmessage = (e) => {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
-    if (ev.type === 'pong') return;
+    if (ev.type === 'pong') {
+      if (pingAt) measure('ping', performance.now() - pingAt);
+      pingAt = 0;
+      return;
+    }
     if (ev.type === EVENTS.READY) {
       retry = 0;
       setNet('online');
@@ -78,7 +84,9 @@ export function connect() {
   ws.onerror = () => ws.close();
   clearInterval(pingTimer);
   pingTimer = setInterval(() => {
-    if (ws?.readyState === 1) ws.send(JSON.stringify({ type: CLIENT_EVENTS.PING }));
+    if (ws?.readyState !== 1) return;
+    pingAt = performance.now();
+    ws.send(JSON.stringify({ type: CLIENT_EVENTS.PING }));
   }, 25000);
 }
 
@@ -147,9 +155,13 @@ export async function flushOutbox() {
       // held back on purpose ("take it back" window): wait for it, and keep the order
       if (item.hold && item.hold > Date.now()) { clearTimeout(holdTimer); holdTimer = setTimeout(flushOutbox, item.hold - Date.now() + 50); break; }
       try {
+        const t0 = performance.now();
         const r = await api('POST', `/api/chats/${item.chat_id}/messages`, {
           text: item.text, client_id: item.client_id, reply_to: item.reply_to ?? undefined, kind: item.kind ?? undefined, silent: item.silent || undefined, urgent: item.urgent || undefined,
         }, item.topic !== undefined ? { headers: { 'x-topic': String(item.topic || 0) } } : {});
+        measure('send_net', performance.now() - t0);
+        // from the press (or the end of the "take it back" pause) to the tick; an hour spent offline is left out by the server
+        if (item.at) measure('send', Date.now() - Math.max(item.at, item.hold || 0));
         outbox.remove(item.client_id);
         fire('outbox:sent', { client_id: item.client_id, message: r.message });
       } catch (e) {

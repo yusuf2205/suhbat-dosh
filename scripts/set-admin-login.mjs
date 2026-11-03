@@ -9,7 +9,7 @@ if (!who || !login || !password || password.length < 10) {
   console.error('usage: set-admin-login.mjs <phone-or-user-id> <login> <password (10+ characters)>');
   process.exit(1);
 }
-const db = new DatabaseSync(path.join(path.resolve(process.env.DATA_DIR || './data'), 'suhbat.db'));
+const db = new DatabaseSync(path.join(path.resolve(process.env.DB_DIR || process.env.DATA_DIR || './data'), 'suhbat.db'));
 db.exec('PRAGMA busy_timeout = 10000');
 const u = /^\d+$/.test(who) && who.length < 8
   ? db.prepare('SELECT id, name, is_admin FROM users WHERE id = ?').get(Number(who))

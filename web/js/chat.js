@@ -1,5 +1,6 @@
 import { featureOn } from './features.js';
 import { snapGet, snapSet } from './snap.js';
+import { measure } from './timing.js';
 import { canCompress, compressImage } from './imgcompress.js';
 import { isVideoNote, recordVideoNote, videoNoteNode } from './videonote.js';
 import { canCompressVideo, compressVideo } from './videocompress.js';
@@ -123,6 +124,8 @@ export async function openChat(id) {
   if (!chatLayer) chatLayer = openLayer(() => { chatLayer = null; closeChat(); });
   history.replaceState(history.state, '', `#/chat/${id}`);
   const b = bucket(id);
+  const t0 = performance.now();
+  let shown = !!b.list.length && !b.detached;
   if (!b.list.length || b.detached) {
     b.list = b.list.filter((m) => m.pending);
     b.detached = false;
@@ -132,13 +135,18 @@ export async function openChat(id) {
       if (cached?.length && S.active === id && !b.list.length) {
         b.list = [...cached];
         renderAll({ scroll: 'unread' });
+        measure('open', performance.now() - t0);
+        shown = true;
       }
     }
+    const t1 = performance.now();
     await loadLatest(id);
+    measure('open_net', performance.now() - t1);
   }
   loadMembers(id);
   if (c.forum) refreshTopics(id, true);
   renderAll({ scroll: 'unread' });
+  if (!shown) measure('open', performance.now() - t0);
   markRead();
   if (S.active === id) focusComposer();   // the list that was clicked may have taken the focus back while the messages loaded
   if (c.secret?.group) syncGroup(c);
@@ -711,7 +719,7 @@ async function sendText({ silent = false, urgent = false } = {}) {
     reply_to: replyTo ? { id: replyTo.id, text: previewText(replyTo).slice(0, 120), kind: replyTo.kind, sender_id: replyTo.sender_id, sender_name: senderName(replyTo) } : null,
     reactions: {}, file: null, created_at: Date.now(), ...(c.forum && currentTopic(c.id) ? { topic_id: currentTopic(c.id) } : {}),
   };
-  outbox.add({ ...(c.forum ? { topic: currentTopic(c.id) || 0 } : {}), chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined, hold });
+  outbox.add({ ...(c.forum ? { topic: currentTopic(c.id) || 0 } : {}), chat_id: c.id, text: envelope ?? text, kind: secret ? 'secret' : undefined, client_id: clientId, reply_to: replyTo?.id ?? null, silent: silent || undefined, urgent: urgent || undefined, hold, at: local.created_at });
   bucket(c.id).list.push(local);
   c.last_message = local;
   c.last_message_at = local.created_at;
@@ -798,7 +806,7 @@ function followUpload(task, chatId, thumbP) {
     thumbP?.then((th) => {
       if (!th || !r.message?.file) return;
       api('POST', `/api/files/${r.message.file.id}/thumb?w=${th.w}&h=${th.h}`, undefined, {
-        raw: th.blob, headers: { 'content-type': 'application/octet-stream' },
+        raw: th.blob, headers: { 'content-type': 'application/octet-stream', ...(th.tiny ? { 'x-tiny': th.tiny } : {}) },
       }).catch(() => {});
     });
   }, (e) => {
@@ -1508,6 +1516,14 @@ function buildFile(m) {
   return badge || share ? h('div', { class: 'file-with-badge' }, node, badge, share) : node;
 }
 
+/** The tiny picture that came with the message, stretched and blurred under the real one until it arrives. */
+function blurUnder(el, f) {
+  if (!f.tiny || !/^data:image\/(jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(f.tiny)) return;
+  el.style.backgroundImage = `url("${f.tiny}")`;
+  el.classList.add('has-tiny');
+  if (el.tagName === 'IMG') el.addEventListener('load', () => { el.style.backgroundImage = ''; el.classList.remove('has-tiny'); }, { once: true });
+}
+
 function buildFileInner(m) {
   if (m.upload) return uploadCard(m);
   const f = m.file;
@@ -1515,13 +1531,19 @@ function buildFileInner(m) {
   const ratio = f.width && f.height ? `${f.width} / ${f.height}` : null;
   if (m.kind === 'image') {
     const img = h('img', { src: f.thumb || f.url, alt: f.name, loading: 'lazy', draggable: false });
-    if (ratio) img.style.aspectRatio = ratio;
+    if (ratio) {
+      // the size is known before anything loads: the blurred picture fills it and the chat does not jump when the photo arrives
+      img.style.aspectRatio = ratio;
+      img.style.width = `${Math.round(Math.min(340, (360 * f.width) / f.height))}px`;
+    }
+    blurUnder(img, f);
     return h('button', { class: 'media media-btn', type: 'button', 'aria-label': f.name, onclick: open }, img);
   }
   if (isVideoNote(m)) return videoNoteNode(m);
   if (m.kind === 'video') {
     const poster = f.thumb ? h('img', { src: f.thumb, alt: f.name, loading: 'lazy', draggable: false }) : h('div', { class: 'poster-empty' });
     if (ratio && f.thumb) poster.style.aspectRatio = ratio;
+    blurUnder(poster, f);
     return h('button', { class: 'media media-btn video', type: 'button', 'aria-label': f.name, onclick: open },
       poster, h('span', { class: 'play-badge' }, icon('send', 28)), h('span', { class: 'media-size' }, formatBytes(f.size)));
   }

@@ -45,7 +45,7 @@ const RULES = [
   ['DELETE', /^\/invites\/[^/]+$/, 'access'],
   ['POST', /^\/broadcast$/, 'access'],
   ['*', /^\/bridge(\/|$)/, 'bridge'],
-  ['GET', /^\/(system|storage|integrity|backups)$/, 'server'],
+  ['GET', /^\/(system|storage|integrity|backups|speed)$/, 'server'],
   ['POST', /^\/integrity\/run$/, 'server'],
   ['POST', /^\/backups$/, 'server'],
   ['POST', /^\/backups\/[^/]+\/verify$/, 'server'],

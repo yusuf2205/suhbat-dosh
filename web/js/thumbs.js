@@ -5,8 +5,8 @@ function toBlob(canvas) {
   return new Promise((res) => canvas.toBlob((b) => res(b), 'image/jpeg', 0.72));
 }
 
-function draw(source, w, h) {
-  const k = Math.min(1, MAX / Math.max(w, h));
+function draw(source, w, h, max = MAX) {
+  const k = Math.min(1, max / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * k));
   const ch = Math.max(1, Math.round(h * k));
   const canvas = document.createElement('canvas');
@@ -16,13 +16,21 @@ function draw(source, w, h) {
   return canvas;
 }
 
-/** Returns { blob, w, h } where w/h are the ORIGINAL dimensions, or null when not possible. */
+/** A picture of at most 16 px a side (a few hundred bytes) that goes inside the message, so something is seen before any download. */
+function tinyOf(source, w, h) {
+  try {
+    const url = draw(source, w, h, 16).toDataURL('image/jpeg', 0.5);
+    return url.length <= 1500 ? url : null;
+  } catch { return null; }
+}
+
+/** Returns { blob, w, h, tiny } where w/h are the ORIGINAL dimensions, or null when not possible. */
 export async function makeThumb(file) {
   try {
     if (/^image\/(png|jpe?g|webp|gif)$/.test(file.type)) {
       const bmp = await createImageBitmap(file);
       const blob = await toBlob(draw(bmp, bmp.width, bmp.height));
-      const out = { blob, w: bmp.width, h: bmp.height };
+      const out = { blob, w: bmp.width, h: bmp.height, tiny: tinyOf(bmp, bmp.width, bmp.height) };
       bmp.close?.();
       return blob ? out : null;
     }
@@ -43,7 +51,7 @@ export async function makeThumb(file) {
         await new Promise((res) => { v.onseeked = res; setTimeout(res, 1500); });
         if (!v.videoWidth) return null;
         const blob = await toBlob(draw(v, v.videoWidth, v.videoHeight));
-        return blob ? { blob, w: v.videoWidth, h: v.videoHeight } : null;
+        return blob ? { blob, w: v.videoWidth, h: v.videoHeight, tiny: tinyOf(v, v.videoWidth, v.videoHeight) } : null;
       } finally {
         URL.revokeObjectURL(url);
       }

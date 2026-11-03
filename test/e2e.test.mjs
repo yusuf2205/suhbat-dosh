@@ -572,11 +572,20 @@ test('media: thumbnails, range streaming, inline PDF, gallery', async (t) => {
 
   await t.test('owner uploads a thumbnail; it is visible to members only', async () => {
     await b.connect();
-    const r = await a.call('POST', `/api/files/${img.data.message.file.id}/thumb?w=640&h=480`, null, { raw: PNG, headers: { 'content-type': 'application/octet-stream' } });
+    const page = async () => (await b.call('GET', `/api/chats/${img.data.message.chat_id}/messages`)).data.messages.find((m) => m.id === img.data.message.id).file;
+    assert.deepEqual([(await page()).thumb, (await page()).tiny], [null, null], 'no thumbnail yet, and the answer is remembered');
+    const TINY = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHR8eHRoaHA==';
+    const r = await a.call('POST', `/api/files/${img.data.message.file.id}/thumb?w=640&h=480`, null, { raw: PNG, headers: { 'content-type': 'application/octet-stream', 'x-tiny': TINY } });
     assert.equal(r.status, 200);
     const ev = await b.waitFor('message.update', (e) => e.message.id === img.data.message.id);
     assert.ok(ev.message.file.thumb);
+    assert.equal(ev.message.file.tiny, TINY, 'the tiny picture travels inside the message');
     assert.equal(ev.message.file.width, 640);
+    assert.ok((await page()).thumb, 'the remembered "no thumbnail" is replaced');
+    // anything but a small JPEG or WebP picture is ignored and keeps the one there was
+    await a.call('POST', `/api/files/${img.data.message.file.id}/thumb`, null, { raw: PNG, headers: { 'content-type': 'application/octet-stream', 'x-tiny': 'data:image/svg+xml;base64,PHN2Zz4=' } });
+    await a.call('POST', `/api/files/${img.data.message.file.id}/thumb`, null, { raw: PNG, headers: { 'content-type': 'application/octet-stream', 'x-tiny': `${TINY}") ; background: url("x` } });
+    assert.equal((await page()).tiny, TINY);
     assert.equal((await b.call('GET', ev.message.file.thumb)).status, 200);
     assert.equal((await x.call('GET', ev.message.file.thumb)).status, 404);
     // only the sender may attach a thumbnail, and it must be an image

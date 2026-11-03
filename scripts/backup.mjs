@@ -13,7 +13,7 @@ const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const dest = path.join(backupRoot, `suhbat-${stamp}`);
 fs.mkdirSync(path.join(dest, 'files'), { recursive: true });
 
-const db = new DatabaseSync(path.join(dataDir, 'suhbat.db'));
+const db = new DatabaseSync(path.join(path.resolve(process.env.DB_DIR || dataDir), 'suhbat.db'));
 db.exec('PRAGMA busy_timeout = 10000');
 db.exec(`VACUUM INTO '${path.join(dest, 'suhbat.db').replace(/'/g, "''")}'`);
 db.close();

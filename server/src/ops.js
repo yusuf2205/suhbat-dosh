@@ -354,7 +354,7 @@ function autoBackup() {
   mirrorFiles();
   try {
     const newest = listBackups().find((b) => b.kind === 'auto' || b.kind === 'manual');
-    if (!newest || now() - newest.created_at > 6 * 3600_000) {
+    if (!newest || now() - newest.created_at > config.backupHours * 3600_000) {
       const b = createBackup('auto');
       log('info', 'auto backup', { name: b.name, size: b.size });
     } else mirrorBackup(path.join(config.backupDir, newest.name), newest.name); // nothing new: still bring the second place up to date

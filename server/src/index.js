@@ -27,6 +27,7 @@ import { EVENTS } from '../../shared/contracts.js';
 import { chatOut, getUser, memberIds, membership, publicUser } from './service.js';
 import { startBot, stopBot } from './telegram.js';
 import { BUILD_ID } from './build.js';
+import { record } from './timing.js';
 import { handleOffline, handleOnline, handleSignal } from './calls.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -66,12 +67,18 @@ app.use((req, res, next) => {
     counters.requests++;
     if (res.statusCode >= 500) counters.errors++;
     if (req.path === '/healthz') return;
+    const ns = process.hrtime.bigint() - t;
     log('info', 'http', {
       m: req.method,
       p: req.path.replace(/\/bot[^/]+/g, '/bot:token').replace(/\/[A-Za-z0-9_-]{16,}/g, '/:id'),
       s: res.statusCode,
-      ms: Number((process.hrtime.bigint() - t) / 1_000_000n),
+      ms: Number(ns / 1_000_000n),
     });
+    // the route as written in the code (/api/chats/:id/messages), so one chat or one file is never told apart; a measure never breaks a request
+    const base = req.baseUrl || '';
+    if (req.route && base.startsWith('/api') && res.statusCode < 400) {
+      try { record(`s:${req.method} ${base}${req.route.path}`, Number(ns / 10_000n) / 100); } catch { /* not measured */ }
+    }
   });
   next();
 });

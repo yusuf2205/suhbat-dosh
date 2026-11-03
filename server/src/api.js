@@ -53,6 +53,7 @@ import { transcribe, transcriberReady } from './transcribe.js';
 import { activeFor as activeGroupCalls } from './groupcalls.js';
 import { hashPassword, verifyPassword } from './passwords.js';
 import { assertQuota, checkSpam, safety } from './safety.js';
+import { recordClient } from './timing.js';
 import { currentIceServers } from './turn.js';
 import { recentCalls } from './calls.js';
 import { BUILD_ID, SERVER_VERSION } from './build.js';
@@ -479,6 +480,12 @@ api.get('/auth/qr/poll', (req, res) => {
 
 api.use(bridgeIn); // the bridge container's own door: shared secret, no session
 api.use(requireAuth);
+
+// How long people wait, measured on their devices (only durations; see timing.js).
+api.post('/metrics', (req, res) => {
+  if (rateLimit(`metrics:${req.user.id}`, 30, 600_000)) recordClient(req.body);
+  res.json({ ok: true });
+});
 
 // A failed recording or camera on someone's phone: the exact reason reaches the administrator (what the device said, nothing else).
 api.post('/diag/media', (req, res) => {
@@ -1745,6 +1752,9 @@ api.post('/files/:id/thumb', async (req, res) => {
   const w = int(req.query.w, 'w', { min: 1, max: 20000, optional: true });
   const hgt = int(req.query.h, 'h', { min: 1, max: 20000, optional: true });
   if (w && hgt) q.run('UPDATE files SET width = ?, height = ? WHERE id = ?', w, hgt, fid);
+  // a picture of a few pixels that travels inside the message itself; anything else is ignored
+  const tiny = String(req.headers['x-tiny'] || '');
+  q.run('UPDATE files SET has_thumb = 1, tiny = COALESCE(?, tiny) WHERE id = ?', /^data:image\/(jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(tiny) && tiny.length <= 1500 ? tiny : null, fid);
   // everybody who sees the message gets the new preview immediately
   for (const mrow of q.all('SELECT * FROM messages WHERE file_id = ?', fid)) {
     emit(memberIds(mrow.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(mrow) });

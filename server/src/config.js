@@ -43,7 +43,9 @@ export const config = {
   dataDir,
   filesDir: path.join(dataDir, 'files'),
   downloadsDir: path.resolve(env.DOWNLOADS_DIR || path.join(dataDir, '..', 'downloads')),
-  dbFile: path.join(dataDir, 'suhbat.db'),
+  // the database may live on a faster disk than the files (DB_DIR, e.g. an SSD volume)
+  dbFile: path.join(path.resolve(env.DB_DIR || dataDir), 'suhbat.db'),
+  backupHours: Math.max(1, Number(env.BACKUP_HOURS) || 6),
   // database snapshots made from the admin console (persistent volume on the NAS)
   backupDir: path.resolve(env.BACKUP_DIR || (fs.existsSync('/backups') ? '/backups' : path.join(dataDir, 'backups'))),
   secret: loadSecret(),

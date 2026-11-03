@@ -692,6 +692,8 @@ body.resizing iframe, body.resizing video { pointer-events: none; }
 .media-btn img { display: block; width: 100%; max-width: 340px; max-height: 360px; object-fit: cover; border-radius: 12px; background: var(--surface-2); }
 .media-btn.video { cursor: pointer; }
 .media-btn.video img, .poster-empty { width: 300px; max-width: 100%; aspect-ratio: 16 / 9; background: #1a1740; }
+/* a picture of 16 px stretched to the size of the real one: blurry by itself, shown until the real one arrives */
+.has-tiny, .media-btn img.has-tiny, .media-btn.video .has-tiny { background-size: cover; background-position: center; background-repeat: no-repeat; }
 .play-badge { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%; background: rgba(15, 12, 40, .62); color: #fff; display: grid; place-items: center; backdrop-filter: blur(4px); transition: transform .15s; }
 .media-btn.video:hover .play-badge { transform: scale(1.1); }
 .media-size { position: absolute; left: 8px; bottom: 8px; background: rgba(15, 12, 40, .6); color: #fff; font-size: .72rem; padding: 2px 8px; border-radius: 10px; }

@@ -11,12 +11,14 @@ services:
     environment:
       NODE_ENV: production
       DATA_DIR: /data
+      DB_DIR: /db
       DOWNLOADS_DIR: /downloads
       TRUST_PROXY: ${TRUST_PROXY:-false}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-3000}:3000"
     volumes:
-      - ./data:/data          # SQLite database + uploaded files (the only state)
+      - ./data:/data          # uploaded files (and the database, unless DB_HOST_DIR puts it elsewhere)
+      - ${DB_HOST_DIR:-./data}:/db   # SQLite database: a folder on an SSD makes every write faster
       - ./backups:/backups    # output of `npm run backup`
       - ./downloads:/downloads:ro   # installers offered on /download
       - ${BACKUP_OFFSITE:-./backups-offsite}:/offsite   # a second disk for the copies (see BACKUP_MIRROR_DIR in .env.example)
