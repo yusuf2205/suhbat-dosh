@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pipeline } from 'node:stream/promises';
 import { config } from './config.js';
-import { db, q } from './db.js';
+import { q, snapshotTo } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { notifyAdmins } from './notify.js';
 import { notifyTelegram } from './telegram.js';
@@ -89,7 +89,7 @@ export function createBackup(kind = 'manual') {
   fs.mkdirSync(config.backupDir, { recursive: true });
   const name = `db-${stamp()}-${kind}.db`;
   const dest = path.join(config.backupDir, name);
-  db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+  snapshotTo(dest);
   // verify the snapshot opens and passes an integrity check
   const t = new DatabaseSync(dest, { readOnly: true });
   try {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto2 from 'node:crypto';
 import { config } from './config.js';
-import { db, q, tx } from './db.js';
+import { q, tx } from './db.js';
 import {
   CHAT_TYPES, EVENTS, LIMITS, PRIVACY_VALUES, REACTIONS,
 } from '../../shared/contracts.js';

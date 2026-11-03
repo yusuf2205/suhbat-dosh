@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 5700 + Math.floor(Math.random() * 150);
+const PORT = 21250; // its own range of ten ports: test files run side by side
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
 before(async () => {
@@ -18,7 +18,7 @@ before(async () => {
   };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }

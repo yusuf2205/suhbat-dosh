@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { isPrivateIp, parseMeta } from '../server/src/linkpreview.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 6460 + Math.floor(Math.random() * 100);
+const PORT = 21130; // its own range of ten ports: test files run side by side
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
 let site;
@@ -35,7 +35,7 @@ before(async () => {
   };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env: { ...env, LINKPREVIEW_ALLOW_LOCAL: process.env.LP_LOCAL === '0' ? '' : '1' }, stdio: 'inherit' });
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -88,7 +88,7 @@ test('by default the server never contacts its own machine or network', async ()
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT; delete env.LINKPREVIEW_ALLOW_LOCAL;
   const s2 = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
   try {
-    for (let i = 0; i < 60; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).ok) break; } catch { /* starting */ } await new Promise((r) => setTimeout(r, 100)); }
+    for (let i = 0; i < 300; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).ok) break; } catch { /* starting */ } await new Promise((r) => setTimeout(r, 100)); }
     const reg = await fetch(`http://127.0.0.1:${port}/api/auth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'lp', username: 'lp_user2', password: 'longenough1' }) });
     const cookie = (reg.headers.get('set-cookie') || '').split(';')[0];
     for (const target of [`http://127.0.0.1:${sitePort}/page`, 'http://localhost/page', 'http://169.254.169.254/latest/meta-data', 'http://[::1]/x', 'http://192.168.1.1/']) {

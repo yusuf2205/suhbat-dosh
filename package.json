@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server/src/index.js",
     "dev": "node --watch server/src/index.js",
-    "test": "node --test test/e2e.test.mjs test/callquality.test.mjs",
+    "test": "node --test test/*.test.mjs",
     "backup": "node scripts/backup.mjs",
     "restore-check": "node scripts/restore-check.mjs"
   },

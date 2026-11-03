@@ -137,8 +137,7 @@ async function updateViaTelegram() {
 }
 
 export function initUpdates() {
-  // the build that was current when this page loaded
-  api('GET', '/api/version').then((i) => { S.build = i.build; }).catch(() => {});
+  // the build this page runs is learnt by the first check (the connection reports it at once), no request of its own
   setInterval(() => checkForUpdate({ silent: true }), 10 * 60 * 1000);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') checkForUpdate({ silent: true });

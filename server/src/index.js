@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { config } from './config.js';
-import { db, migrate, q } from './db.js';
+import { migrate, ping, closeDatabase, q } from './db.js';
 import { HttpError, log, now } from './util.js';
 import { api, authenticate, listDownloads } from './api.js';
 import { publicShare } from './drive.js';
@@ -96,7 +96,7 @@ const originOk = (req) => {
 
 app.get('/healthz', (_req, res) => {
   try {
-    db.prepare('SELECT 1').get();
+    ping();
     res.json({ status: 'ok', uptime: Math.round(process.uptime()) });
   } catch {
     res.status(503).json({ status: 'error' });
@@ -302,7 +302,7 @@ function shutdown() {
   log('info', 'shutting down');
   stopBot();
   server.close(() => {
-    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); db.close(); } catch { /* ignore */ }
+    try { closeDatabase(); } catch { /* ignore */ }
     process.exit(0);
   });
   setTimeout(() => process.exit(0), 5000).unref();

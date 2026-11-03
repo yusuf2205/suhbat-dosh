@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 4100 + Math.floor(Math.random() * 500);
+const PORT = 21080; // its own range of ten ports: test files run side by side
 const BASE = `http://127.0.0.1:${PORT}`;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-test-'));
 const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-dl-'));
@@ -102,7 +102,7 @@ before(async () => {
     env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, OTP_MODE: 'dev', NODE_ENV: 'test', LOG_LEVEL: 'error', SUPERADMIN_PHONES: '+998901110099', OTP_REQUESTS_PER_IP: '500', RESEND_API_KEY: 're_test_key', RESEND_API_BASE: 'http://127.0.0.1:' + stub.port, EMAIL_FROM: 'Test <no-reply@test.local>', TELEGRAM_BOT_TOKEN: '123:TEST', DOWNLOADS_DIR: dlDir, TELEGRAM_API_BASE: 'http://127.0.0.1:' + stub.port },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(BASE + '/healthz')).ok) return; } catch { /* retry */ }
     await new Promise((r) => setTimeout(r, 100));
   }

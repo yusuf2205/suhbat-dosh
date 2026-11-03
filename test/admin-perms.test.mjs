@@ -9,14 +9,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 7900 + Math.floor(Math.random() * 90);
+const PORT = 21020; // its own range of ten ports: test files run side by side
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
 before(async () => {
   const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', OTP_MODE: 'dev', LOG_LEVEL: 'error', DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-ap-')), BACKUP_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-apb-')), SUPERADMIN_PHONES: '+998900000001', OTP_REQUESTS_PER_IP: '500' };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }

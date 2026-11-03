@@ -1,7 +1,7 @@
 // Search over the messages a person can see: text, the speech-to-text of voice messages and the names of files.
 // Words of three letters or more go through the FTS5 trigram index (any part of a word, any letter case, Cyrillic too);
 // shorter words are matched with LIKE on the rows the index already narrowed down.
-import { db } from './db.js';
+import { q } from './db.js';
 import { escapeLike } from './util.js';
 
 const phrase = (w) => `"${w.replace(/"/g, '""')}"`;
@@ -29,10 +29,11 @@ export function searchMessages(userId, o = {}) {
   else if (o.type === 'text') where.push("m.kind = 'text'");
   else if (o.type) { where.push('m.kind = ?'); params.push(o.type); }
   params.push(Math.min(o.limit || 40, 100));
-  return db.prepare(
+  return q.all(
     `SELECT m.*, c.type AS chat_type, c.title AS chat_title FROM messages m
      JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
      JOIN chats c ON c.id = m.chat_id
      WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT ?`,
-  ).all(...params);
+    ...params,
+  );
 }

@@ -176,7 +176,8 @@ let ice = null;
 export async function iceServers() {
   if (ice) return ice;
   let list = [];
-  try { list = (await api('GET', '/api/config')).ice_servers || []; } catch { /* the default below */ }
+  // only the addresses of STUN servers are used here (no passwords): the settings already loaded at the start do
+  try { list = (S.cfg || await api('GET', '/api/config')).ice_servers || []; } catch { /* the default below */ }
   const stun = list.flatMap((s) => [].concat(s.urls || s.url || [])).filter((u) => /^stuns?:/i.test(u));
   ice = [{ urls: stun.length ? stun : ['stun:stun.l.google.com:19302'] }];
   return ice;

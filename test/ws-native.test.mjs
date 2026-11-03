@@ -11,14 +11,14 @@ import { WebSocket } from 'ws';
 import crypto from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 6970 + Math.floor(Math.random() * 100);
+const PORT = 21310; // its own range of ten ports: test files run side by side
 const BASE = `http://127.0.0.1:${PORT}`;
 let server;
 before(async () => {
   const env = { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', OTP_MODE: 'dev', OTP_REQUESTS_PER_IP: '500', LOG_LEVEL: 'error', DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-wn-')) };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 300; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 100));
   }

@@ -45,7 +45,9 @@ const migrationsDir = path.resolve(here, '../migrations');
   } finally { try { dir.closeSync(); } catch { /* already closed */ } }
 }());
 
-export const db = new DatabaseSync(config.dbFile);
+// The only place that talks to the database driver: everything else goes through q, tx and the helpers below,
+// so that another engine (PostgreSQL) means rewriting this file and the SQL dialect, not 40 modules.
+const db = new DatabaseSync(config.dbFile);
 // SQLite's own LIKE and LOWER know only Latin letters: searching "привет" must also find "Привет"
 db.function('lc', { deterministic: true }, (s) => (s == null ? '' : String(s).toLowerCase()));
 db.exec('PRAGMA journal_mode = WAL;');
@@ -85,3 +87,19 @@ export const q = {
   all: (sql, ...p) => db.prepare(sql).all(...p),
   run: (sql, ...p) => db.prepare(sql).run(...p),
 };
+
+/** Answers while the database answers (the health check). */
+export function ping() {
+  db.prepare('SELECT 1').get();
+}
+
+/** A consistent copy of the whole database in a new file, made while the server keeps working. */
+export function snapshotTo(dest) {
+  db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+}
+
+/** At shutdown: the write-ahead log is folded into the main file, then the file is closed. */
+export function closeDatabase() {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  db.close();
+}

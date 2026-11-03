@@ -10,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 6860 + Math.floor(Math.random() * 40);
-const BPORT = 6900 + Math.floor(Math.random() * 40);
+const PORT = 21050; // its own range of ten ports: test files run side by side
+const BPORT = 21055;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TOKEN = crypto.randomBytes(24).toString('base64url');
 const VIDEO = process.env.TEST_BRIDGE_VIDEO !== '0'; // videos are copied unless switched off (TEST_BRIDGE_VIDEO=0)
@@ -32,7 +32,7 @@ before(async () => {
   };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok && (await fetch(`http://127.0.0.1:${BPORT}/health`)).ok) return; } catch { /* starting */ }
     await new Promise((r) => setTimeout(r, 150));
   }
@@ -51,7 +51,7 @@ async function phoneUser(phone, name) {
 }
 const mock = (uid, body) => fetch(`http://127.0.0.1:${BPORT}/mock/message?u=${uid}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const mockMedia = (uid, body) => fetch(`http://127.0.0.1:${BPORT}/mock/media?u=${uid}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
-const until = async (fn, ms = 6000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 120)); } return null; };
+const until = async (fn, ms = 45000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 120)); } return null; };
 async function link(u) {
   assert.equal((await call(u.cookie, 'POST', '/api/bridge/start')).status, 200);
   const done = await until(async () => { const r = await call(u.cookie, 'GET', '/api/bridge/poll'); return r.data.status === 'done' ? r.data : null; });

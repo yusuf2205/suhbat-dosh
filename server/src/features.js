@@ -1,7 +1,7 @@
 // User-facing extras: chat folders, scheduled messages & reminders, polls, global search, data export.
 import express from 'express';
 import { config } from './config.js';
-import { db, q, tx } from './db.js';
+import { q, tx } from './db.js';
 import { EVENTS, LIMITS } from '../../shared/contracts.js';
 import {
   HttpError, escapeLike, int, log, now, rateLimit, str,

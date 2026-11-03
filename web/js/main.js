@@ -141,6 +141,9 @@ async function loadChats() {
   }
   fire('chats');
   snapSaveBoot(() => ({ user: S.me, chats: [...S.chats.values()] }));
+  // the first connect right after the start loads the list a second time (to catch what came in between); the rest is not asked twice
+  if (Date.now() - extrasAt < 10_000) return;
+  extrasAt = Date.now();
   loadFolders();
   refreshGroupCalls();
   startE2e();
@@ -148,6 +151,7 @@ async function loadChats() {
   checkBridge();
   resumeLives();
 }
+let extrasAt = 0;
 
 /** Called on every (re)connect: pull what we missed while offline, then flush the outbox. */
 async function resync() {
@@ -412,6 +416,7 @@ function loggedOut() {
   clearMediaCache().catch(() => {});
   snapClear();
   paintedFor = null;
+  extrasAt = 0;
   disconnect();
   S.me = null;
   S.chats.clear();
