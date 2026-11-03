@@ -5,6 +5,8 @@
 set -u
 
 APP_DIR="${APP_DIR:-/home/Joseph/docker/suhbat}"
+# where Docker keeps its data: UGOS moves it when the Docker app is migrated to another volume
+DOCKER_ROOT="${DOCKER_ROOT:-$(sed -n 's/.*"data-root"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /etc/docker/daemon.json 2>/dev/null)}"
 DOCKER_ROOT="${DOCKER_ROOT:-/volume1/@docker}"
 STATE_DIR="${STATE_DIR:-/run/suhbat-guard}"
 KV="$DOCKER_ROOT/network/files/local-kv.db"
@@ -13,6 +15,13 @@ MAX_REPAIRS="${MAX_REPAIRS:-3}"
 
 mkdir -p "$STATE_DIR"
 say() { echo "suhbat-guard: $*"; }
+
+# UGOS stops Docker on purpose while it moves Docker or changes an SSD cache: starting it then would break that work.
+# Pause with:  touch <APP_DIR>/.guard-pause   (no sudo needed); remove the file to resume.
+if [ -f "$APP_DIR/.guard-pause" ]; then
+  say "paused ($APP_DIR/.guard-pause)"
+  exit 0
+fi
 
 repairs=$(cat "$STATE_DIR/repairs" 2>/dev/null || echo 0)
 
@@ -59,6 +68,13 @@ if [ -n "$stale" ] && [ -f "$APP_DIR/scripts/docker-restore-networks.sh" ]; then
   say "containers lost their network, bringing them back: $(echo "$stale" | wc -l)"
   bash "$APP_DIR/scripts/docker-restore-networks.sh" 2>&1 | tail -5
 fi
+# after a boot Docker may start before the network has the NAS address, and a container bound to that address fails for good
+for c in $(docker ps -a --filter status=exited --format '{{.Names}}'); do
+  docker inspect -f '{{.HostConfig.RestartPolicy.Name}} {{.State.Error}}' "$c" 2>/dev/null \
+    | grep -qE '^(always|unless-stopped) .*cannot assign requested address' || continue
+  say "starting $c again: its address was not there yet"
+  docker start "$c" >/dev/null 2>&1
+done
 running=$(docker inspect -f '{{.State.Running}}' suhbat-suhbat-1 2>/dev/null || echo false)
 tunnel=$(docker inspect -f '{{.State.Running}}' suhbat-cloudflared-1 2>/dev/null || echo false)
 if [ "$running" = true ] && [ "$tunnel" = true ]; then
