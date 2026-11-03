@@ -75,6 +75,13 @@ for c in $(docker ps -a --filter status=exited --format '{{.Names}}'); do
   say "starting $c again: its address was not there yet"
   docker start "$c" >/dev/null 2>&1
 done
+# after Docker was moved or restarted a container may come back without its network name: the server looks for the bridge as "tgbridge"
+if [ "$(docker inspect -f '{{.State.Running}}' suhbat-tgbridge-1 2>/dev/null)" = true ] \
+  && ! docker inspect -f '{{range .NetworkSettings.Networks}}{{range .Aliases}}{{.}} {{end}}{{end}}' suhbat-tgbridge-1 2>/dev/null | grep -qw tgbridge; then
+  say "suhbat-tgbridge-1 has lost its name tgbridge: connecting it again"
+  docker network disconnect suhbat_default suhbat-tgbridge-1 >/dev/null 2>&1
+  docker network connect --alias tgbridge suhbat_default suhbat-tgbridge-1 >/dev/null 2>&1
+fi
 running=$(docker inspect -f '{{.State.Running}}' suhbat-suhbat-1 2>/dev/null || echo false)
 tunnel=$(docker inspect -f '{{.State.Running}}' suhbat-cloudflared-1 2>/dev/null || echo false)
 if [ "$running" = true ] && [ "$tunnel" = true ]; then

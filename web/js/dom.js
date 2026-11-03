@@ -19,7 +19,7 @@ function add(el, kids) {
   for (const k of kids) {
     if (k === null || k === undefined || k === false) continue;
     if (Array.isArray(k)) add(el, k);
-    else el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    else el.appendChild(k instanceof Node ? k : document.createTextNode(String(k)));
   }
 }
 
@@ -64,6 +64,8 @@ export function longPress(el, fn, { ms = 450, skip = 'button, a, input, textarea
 
 export function clear(el) {
   el.replaceChildren();
+  // the append that follows skips null/false/undefined (the native one prints the word "null") and takes lists
+  el.append = (...kids) => add(el, kids);
   return el;
 }
 

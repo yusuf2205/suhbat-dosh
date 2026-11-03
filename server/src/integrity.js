@@ -70,7 +70,8 @@ function checkUploads() {
   const n = scalar('SELECT COUNT(*) AS n FROM uploads WHERE updated_at < ?', day);
   const week = scalar('SELECT COUNT(*) AS n FROM uploads WHERE updated_at < ?', now() - 7 * 24 * 3600_000);
   if (!n) return check('Недогруженные файлы', 'ok', 'всё дослано');
-  return check('Недогруженные файлы', week ? 'warn' : 'ok', `ждут устройств: ${n}${week ? `, дольше недели: ${week} (будут убраны сами)` : ''}. Устройства дошлют их, когда вернутся в сеть.`);
+  // what is older than a week is cleaned away by the server itself: nothing to do, so it is no warning
+  return check('Недогруженные файлы', 'ok', `ждут устройств: ${n}${week ? `, из них старше недели: ${week} (будут убраны сами)` : ''}. Устройства дошлют их, когда вернутся в сеть.`);
 }
 
 function checkScheduled() {

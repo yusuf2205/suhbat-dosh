@@ -1391,6 +1391,9 @@ function mirrorLine(m) {
 
 /** The daily check that everything is recorded: the last verdict, every check, the days before it, and a button to run it now. */
 const CHECK_ICON = { ok: '✓', warn: '!', bad: '✕' };
+const checkList = (list) => (list.length ? h('ul', { class: 'integ-list' }, list.map((c) => h('li', { class: c.status },
+  h('span', { class: 'integ-ico', 'aria-hidden': 'true' }, CHECK_ICON[c.status] || '·'),
+  h('span', { class: 'integ-t' }, h('b', null, c.name), h('small', null, c.text), c.examples?.length ? h('small', { class: 'muted' }, c.examples.join(', ')) : null)))) : null);
 async function integrityPanel() {
   const box = h('section', { class: 'panel integ' });
   let timer = 0;
@@ -1407,9 +1410,8 @@ async function integrityPanel() {
       last ? h('div', { class: 'integ-head' },
         h('span', { class: `pill ${last.ok ? 'ok' : 'bad'}` }, last.ok ? (last.warn ? 'в порядке, есть заметки' : 'всё в порядке') : 'есть проблемы'),
         h('span', { class: 'muted' }, `${fmtDT(last.ts)} · ${last.trigger === 'auto' ? 'по расписанию' : 'вручную'} · ${(last.duration_ms / 1000).toFixed(1)} с`)) : h('p', { class: 'muted' }, 'Проверок ещё не было: первая будет сегодня после ' + d.state.at + ' или по кнопке.'),
-      last ? h('ul', { class: 'integ-list' }, last.checks.map((c) => h('li', { class: c.status },
-        h('span', { class: 'integ-ico', 'aria-hidden': 'true' }, CHECK_ICON[c.status] || '·'),
-        h('span', { class: 'integ-t' }, h('b', null, c.name), h('small', null, c.text), c.examples?.length ? h('small', { class: 'muted' }, c.examples.join(', ')) : null)))) : null,
+      last ? checkList(last.checks.filter((c) => c.status !== 'ok')) : null,
+      last && last.checks.some((c) => c.status === 'ok') ? h('details', { class: 'integ-ok' }, h('summary', null, `Всё в порядке: ${last.checks.filter((c) => c.status === 'ok').length}`), checkList(last.checks.filter((c) => c.status === 'ok'))) : null,
       d.runs.length > 1 ? h('div', { class: 'integ-days', 'aria-label': 'Прошлые проверки' }, d.runs.slice().reverse().map((r) => h('span', { class: `integ-day ${r.ok ? (r.warn ? 'warn' : 'ok') : 'bad'}`, title: `${fmtDT(r.ts)}: ${r.ok ? 'в порядке' : `проблем: ${r.bad}`}` }))) : null);
     clearTimeout(timer);
     if (running) timer = setTimeout(() => { if (box.isConnected) paint(); }, 3000);

@@ -63,6 +63,10 @@ app.use((req, res, next) => {
 // ---- request log: method, route, status, duration. Never bodies, queries, cookies or phone numbers.
 app.use((req, res, next) => {
   const t = process.hrtime.bigint();
+  // the server's own share ends when the answer starts: a big file that takes a minute to download is the road, not the server
+  let headAt = 0n;
+  const writeHead = res.writeHead;
+  res.writeHead = function (...a) { if (!headAt) headAt = process.hrtime.bigint(); return writeHead.apply(this, a); };
   res.on('finish', () => {
     counters.requests++;
     if (res.statusCode >= 500) counters.errors++;
@@ -76,8 +80,9 @@ app.use((req, res, next) => {
     });
     // the route as written in the code (/api/chats/:id/messages), so one chat or one file is never told apart; a measure never breaks a request
     const base = req.baseUrl || '';
-    if (req.route && base.startsWith('/api') && res.statusCode < 400) {
-      try { record(`s:${req.method} ${base}${req.route.path}`, Number(ns / 10_000n) / 100); } catch { /* not measured */ }
+    // the Telegram bridge talks to the server all day: it would only fill the list
+    if (req.route && base.startsWith('/api') && !base.startsWith('/api/bridge') && res.statusCode < 400) {
+      try { record(`s:${req.method} ${base}${req.route.path}`, Number(((headAt || process.hrtime.bigint()) - t) / 10_000n) / 100); } catch { /* not measured */ }
     }
   });
   next();
