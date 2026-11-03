@@ -29,6 +29,22 @@ const migrationsDir = path.resolve(here, '../migrations');
   }
 }());
 
+// Uploaded files but no database: the disk holding the database is not mounted yet (an SSD volume after a reboot), and Docker
+// gave the container an empty folder in its place. Starting would make a new empty messenger there; failing makes Docker try
+// again until the disk is back. ALLOW_NEW_DB=1 starts afresh on purpose.
+(function refuseMissingDatabase() {
+  if (fs.existsSync(config.dbFile) || process.env.ALLOW_NEW_DB === '1') return;
+  let dir;
+  try { dir = fs.opendirSync(config.filesDir); } catch { return; }
+  try {
+    for (let e = dir.readSync(); e; e = dir.readSync()) {
+      if (e.name.startsWith('.')) continue;
+      log('error', 'database missing while uploaded files exist: is its disk mounted?', { db: config.dbFile });
+      process.exit(1);
+    }
+  } finally { try { dir.closeSync(); } catch { /* already closed */ } }
+}());
+
 export const db = new DatabaseSync(config.dbFile);
 // SQLite's own LIKE and LOWER know only Latin letters: searching "привет" must also find "Привет"
 db.function('lc', { deterministic: true }, (s) => (s == null ? '' : String(s).toLowerCase()));
