@@ -43,7 +43,7 @@ export function mount(node) {
     on('tasks', render);
     on('gcalls', render);
     on('focus', render);
-    refreshTaskCount();
+    if (featureOn('tasks')) refreshTaskCount();
   }
   render();
 }

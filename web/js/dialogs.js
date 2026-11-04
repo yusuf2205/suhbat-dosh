@@ -51,7 +51,7 @@ async function openDirect(user) {
 export function openNewChat() {
   const m = modal({ title: t('new.title'), body: [] });
   const picker = userPicker({ onPick: async (u) => { m.close(); await openDirect(u); } });
-  m.setBody(picker.el, h('button', { class: 'btn secondary', type: 'button', style: { width: '100%', marginTop: '12px' }, onclick: () => { m.close(); openBotFather(); } }, `🤖 ${t('bots.father')}`));
+  m.setBody(picker.el, featureOn('bots') ? h('button', { class: 'btn secondary', type: 'button', style: { width: '100%', marginTop: '12px' }, onclick: () => { m.close(); openBotFather(); } }, `🤖 ${t('bots.father')}`) : null);
   picker.input.focus();
 }
 
@@ -104,6 +104,7 @@ export function openNewGroup(type) {
 export { openSettings } from './settings.js';
 import { formatBirthday, isBirthdayToday, photoGrid } from './settings.js';
 import { openBotFather } from './bots.js';
+import { featureOn } from './features.js';
 import { e2eSupported, registerDevice, syncGroup } from './e2egroup.js';
 import { safetyRow } from './safety.js';
 import { aliasOf, animalAvatar, openAliasDialog } from './persona.js';

@@ -678,7 +678,7 @@ export function openSettings() {
             row('chat', t('st.chats'), { onclick: () => go(pages.chats) }),
             row('bell', t('st.notifications'), { onclick: () => go(pages.notifications) }),
             row('folder', t('st.folders'), { value: String((S.folders || []).length), onclick: () => openFolders() }),
-            row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
+            featureOn('quick') && row('chat', t('quick.title'), { onclick: () => { m.close(); openQuickManager(); } }),
             featureOn('focus') && row('moon', t('focus.title'), { value: focusSummary(), onclick: () => { m.close(); openFocus(); } }),
             featureOn('digest') && row('list', t('digest.all_title'), { onclick: () => { m.close(); openDigestAll(); } })),
           heading(t('st.sec_people')),

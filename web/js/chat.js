@@ -323,7 +323,7 @@ function buildView() {
     if (ta.value && !editing) typingPing();
     saveDraft();
   });
-  attachQuick(ta, view.wrap, () => !!activeChat()?.peer?.is_bot);
+  if (featureOn('quick')) attachQuick(ta, view.wrap, () => !!activeChat()?.peer?.is_bot);
   ta.addEventListener('paste', (e) => {
     const fl = e.clipboardData?.files;
     if (fl?.length) {
@@ -574,16 +574,16 @@ function renderComposer() {
       { label: t('attach.file'), onClick: () => view.fileInput.click() },
       ...(directRoute(activeChat()) ? [{ label: directRoute(activeChat()) === 'nearby' ? t('nb.direct_menu_near', { name: activeChat().peer.name }) : t('nb.direct_menu'), onClick: () => sendFromChat(activeChat(), attachFiles) }] : []),
       { label: t('attach.location'), onClick: () => sendLocation(S.active, (m) => upsert(S.active, m)) },
-      { label: t('quick.title'), onClick: () => openQuickManager({ onPick: (text) => insertAtCursor(text) }) },
+      ...(featureOn('quick') ? [{ label: t('quick.title'), onClick: () => openQuickManager({ onPick: (text) => insertAtCursor(text) }) }] : []),
       { label: t('sc.title'), onClick: async () => { const chatId = S.active; const f = await scanDocument(); if (f) attachFiles(chatId, [f]); } },
       { label: t('attach.contact'), onClick: () => openContactShare(S.active, (m) => upsert(S.active, m)) },
-      { label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m), (txt) => insertAtCursor(txt)) },
+      ...(featureOn('stickers') ? [{ label: t('stk.title'), onClick: () => openStickerPicker(S.active, (m) => upsert(S.active, m), (txt) => insertAtCursor(txt)) }] : []),
       { label: t('poll.new'), onClick: () => openPollCreate(S.active) },
-      { label: t('ev.new'), onClick: () => openEventCreate(S.active) },
-      { label: t('mini.new'), onClick: () => openMiniCreate(S.active) },
+      ...(featureOn('events') ? [{ label: t('ev.new'), onClick: () => openEventCreate(S.active) }] : []),
+      ...(featureOn('mini') ? [{ label: t('mini.new'), onClick: () => openMiniCreate(S.active) }] : []),
       ...(featureOn('tasks') ? [{ label: t('task.new'), onClick: () => openTaskCreate(S.active) }] : []),
       ...(featureOn('deals') ? [{ label: t('deal.new'), onClick: () => openDealCreate(S.active) }] : []),
-      { label: t('note.new'), onClick: () => openNoteCreate(S.active) },
+      ...(featureOn('notes') ? [{ label: t('note.new'), onClick: () => openNoteCreate(S.active) }] : []),
       { label: t('vnote.title'), onClick: async () => {
         const chatId = S.active;
         let ping = 0;
