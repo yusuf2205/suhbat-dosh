@@ -1,12 +1,12 @@
 import { speedRow } from './speed.js';
 import { closeLayer, openLayer } from './backnav.js';
 import { canOpenNative, openNative } from './native.js';
-import { h, clear, formatBytes } from './dom.js';
+import { h, clear, formatBytes, longPress } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S } from './state.js';
 import { api } from './net.js';
 import { icon } from './icons.js';
-import { fmtDay, fmtTime, modal, toast } from './ui.js';
+import { confirmDialog, fmtDay, fmtTime, modal, popMenu, toast } from './ui.js';
 import { cachedBlobUrl, clearAll, usage } from './mediacache.js';
 import { pdfNode } from './pdfview.js';
 import { fileIcon } from './fileicons.js';
@@ -302,19 +302,73 @@ export function openMediaPanel(chatId) {
   const grid = h('div', { class: 'media-grid' });
   const more = h('button', { class: 'btn secondary', type: 'button', hidden: true }, t('chat.load_more'));
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const m = modal({ title: t('media.title'), body: [tabs, grid, more], className: 'media-modal' });
+  const selbar = h('div', { class: 'sel-bar', hidden: true });
+  const m = modal({ title: t('media.title'), body: [tabs, selbar, grid, more], className: 'media-modal' });
   let before = null;
   let busy = false;
+  const picked = new Map();   // message id -> message, what is selected
+  const els = new Map();      // message id -> its cell
+  let selecting = false;
+  const chat = () => S.chats.get(chatId);
+  const canDelete = (msg) => {
+    const c = chat();
+    if (!c) return false;
+    const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
+    const locked = c.imported === 'tgbridge' && !S.me.is_admin;
+    return (msg.sender_id === S.me.id || (c.type !== 'direct' && adminLike)) && !locked;
+  };
+  const sorted = () => [...picked.values()].sort((a, b) => a.id - b.id);
+  function paintSelect() {
+    selecting = picked.size > 0 || selecting;
+    selbar.hidden = !selecting;
+    if (!selecting) return;
+    const del = sorted().filter(canDelete);
+    clear(selbar).append(
+      h('span', { class: 'grow' }, t('sel.count', { n: picked.size })),
+      h('button', { class: 'btn secondary', type: 'button', disabled: !picked.size, onclick: () => import('./dialogs.js').then((d) => d.openForward(sorted())) }, t('msg.forward')),
+      h('button', { class: 'btn secondary danger-o', type: 'button', disabled: !del.length || del.length !== picked.size, onclick: () => removeMessages(del) }, t('msg.delete')),
+      h('button', { class: 'btn secondary', type: 'button', onclick: () => { picked.clear(); selecting = false; els.forEach((e) => e.classList.remove('picked')); paintSelect(); } }, t('common.cancel')));
+  }
+  function toggle(msg) {
+    if (picked.has(msg.id)) picked.delete(msg.id); else picked.set(msg.id, msg);
+    els.get(msg.id)?.classList.toggle('picked', picked.has(msg.id));
+    if (!picked.size) selecting = false;
+    paintSelect();
+  }
+  async function removeMessages(list) {
+    if (!list.length || !(await confirmDialog(list.length === 1 ? t('msg.delete_confirm') : t('sel.delete_confirm', { n: list.length }), { okLabel: t('msg.delete'), danger: true }))) return;
+    for (const msg of list) {
+      try { await api('DELETE', `/api/messages/${msg.id}`); els.get(msg.id)?.remove(); els.delete(msg.id); picked.delete(msg.id); } catch (e) { toast(errText(e.code)); }
+    }
+    if (!picked.size) selecting = false;
+    paintSelect();
+  }
+  /** The menu of one entry, like in Telegram: go to the message, save, forward, delete, select. */
+  function cellMenu(anchor, msg) {
+    const items = [{ icon: 'chat', label: t('media.goto'), onClick: () => { m.close(); import('./chat.js').then((c) => c.jumpTo(chatId, msg.id)); } }];
+    if (msg.file) {
+      items.push({ icon: 'download', label: t('msg.save'), onClick: () => {
+        const a = h('a', { href: `${msg.file.url}?dl=1`, download: msg.file.name });
+        document.body.append(a);
+        a.click();
+        a.remove();
+      } });
+    }
+    items.push({ icon: 'forward', label: t('msg.forward'), onClick: () => import('./dialogs.js').then((d) => d.openForward(msg)) });
+    if (canDelete(msg)) items.push({ icon: 'trash', label: t('msg.delete'), danger: true, onClick: () => removeMessages([msg]) });
+    items.push({ icon: 'selectc', label: t('msg.select'), onClick: () => { selecting = true; if (!picked.has(msg.id)) toggle(msg); else paintSelect(); } });
+    popMenu(anchor, items);
+  }
 
   const label = { media: t('media.media'), files: t('media.files'), links: t('media.links') };
   for (const k of ['media', 'files', 'links']) {
     tabs.append(h('button', {
       class: 'tab', type: 'button', role: 'tab', dataset: { k }, 'aria-selected': String(k === kind),
-      onclick: () => { kind = k; before = null; clear(grid); draw(); },
+      onclick: () => { kind = k; before = null; picked.clear(); els.clear(); selecting = false; paintSelect(); clear(grid); draw(); },
     }, label[k]));
   }
 
-  function cell(msg) {
+  function rawCell(msg) {
     const f = msg.file;
     if (kind === 'media') {
       return h('button', { class: 'media-cell', type: 'button', onclick: () => { m.close(); openViewer(chatId, msg.id, msg); } },
@@ -330,6 +384,16 @@ export function openMediaPanel(chatId) {
     return h('div', { class: 'list-item' }, h('span', { class: 'grow' },
       (msg.links || []).map((u) => h('a', { href: u, target: '_blank', rel: 'noopener noreferrer nofollow', class: 'ellipsis', style: { display: 'block' } }, u)),
       h('span', { class: 'muted' }, fmtDay(msg.created_at))));
+  }
+
+  function cell(msg) {
+    const el = rawCell(msg);
+    els.set(msg.id, el);
+    // while something is selected a tap selects too, it does not open
+    el.addEventListener('click', (e) => { if (!selecting) return; e.preventDefault(); e.stopImmediatePropagation(); toggle(msg); }, true);
+    const pressed = longPress(el, () => cellMenu(el, msg), { skip: '' });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!pressed()) cellMenu(el, msg); });
+    return el;
   }
 
   async function draw() {

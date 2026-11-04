@@ -707,6 +707,9 @@ body.viewer-open { overflow: hidden; }
 .viewer.immersive .viewer-bar { background: none; }
 .viewer.immersive .viewer-bar > :not(.fs-btn) { display: none; }
 .viewer.immersive .viewer-bar .fs-btn { opacity: .6; }
+.sel-bar { display: flex; align-items: center; gap: 8px; padding: 6px 0 10px; flex-wrap: wrap; }
+.sel-bar[hidden] { display: none; }
+.media-cell.picked, .media-list .picked { outline: 3px solid var(--brand); outline-offset: -3px; background: var(--surface-2); }
 .viewer-title { display: grid; min-width: 0; margin-left: 6px; }
 .viewer-title b, .viewer-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-title small { opacity: .7; }
