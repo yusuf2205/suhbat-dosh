@@ -63,7 +63,7 @@ export async function openViewer(chatId, messageId, single = null) {
     h('button', { class: 'icon-btn z', type: 'button', 'aria-label': t('viewer.zoom_out'), onclick: () => zoomBy(1 / 1.4) }, '−'),
     zoomLabel,
     h('button', { class: 'icon-btn z', type: 'button', 'aria-label': t('viewer.zoom_in'), onclick: () => zoomBy(1.4) }, '+'),
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('viewer.fullscreen'), onclick: toggleFullscreen }, '⛶'),
+    h('button', { class: 'icon-btn fs-btn', type: 'button', 'aria-label': t('viewer.fullscreen'), onclick: toggleFullscreen }, '⛶'),
     dl);
   el.append(bar, stage, prev, next, status);
   document.body.append(el);
@@ -89,9 +89,15 @@ export async function openViewer(chatId, messageId, single = null) {
     if (scale === 1) { tx = 0; ty = 0; }
     apply();
   }
-  function toggleFullscreen() {
-    if (document.fullscreenElement) document.exitFullscreen?.();
-    else el.requestFullscreen?.().catch(() => {});
+  // The real full screen is not there on an iPhone, in an Android app or in some browsers: the button then hides everything but itself ("immersive")
+  async function toggleFullscreen() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document); return; }
+    if (el.classList.contains('immersive')) { el.classList.remove('immersive'); return; }
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    try {
+      if (!req) throw new Error('no fullscreen');
+      await req.call(el);
+    } catch { el.classList.add('immersive'); }
   }
 
   function fail(m) {
@@ -250,7 +256,7 @@ export async function openViewer(chatId, messageId, single = null) {
   prev.onclick = () => show(index - 1);
   next.onclick = () => show(index + 1);
   const onKey = (e) => {
-    if (e.key === 'Escape') { e.stopPropagation(); closeViewer(true); }
+    if (e.key === 'Escape') { e.stopPropagation(); if (el.classList.contains('immersive')) el.classList.remove('immersive'); else closeViewer(true); }
     else if (e.key === 'ArrowLeft') show(index - 1);
     else if (e.key === 'ArrowRight') show(index + 1);
     else if (e.key === '+' || e.key === '=') zoomBy(1.4);

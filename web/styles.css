@@ -704,6 +704,9 @@ body.viewer-open { overflow: hidden; }
 .viewer { position: fixed; inset: 0; z-index: 105; background: rgba(8, 6, 24, .94); color: #fff; display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); animation: rise .15s both; }
 .viewer-bar { display: flex; align-items: center; gap: 6px; padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent); z-index: 2; }
 .viewer-bar .icon-btn { color: #fff; }
+.viewer.immersive .viewer-bar { background: none; }
+.viewer.immersive .viewer-bar > :not(.fs-btn) { display: none; }
+.viewer.immersive .viewer-bar .fs-btn { opacity: .6; }
 .viewer-title { display: grid; min-width: 0; margin-left: 6px; }
 .viewer-title b, .viewer-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .viewer-title small { opacity: .7; }
