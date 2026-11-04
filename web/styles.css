@@ -2077,7 +2077,7 @@ img.once-media { pointer-events: none; }
 .reader-row b { flex: 1; min-width: 0; }
 
 /* ===== topics ===== */
-.topic-bar { display: flex; gap: 6px; padding: 6px 10px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); background: var(--surface); }
+.topic-bar { display: flex; gap: 6px; padding: 6px 10px; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; user-select: none; scrollbar-width: none; border-bottom: 1px solid var(--line); background: var(--surface); }
 .topic-bar::-webkit-scrollbar { display: none; }
 .topic-bar[hidden] { display: none; }
 .topic-chip { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; max-width: 200px; padding: 6px 12px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--text); font: inherit; font-size: .88rem; font-weight: 600; cursor: pointer; }

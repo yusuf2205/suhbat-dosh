@@ -34,6 +34,12 @@ export function renderTopicBar(el, chat, switchTopic) {
   const admin = chat.my_role === 'owner' || chat.my_role === 'admin';
   const cur = S.topic.get(chat.id) || 0;
   const list = topicsOf(chat.id);
+  // the bar is drawn again at every unread change: it must stay where the finger left it, and open on the current topic
+  const keep = el.scrollLeft;
+  const same = el.dataset.chat === String(chat.id) && el.dataset.cur === String(cur);
+  el.dataset.chat = String(chat.id);
+  el.dataset.cur = String(cur);
+  wireBarScroll(el);
   clear(el).append(...list.map((tp) => {
     const label = tp.id === 0 ? t('topic.general') : `${tp.emoji ? `${tp.emoji} ` : '\u{1F4AC} '}${tp.title}`;
     const chip = h('button', {
@@ -43,6 +49,32 @@ export function renderTopicBar(el, chat, switchTopic) {
     }, h('span', { class: 'ellipsis' }, `${tp.closed ? '\u{1F512} ' : ''}${label}`), tp.unread && tp.id !== cur ? h('b', { class: 'topic-badge' }, tp.unread > 99 ? '99+' : String(tp.unread)) : null);
     return chip;
   }), admin ? h('button', { class: 'topic-chip add', type: 'button', 'aria-label': t('topic.new'), onclick: () => openTopicCreate(chat.id) }, '+') : null, ...(admin && cur ? [h('button', { class: 'topic-chip add', type: 'button', 'aria-label': t('topic.edit'), onclick: (e) => { const tp = list.find((x) => x.id === cur); if (tp) topicMenu(e.currentTarget, chat, tp); } }, '⋯')] : []));
+  const on = el.querySelector('.topic-chip.on');
+  if (same || !on) el.scrollLeft = keep;
+  else el.scrollLeft = on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2;
+}
+
+/** A narrow window with a mouse has no scrollbar here and no horizontal wheel: the wheel and a drag with the mouse move the bar. */
+function wireBarScroll(el) {
+  if (el._wired) return;
+  el._wired = true;
+  el.addEventListener('wheel', (e) => {
+    if (e.deltaX || el.scrollWidth <= el.clientWidth) return;
+    el.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+  let drag = null;
+  let moved = false;
+  el.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button === 0) { drag = { x: e.clientX, left: el.scrollLeft }; moved = false; } });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    if (Math.abs(dx) > 5) moved = true;
+    if (moved) el.scrollLeft = drag.left - dx;
+  });
+  window.addEventListener('pointerup', () => { drag = null; });
+  // a drag is not a click on the chip under the mouse
+  el.addEventListener('click', (e) => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 }
 
 function topicMenu(anchor, chat, tp) {
