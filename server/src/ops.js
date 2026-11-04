@@ -301,6 +301,9 @@ export function alert(text) {
 // ------------------------------------------------------------------ monitors
 let lastDiskAlert = 0;
 let lastErrAlert = 0;
+let lastBackupAlert = 0;
+let lastBackupLook = 0;
+let lastMirrorAlert = 0;
 
 function check() {
   const s = sample();
@@ -308,6 +311,23 @@ function check() {
   if (d.total && d.free < Math.max(5 * 1024 ** 3, d.total * 0.08) && now() - lastDiskAlert > 12 * 3600_000) {
     lastDiskAlert = now();
     alert(`⚠️ На диске сервера заканчивается место: свободно ${(d.free / 1024 ** 3).toFixed(1)} ГБ из ${(d.total / 1024 ** 3).toFixed(0)} ГБ.`);
+  }
+  // the snapshots stopped, or the second copy of the files cannot be written: said once in twelve hours, not found out on the day it is needed
+  if (now() - lastBackupLook > 10 * 60_000) {
+    lastBackupLook = now();
+    try {
+      const newest = listBackups().find((b) => b.kind === 'auto' || b.kind === 'manual');
+      const limit = Math.max(6, config.backupHours * 3) * 3600_000;
+      if ((!newest || now() - newest.created_at > limit) && now() - lastBackupAlert > 12 * 3600_000) {
+        lastBackupAlert = now();
+        alert(newest ? `⚠️ Копия базы не делалась уже ${Math.round((now() - newest.created_at) / 3600_000)} ч (должна каждые ${config.backupHours} ч). Проверьте диск для копий.` : '⚠️ Копий базы нет совсем. Проверьте диск для копий.');
+      }
+      const err = filesMirror.last?.error;
+      if (err && now() - lastMirrorAlert > 12 * 3600_000) {
+        lastMirrorAlert = now();
+        alert(`⚠️ Вторая копия файлов не пишется: ${err}.`);
+      }
+    } catch { /* the folder is busy: next time */ }
   }
   const recentErr = samples.slice(-10).reduce((a, x) => a + x.err, 0);
   if (recentErr >= 15 && now() - lastErrAlert > 3600_000) {
