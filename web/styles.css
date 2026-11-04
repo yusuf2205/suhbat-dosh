@@ -1693,7 +1693,7 @@ html.locked body > *:not(.lock-screen) { visibility: hidden; }
 @keyframes trspin { to { transform: rotate(360deg); } }
 
 /* dialogs opened during a call (captions consent, ...) must stay above the call screen */
-html:has(.call-overlay) .overlay { z-index: 150; }
+html:has(.call-overlay, .viewer) .overlay { z-index: 150; }
 
 /* ===== nearby (no internet) ===== */
 .nb { display: grid; gap: 8px; }

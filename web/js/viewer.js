@@ -19,6 +19,15 @@ const isVideo = (f) => /^video\//.test(f.mime);
 const isAudio = (f) => /^audio\//.test(f.mime);
 const isPdf = (f) => f.mime === 'application/pdf';
 
+/** Who may delete a message: its author, or an admin of a group; never in a copy of a Telegram chat unless the person is the owner of the server. */
+function canDeleteMsg(chatId, msg) {
+  const c = S.chats.get(chatId);
+  if (!c) return false;
+  const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
+  const locked = c.imported === 'tgbridge' && !S.me.is_admin;
+  return (msg.sender_id === S.me.id || (c.type !== 'direct' && adminLike)) && !locked;
+}
+
 async function loadItems(chatId, aroundId) {
   const out = new Map();
   for (const m of S.msgs.get(chatId)?.list || []) {
@@ -55,6 +64,9 @@ export async function openViewer(chatId, messageId, single = null) {
   const prev = h('button', { class: 'viewer-nav prev', type: 'button', 'aria-label': t('viewer.prev') }, icon('back', 28));
   const next = h('button', { class: 'viewer-nav next', type: 'button', 'aria-label': t('viewer.next') }, icon('back', 28));
   const dl = h('a', { class: 'icon-btn', 'aria-label': t('viewer.download'), title: t('viewer.download') }, icon('download', 22));
+  const editBtn = h('button', { class: 'icon-btn', type: 'button', hidden: true, 'aria-label': t('viewer.edit'), title: t('viewer.edit'), onclick: () => editCurrent() }, icon('edit', 22));
+  const rotBtn = h('button', { class: 'icon-btn', type: 'button', hidden: true, 'aria-label': t('viewer.rotate'), title: t('viewer.rotate'), onclick: () => { rot = (rot + 90) % 360; apply(); } }, icon('rotate', 22));
+  const moreBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('chat.more'), 'aria-haspopup': 'menu', onclick: () => moreMenu() }, icon('more', 22));
   const bar = h('div', { class: 'viewer-bar' },
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.close'), onclick: () => closeViewer(true) }, icon('close', 22)),
     title,
@@ -64,7 +76,7 @@ export async function openViewer(chatId, messageId, single = null) {
     zoomLabel,
     h('button', { class: 'icon-btn z', type: 'button', 'aria-label': t('viewer.zoom_in'), onclick: () => zoomBy(1.4) }, '+'),
     h('button', { class: 'icon-btn fs-btn', type: 'button', 'aria-label': t('viewer.fullscreen'), onclick: toggleFullscreen }, '⛶'),
-    dl);
+    editBtn, rotBtn, dl, moreBtn);
   el.append(bar, stage, prev, next, status);
   document.body.append(el);
   document.body.classList.add('viewer-open');
@@ -73,6 +85,7 @@ export async function openViewer(chatId, messageId, single = null) {
   const layer = openLayer(() => closeViewer(false));
 
   let scale = 1;
+  let rot = 0;
   let tx = 0;
   let ty = 0;
   let img = null;
@@ -80,7 +93,13 @@ export async function openViewer(chatId, messageId, single = null) {
   const blobs = [];
 
   function apply() {
-    if (img) img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    if (img) {
+      img.style.transform = `translate(${tx}px, ${ty}px) rotate(${rot}deg) scale(${scale})`;
+      // turned on its side the picture has to fit the other way round
+      const side = rot % 180 !== 0;
+      img.style.maxWidth = side ? `${stage.clientHeight}px` : '';
+      img.style.maxHeight = side ? `${stage.clientWidth}px` : '';
+    }
     zoomLabel.textContent = `${Math.round(scale * 100)}%`;
     el.classList.toggle('zoomed', scale > 1.01);
   }
@@ -100,6 +119,52 @@ export async function openViewer(chatId, messageId, single = null) {
     } catch { el.classList.add('immersive'); }
   }
 
+  /** Draw on the picture or crop it, then send the result to the chat as a new photo. */
+  async function editCurrent() {
+    const m = items[index];
+    try {
+      const blob = await (await fetch(m.file.url, { credentials: 'same-origin' })).blob();
+      const out = await (await import('./photoedit.js')).editImage(new File([blob], m.file.name, { type: m.file.mime }));
+      if (!out) return;
+      closeViewer(true);
+      await (await import('./chat.js')).attachFiles(chatId, [out]);
+    } catch (e) { toast(errText(e?.code)); }
+  }
+
+  /** Copy the picture itself (the clipboard takes PNG). */
+  async function copyImage() {
+    try {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      const png = await new Promise((res) => c.toBlob(res, 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+      toast(t('msg.copied'));
+    } catch { toast(t('err.generic')); }
+  }
+
+  /** The same menu as in Telegram: go to the message, copy, forward, delete, save as, all photos. */
+  function moreMenu() {
+    const m = items[index];
+    const list = [{ icon: 'chat', label: t('media.goto'), onClick: () => { closeViewer(true); import('./chat.js').then((c) => c.jumpTo(chatId, m.id)); } }];
+    if (isImage(m.file) && img && typeof ClipboardItem !== 'undefined') list.push({ icon: 'copy', label: t('msg.copy'), onClick: copyImage });
+    list.push({ icon: 'forward', label: t('msg.forward'), onClick: () => import('./dialogs.js').then((d) => d.openForward(m)) });
+    if (canDeleteMsg(chatId, m)) {
+      list.push({ icon: 'trash', label: t('msg.delete'), danger: true, onClick: async () => {
+        if (!(await confirmDialog(t('msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true }))) return;
+        try {
+          await api('DELETE', `/api/messages/${m.id}`);
+          items.splice(index, 1);
+          if (!items.length) closeViewer(true); else show(Math.min(index, items.length - 1));
+        } catch (e) { toast(errText(e.code)); }
+      } });
+    }
+    list.push({ icon: 'download', label: t('msg.save'), onClick: () => dl.click() });
+    if (items.length > 1 || mediaKind) list.push({ icon: 'grid', label: t('viewer.all_photos'), onClick: () => { closeViewer(true); openMediaPanel(chatId); } });
+    popMenu(moreBtn, list);
+  }
+
   function fail(m) {
     clear(stage).append(h('div', { class: 'viewer-error' },
       h('div', null, t('viewer.error')),
@@ -115,7 +180,7 @@ export async function openViewer(chatId, messageId, single = null) {
     const my = ++token;
     const m = items[index];
     const f = m.file;
-    scale = 1; tx = 0; ty = 0; img = null;
+    scale = 1; tx = 0; ty = 0; rot = 0; img = null;
     title.replaceChildren(h('b', null, f.name), h('small', null, `${fmtDay(m.created_at)} ${fmtTime(m.created_at)} · ${formatBytes(f.size)}`));
     counter.textContent = items.length > 1 ? `${index + 1} / ${items.length}` : '';
     dl.href = `${f.url}?dl=1`;
@@ -123,6 +188,8 @@ export async function openViewer(chatId, messageId, single = null) {
     prev.hidden = index === 0;
     next.hidden = index >= items.length - 1;
     el.classList.toggle('is-image', isImage(f));
+    rotBtn.hidden = !isImage(f);
+    editBtn.hidden = !isImage(f) || !S.chats.get(chatId)?.can_post;
     clear(stage);
     status.textContent = '';
 
@@ -309,14 +376,7 @@ export function openMediaPanel(chatId) {
   const picked = new Map();   // message id -> message, what is selected
   const els = new Map();      // message id -> its cell
   let selecting = false;
-  const chat = () => S.chats.get(chatId);
-  const canDelete = (msg) => {
-    const c = chat();
-    if (!c) return false;
-    const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
-    const locked = c.imported === 'tgbridge' && !S.me.is_admin;
-    return (msg.sender_id === S.me.id || (c.type !== 'direct' && adminLike)) && !locked;
-  };
+  const canDelete = (msg) => canDeleteMsg(chatId, msg);
   const sorted = () => [...picked.values()].sort((a, b) => a.id - b.id);
   function paintSelect() {
     selecting = picked.size > 0 || selecting;
