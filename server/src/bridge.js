@@ -639,7 +639,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
 
 // Messages that are still only a mark ("[Фото]", "[Файл]" ...) although the bridge can fetch the file now: the history copied before files were
 // supported, uploads that failed while the server was down. The bridge asks for them, newest first, and puts the files in.
-const PLACEHOLDERS = { geo: ['[Геопозиция]'], photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'] };
+const PLACEHOLDERS = { geo: ['[Геопозиция]'], photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'], sticker: ['[Стикер]'], gif: ['[GIF]'] };
 bridgeIn.get('/bridge/pending', (req, res) => {
   secret(req);
   const uid = Number(req.query.owner);

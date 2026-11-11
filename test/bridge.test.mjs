@@ -348,6 +348,13 @@ test('files, music and videos are copied; a message that was only a mark gets it
   assert.equal((await mark(22, 'file', { name: 'договор.zip' })).forwarded, true);
   assert.equal((await mark(23, 'file', { name: 'огромный.zip', size: 500 * 1024 * 1024 })).forwarded, true, 'too big for the limit');
   assert.equal((await mark(24, 'file', { name: 'run.exe' })).forwarded, true, 'a blocked type');
+  // stickers and GIFs were marks too ("[Стикер] 😎", "[GIF]"): the picture and the short mp4 now replace them
+  assert.equal((await mark(25, 'sticker')).forwarded, true);
+  assert.equal((await mark(26, 'gif')).forwarded, true);
+  const stk = await find((m) => m.kind === 'image' && m.file?.mime === 'image/webp');
+  assert.ok(stk, 'the sticker became a picture');
+  const gif = await find((m) => m.kind === 'video' && m.file?.mime === 'video/mp4' && !m.text);
+  assert.ok(gif, 'the GIF became a video');
   const old = await find((m) => m.kind === 'image' && m.text === 'старое фото');
   assert.ok(old, 'the photo replaced its mark');
   assert.equal(old.file.mime, 'image/jpeg');
@@ -357,7 +364,7 @@ test('files, music and videos are copied; a message that was only a mark gets it
   const all = await msgs();
   assert.equal(all.filter((m) => m.text === '[Файл]' && m.kind === 'text').length, 2, 'the two that cannot be fetched stay marks');
   // ... and they are not asked for again
-  const waiting = async () => (await (await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=photo,voice,file,video,audio`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json()).items;
+  const waiting = async () => (await (await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=photo,voice,file,video,audio,sticker,gif`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json()).items;
   assert.ok(await until(async () => (await waiting()).length === 0), 'nothing is waiting any more');
   assert.equal((await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=file`)).status, 403, 'the door needs the secret');
 });

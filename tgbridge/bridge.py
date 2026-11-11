@@ -105,10 +105,17 @@ class FakeMsg:
         elif kind == "audio":
             self.audio = True
             self.document = True
+        elif kind == "sticker":
+            self.sticker = True
+            self.document = True
+            self.file.mime_type = "image/webp"
+        elif kind == "gif":
+            self.gif = True
+            self.document = True
         else:
             self.document = True
 
-    async def download_media(self, file=None):
+    async def download_media(self, file=None, thumb=None):
         with open(file, "wb") as f:
             f.write(TINY[self.kind])
         return file
@@ -329,13 +336,16 @@ def private_ok(entity_id: int, entity) -> bool:
 
 
 def media_kind(msg):
-    """Which kind of file this message carries and we are willing to copy: image, voice, video, audio, file; None for the rest (stickers, GIFs, polls ...)."""
+    """Which kind of file this message carries and we are willing to copy: image, voice, video, audio, file; None for the rest (polls ...)."""
     if getattr(msg, "voice", None):
         return "voice"
     if getattr(msg, "photo", None):
         return "image"
-    if getattr(msg, "sticker", None) or getattr(msg, "gif", None):
-        return None
+    if getattr(msg, "sticker", None):
+        # a still sticker is a webp picture, a video sticker a webm, an animated one (tgs) cannot be drawn here: its preview picture is taken
+        return "video" if (getattr(getattr(msg, "file", None), "mime_type", "") or "") == "video/webm" else "image"
+    if getattr(msg, "gif", None):
+        return "video"   # a GIF in Telegram is a short silent mp4
     if getattr(msg, "video", None) or getattr(msg, "video_note", None):
         return "video" if VIDEO_ON else None
     if getattr(msg, "audio", None):
@@ -343,6 +353,11 @@ def media_kind(msg):
     if getattr(msg, "document", None):
         return "file"
     return None
+
+
+def thumb_only(msg) -> bool:
+    """An animated sticker (tgs) is not a picture a browser can show: only its preview picture is copied."""
+    return bool(getattr(msg, "sticker", None)) and (getattr(getattr(msg, "file", None), "mime_type", "") or "") == "application/x-tgsticker"
 
 
 def geo_of(msg):
@@ -377,7 +392,7 @@ async def upload_media_r(a: Acct, msg, kind: str, meta: dict) -> str:
         got = None
         try:
             try:
-                got = await msg.download_media(file=path)
+                got = await (msg.download_media(file=path, thumb=-1) if thumb_only(msg) else msg.download_media(file=path))
             except Exception as e:
                 log("media download failed:", type(e).__name__)
                 return "dl_fail"
@@ -491,7 +506,7 @@ async def post_media(a: Acct, kind: str, data, meta: dict) -> bool:
 
 # ---------------------------------------------------------------- files of messages that were copied as a mark
 def upgrade_kinds() -> str:
-    return "geo,photo,voice,file,audio" + (",video" if VIDEO_ON else "")
+    return "geo,photo,voice,file,audio,sticker,gif" + (",video" if VIDEO_ON else "")
 
 
 async def pending_media(a: Acct, limit=20):
@@ -1331,6 +1346,8 @@ TINY = {
     "voice": b"OggS\x00\x02" + b"\x00" * 40,
     "video": b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 40,
     "audio": b"ID3\x03" + b"\x00" * 40,
+    "sticker": b"RIFF\x24\x00\x00\x00WEBPVP8 " + b"\x00" * 40,
+    "gif": b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 40,
     "file": b"PK\x03\x04" + b"\x00" * 40,
 }
 
@@ -1348,7 +1365,7 @@ async def mock_media(r):
     if b.get("placeholder"):
         # the message was copied as a mark; its file can still be fetched (what the upgrade pass is for)
         a.client.tg[(int(key), b["msg"])] = FakeMsg(kind, int(b.get("size", 40)), b.get("name", "file.zip"), b.get("caption", ""))
-        label = {"image": "[Фото]", "voice": "[Голосовое сообщение]", "video": "[Видео]", "audio": "[Аудио]", "file": "[Файл]"}[kind]
+        label = {"image": "[Фото]", "voice": "[Голосовое сообщение]", "video": "[Видео]", "audio": "[Аудио]", "file": "[Файл]", "sticker": "[Стикер] 😎", "gif": "[GIF]"}[kind]
         await to_server({"owner": a.uid, "tg_chat": key, "kind": "user", "title": b.get("title", ""), "tg_msg": b["msg"], "author": b.get("author", "Кто-то"),
                          "out": False, "text": f"{label} {b.get('caption', '')}".strip(), "ts": int(time.time() * 1000), "reply_to": None})
         return web.json_response({"forwarded": True})
