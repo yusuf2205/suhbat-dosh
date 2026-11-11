@@ -399,7 +399,7 @@ async def upload_media_r(a: Acct, msg, kind: str, meta: dict) -> str:
             src = got if isinstance(got, str) and os.path.exists(got) else path
             if not os.path.getsize(src):
                 return "skip:empty"
-            params = {**meta, "name": getattr(f, "name", "") or "", "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""}
+            params = {**meta, "tg_kind": "sticker" if getattr(msg, "sticker", None) else "gif" if getattr(msg, "gif", None) else "", "name": getattr(f, "name", "") or "", "w": getattr(f, "width", None) or "", "h": getattr(f, "height", None) or "", "duration": getattr(f, "duration", None) or ""}
             res = "retry"
             for wait in (0, 3, 10):   # the server may be restarting: a few quick tries, the upgrade pass keeps trying later
                 if wait:

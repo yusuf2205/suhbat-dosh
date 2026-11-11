@@ -733,6 +733,10 @@ document.addEventListener('suhbat:phone', async (e) => {
 });
 
 /** A player with the speed under it. */
+/** A sticker or a GIF copied from Telegram (and a video sticker): shown the way it is in Telegram, playing by itself without controls. */
+const isMotion = (f) => /^(gif|sticker)[.]/.test(f.name || '') || f.mime === 'video/webm';
+const isSticker = (f) => /^sticker[.]/.test(f.name || '') || f.mime === 'video/webm' || f.mime === 'image/webp';
+
 function player(media) {
   return h('div', { class: 'abub-player' }, media, speedRow(media));
 }
@@ -753,9 +757,10 @@ function messageNode(m, ctx, prev) {
     m.forward_from ? h('div', { class: 'abub-quote' }, `Переслано от ${m.forward_from}`) : '',
     m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', ...richText(m.reply_to.text)) : '',
     m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
-    m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
+    m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: `abub-img${isSticker(m.file) ? ' abub-sticker' : ''}`, src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
     m.file && (m.kind === 'voice' || m.kind === 'audio') ? player(h('audio', { class: 'abub-audio', controls: true, preload: 'metadata', src: `/api/admin/files/${m.file.id}` })) : '',
-    m.file && m.kind === 'video' ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
+    m.file && m.kind === 'video' && isMotion(m.file) ? h('video', { class: 'abub-vid abub-motion', autoplay: true, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` }) : '',
+    m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
     m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
     m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',

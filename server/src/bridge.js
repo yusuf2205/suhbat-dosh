@@ -617,6 +617,9 @@ bridgeIn.post('/bridge/media', async (req, res) => {
       kind = type.kind;
       mime = type.mime;
       name = want === 'image' ? `photo.${mime.split('/')[1]}` : want === 'voice' ? 'voice.ogg' : 'video.mp4';
+      // a sticker or a GIF of Telegram keeps its name, so that the console can show it as what it is (it plays by itself, without controls)
+      const tgKind = String(qy.tg_kind || '');
+      if ((tgKind === 'sticker' || tgKind === 'gif') && (kind === 'image' || kind === 'video')) name = `${tgKind}.${mime.split('/')[1]}`;
     }
   } catch (e) { removeFile(fid); throw e; }
   const tgChat = String(qy.tg_chat ?? '');
