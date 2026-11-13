@@ -1811,6 +1811,7 @@ button.nbx-row { cursor: pointer; }
 /* two phones and the waves between them */
 .nbx-phones { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 8px 0 2px; }
 .nbx-phone { width: 56px; height: 100px; border-radius: 12px; border: 3px solid var(--brand); background: linear-gradient(160deg, rgba(251, 199, 0, .18), transparent 70%); box-shadow: 0 0 16px rgba(251, 199, 0, .3); }
+.nbx-phones.idle .nbx-wave { animation: none; opacity: .4; }
 .nbx-wave { color: var(--brand); display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; border: 1px solid rgba(251, 199, 0, .35); animation: nbr-pulse 1.5s ease-in-out infinite; }
 @keyframes nbr-pulse { 50% { box-shadow: 0 0 0 10px rgba(251, 199, 0, .1); opacity: .7; } }
 @media (max-width: 600px) { .modal.nbx { height: 100%; width: 100%; border-radius: 0; padding-bottom: 0; } }

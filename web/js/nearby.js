@@ -282,6 +282,7 @@ function onItem(ev) {
     live.delete(tid);
     drawLive(tid);
   }
+  if (moving && ev.dir === 'in' && view?.tab?.() === 'near' && !view.chat) view.goTo('live'); // something is coming: the radar has done its job
   if (ev.state === 'paused') view?.transfers?.();
   // a file sent from a chat leaves a line there, also when the internet comes back much later
   if (ev.dir === 'out' && ev.state === 'done' && ev.chat_id > 0 && S.me) {
@@ -320,7 +321,8 @@ window.__nearby = (ev) => {
     case 'file':
       live.delete(ev.tid);
       drawLive(ev.tid);
-      toast(t('nb.received_ok', { name: ev.name }), 5000);
+      if (view?.goTo && ['near', 'live'].includes(view.tab())) { view.goTo('got'); toast(t('nb.received_ok', { name: ev.name }), 3000); return; }
+      toast(t('nb.received_ok', { name: ev.name }), 7000, view ? null : () => openNearby('got'));
       view?.reloadChat?.();
       break;
     case 'sent': view?.reloadChat?.(); break;
@@ -567,11 +569,11 @@ export async function openNearby(startTab = 'near') {
       tick();
     },
   });
-  const onDirect = () => { if (tab === 'got') draw(); };
+  const onDirect = () => { if (tab === 'got') draw(); else if (tab === 'near' || tab === 'live') goTo('got'); };
   window.addEventListener('suhbat:direct-received', onDirect);
   screenOpen = true;
   document.body.classList.add('nb-open');
-  view = { m, chat: null };
+  view = { m, chat: null, tab: () => tab, goTo: (x) => goTo(x) };
   let onBarChange = null;
   const stopBars = onBars(() => onBarChange?.());
 
@@ -858,13 +860,18 @@ export async function openNearby(startTab = 'near') {
           h('span', { class: 'drive-text' }, h('b', null, b.title), h('small', { class: 'muted' }, t('nb.st_done'))),
           h('span', { class: 'nbx-ok' }, icon('check', 18)))));
       if (!bars.length && !finished.length) list.append(h('p', { class: 'muted nbx-empty' }, t('nb.nothing_moving_hint')));
+      done.hidden = bars.length > 0 || !finished.length;
+      phones.classList.toggle('idle', !bars.length);
     };
+    const done = h('button', { class: 'btn nbx-send', type: 'button', onclick: () => { clearFinishedBars(); sendTarget = null; goTo('near'); } }, icon('check', 20), t('nb.done_title'));
+    const phones = h('div', { class: 'nbx-phones', 'aria-hidden': 'true' }, h('i', { class: 'nbx-phone' }), h('span', { class: 'nbx-wave' }, icon('wifi', 28)), h('i', { class: 'nbx-phone' }));
     fill();
     onBarChange = fill;
     put(content,
-      h('div', { class: 'nbx-phones', 'aria-hidden': 'true' }, h('i', { class: 'nbx-phone' }), h('span', { class: 'nbx-wave' }, icon('wifi', 28)), h('i', { class: 'nbx-phone' })),
+      phones,
       h('div', { class: 'nbx-center' }, title, speed),
       list,
+      done,
       target ? h('div', { class: 'nbx-row nbx-route' }, h('span', { class: 'nbx-ico' }, icon('bolt', 20)), h('span', { class: 'drive-text' }, h('b', null, t(ROUTE[target.kind])))) : null);
   }
 
