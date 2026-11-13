@@ -1593,7 +1593,17 @@ function messageMenu(anchor, m) {
   }
   if (m.replies > 0 && typeof m.id === 'number') more.push({ label: `${t('msg.thread')} (${m.replies})`, onClick: () => openThread(m, c) });
   if (Object.keys(m.reactions || {}).length) more.push({ icon: 'smile', label: t('react.who'), onClick: () => openReactors(m) });
-  if (m.text) items.push({ icon: 'copy', label: t('msg.copy'), onClick: () => navigator.clipboard?.writeText(m.text).catch(() => {}) });
+  // "Copy" is always on the first screen and copies what the message is: the picture for a photo, the text for a text, a link for a big file
+  const copyText = () => navigator.clipboard?.writeText(m.text).then(() => toast(t('msg.copied'))).catch(() => toast(t('err.generic')));
+  const canCopyImage = m.kind === 'image' && m.file && navigator.clipboard?.write && window.ClipboardItem;
+  if (canCopyImage) {
+    items.push({ icon: 'copy', label: t('msg.copy'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
+    if (m.text) more.push({ icon: 'copy', label: t('msg.copy_text'), onClick: copyText });
+  } else if (m.text && m.kind !== 'call') {
+    items.push({ icon: 'copy', label: t('msg.copy'), onClick: copyText });
+  } else if (m.file && typeof m.id === 'number') {
+    items.push({ icon: 'copy', label: t('msg.copy_link'), onClick: () => navigator.clipboard?.writeText(new URL(m.file.url, location.origin).href).then(() => toast(t('msg.copied'))).catch(() => toast(t('err.generic'))) });
+  }
   if (m.text && m.kind === 'text') more.push({ icon: 'globe', label: t('msg.translate'), onClick: () => translateMessage(m) });
   items.push({ icon: 'forward', label: t('msg.forward'), onClick: () => openForward(m) });
   if (!isSecret(c) && typeof m.id === 'number' && !c.saved && m.kind !== 'call') {
@@ -1613,9 +1623,6 @@ function messageMenu(anchor, m) {
   }
   if (m.file) {
     items.push({ icon: 'download', label: t('msg.save'), onClick: () => { const a = h('a', { href: `${m.file.url}?dl=1`, download: m.file.name }); document.body.append(a); a.click(); a.remove(); } });
-  }
-  if (m.kind === 'image' && m.file && navigator.clipboard?.write && window.ClipboardItem) {
-    more.push({ icon: 'copy', label: t('msg.copy_image'), onClick: () => copyImage(m).catch(() => toast(t('err.generic'))) });
   }
   if (mine && typeof m.id === 'number' && c.type !== 'channel' && !c.saved && !isSecret(c) && m.kind !== 'call') more.push({ icon: 'checks', label: t('readers.title'), onClick: () => openReaders(m) });
   if (typeof m.id === 'number') {
