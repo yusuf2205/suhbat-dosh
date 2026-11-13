@@ -41,7 +41,7 @@ export function openBridge() {
       h('h4', null, t('br.safe_title')),
       h('ul', { class: 'br-list' }, ['br.safe1', 'br.safe2', 'br.safe3', 'br.safe4', 'br.safe5'].map((k) => h('li', null, t(k)))),
       h('h4', null, t('br.risk_title')),
-      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3', 'br.risk4', 'br.risk5'].map((k) => h('li', null, t(k)))),
+      h('ul', { class: 'br-list warn' }, ['br.risk1', 'br.risk2', 'br.risk3'].map((k) => h('li', null, t(k)))),
       h('label', { class: 'br-ack' }, ok, h('span', null, t('br.ack'))), go);
   }
 
