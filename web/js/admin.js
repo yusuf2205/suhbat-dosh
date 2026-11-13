@@ -1,6 +1,6 @@
 // Super-admin console (separate window). All data comes from /api/admin/*, which the server restricts to admins.
 import { h, clear, linkify } from './dom.js';
-import { speedRow } from './speed.js';
+import { SPEEDS, currentSpeed, setSpeed } from './speed.js';
 import './ripple.js';
 import { icon } from './icons.js';
 import { qrCanvas } from './qr.js';
@@ -746,7 +746,71 @@ const isMotion = (f) => /^(gif|sticker)[.]/.test(f.name || '') || f.mime === 'vi
 const isSticker = (f) => /^sticker[.]/.test(f.name || '') || f.mime === 'video/webm' || f.mime === 'image/webp';
 
 function player(media) {
-  return h('div', { class: 'abub-player' }, media, speedRow(media));
+  media.addEventListener('loadedmetadata', () => { media.playbackRate = currentSpeed(); });
+  return h('div', { class: 'abub-player' }, media);
+}
+
+/**
+ * One player for all the voice, audio and video messages of a conversation, like in Telegram: previous, play, next,
+ * who said it and when, the time, the volume, the speed. When one ends the next one in the conversation starts.
+ */
+function mediaBar(list, whoWhen) {
+  const medias = () => [...list.querySelectorAll('audio.abub-audio, video.abub-vid:not(.abub-motion)')];
+  let cur = null;
+  const prev = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Предыдущее', title: 'Предыдущее' }, '⏮');
+  const play = h('button', { class: 'apl-btn apl-play', type: 'button', 'aria-label': 'Играть', title: 'Играть / пауза' }, '▶');
+  const next = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Следующее', title: 'Следующее' }, '⏭');
+  const who = h('span', { class: 'apl-who ellipsis' });
+  const time = h('span', { class: 'apl-time' }, '00:00');
+  const vol = h('input', { class: 'apl-vol', type: 'range', min: 0, max: 1, step: 0.05, value: 1, 'aria-label': 'Громкость' });
+  const mute = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Звук', title: 'Звук' }, '🔊');
+  const spd = h('button', { class: 'apl-spd', type: 'button', title: 'Скорость' });
+  const close = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Закрыть', title: 'Закрыть' }, '✕');
+  const bar = h('div', { class: 'apl', hidden: true, role: 'region', 'aria-label': 'Плеер' }, prev, play, next, who, time, mute, vol, spd, close);
+  document.body.append(bar);
+  const mmss = (t) => { const x = Math.max(0, Math.floor(t || 0)); return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+  const paint = () => {
+    if (!cur) return;
+    play.textContent = cur.paused ? '▶' : '⏸';
+    time.textContent = mmss(cur.currentTime);
+    const all = medias();
+    const at = all.indexOf(cur);
+    prev.disabled = at <= 0;
+    next.disabled = at < 0 || at >= all.length - 1;
+    spd.textContent = `${currentSpeed()}x`;
+    mute.textContent = cur.muted || cur.volume === 0 ? '🔇' : '🔊';
+  };
+  const attach = (m) => {
+    if (cur === m) { paint(); return; }
+    if (cur && !cur.paused) cur.pause();
+    cur = m;
+    m.playbackRate = currentSpeed();
+    m.volume = Number(vol.value);
+    bar.hidden = false;
+    who.textContent = whoWhen(m);
+    paint();
+  };
+  const step = (d) => {
+    const all = medias();
+    const to = all[all.indexOf(cur) + d];
+    if (!to) return;
+    attach(to);
+    to.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    to.currentTime = 0;
+    to.play().catch(() => {});
+  };
+  list.addEventListener('play', (e) => { if (e.target.matches?.('audio, video')) attach(e.target); }, true);
+  list.addEventListener('pause', (e) => { if (e.target === cur) paint(); }, true);
+  list.addEventListener('timeupdate', (e) => { if (e.target === cur) time.textContent = mmss(cur.currentTime); }, true);
+  list.addEventListener('ended', (e) => { if (e.target === cur) step(1); }, true);
+  prev.onclick = () => (cur && cur.currentTime > 3 ? (cur.currentTime = 0) : step(-1));
+  next.onclick = () => step(1);
+  play.onclick = () => { if (!cur) return; if (cur.paused) cur.play().catch(() => {}); else cur.pause(); };
+  vol.oninput = () => { if (cur) { cur.muted = false; cur.volume = Number(vol.value); paint(); } };
+  mute.onclick = () => { if (cur) { cur.muted = !cur.muted; paint(); } };
+  spd.onclick = () => { const v = SPEEDS[(SPEEDS.indexOf(currentSpeed()) + 1) % SPEEDS.length]; setSpeed(v); paint(); };
+  close.onclick = () => { if (cur) cur.pause(); cur = null; bar.hidden = true; };
+  const watch = setInterval(() => { if (!list.isConnected) { clearInterval(watch); bar.remove(); } }, 1000);
 }
 
 /** One message as a chat bubble: the owner of the chat on the right, everybody else on the left. */
@@ -793,18 +857,30 @@ const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['me
 /** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
 function openLightbox(imgs, start) {
   let i = start;
+  const turns = new Map(); // picture -> degrees; a turned picture stays turned while the window is open
   const pic = h('img', { class: 'alb-img', alt: '' });
   const cap = h('div', { class: 'alb-cap' });
-  const show = () => { pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; };
+  const paintTurn = () => {
+    const deg = turns.get(i) || 0;
+    const side = deg % 180 !== 0;
+    pic.style.transform = deg ? `rotate(${deg}deg)` : '';
+    // a picture lying on its side must still fit the screen
+    pic.style.maxWidth = side ? '86vh' : '';
+    pic.style.maxHeight = side ? '92vw' : '';
+  };
+  const turn = (d) => { turns.set(i, (((turns.get(i) || 0) + d) % 360 + 360) % 360); paintTurn(); };
+  const show = () => { pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; paintTurn(); };
   const close = () => { root.remove(); document.removeEventListener('keydown', key, true); };
   const go = (d) => { i = (i + d + imgs.length) % imgs.length; show(); };
   const key = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); close(); } else if (e.key === 'ArrowRight') go(1); else if (e.key === 'ArrowLeft') go(-1);
+    else if (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К') turn(e.shiftKey ? -90 : 90);
   };
   const root = h('div', { class: 'alb', role: 'dialog', 'aria-modal': 'true', onclick: (e) => { if (e.target === root) close(); } },
     h('button', { class: 'alb-btn alb-prev', type: 'button', 'aria-label': 'Назад', onclick: () => go(-1) }, '‹'),
     pic,
     h('button', { class: 'alb-btn alb-next', type: 'button', 'aria-label': 'Вперёд', onclick: () => go(1) }, '›'),
+    h('button', { class: 'alb-btn alb-turn', type: 'button', 'aria-label': 'Повернуть на 90°', title: 'Повернуть на 90° (R)', onclick: () => turn(90) }, '⟳'),
     h('a', { class: 'alb-btn alb-open', href: '#', target: '_blank', rel: 'noopener', onclick: (e) => { e.currentTarget.href = imgs[i].src; } }, 'Открыть отдельно'),
     h('button', { class: 'alb-btn alb-close', type: 'button', 'aria-label': 'Закрыть', onclick: close }, '✕'),
     cap);
@@ -929,6 +1005,16 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (more && !loading && moreBtn.getBoundingClientRect().bottom > -200 && moreBtn.getBoundingClientRect().top < innerHeight) loadEarlier();
   };
   window.addEventListener('scroll', onScroll, { passive: true });
+  const dayWord = (ts) => {
+    const d = new Date(ts);
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const n = Math.round((t0 - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+    return n === 0 ? 'сегодня' : n === 1 ? 'вчера' : fmtShort(ts).split(',')[0];
+  };
+  mediaBar(list, (m) => {
+    const msg = all.find((x) => x.id === Number(m.closest('.abub')?.dataset.id));
+    return msg ? `${authorOf(msg)} ${dayWord(msg.created_at)} в ${clock(msg.created_at)}` : '';
+  });
   // a picture opens large, with the arrows, instead of a new tab
   list.addEventListener('click', (e) => {
     const img = e.target.closest?.('img.abub-img');

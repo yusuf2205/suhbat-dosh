@@ -409,3 +409,20 @@ table.t.health td { overflow-wrap: anywhere; }
 .afilters > summary { list-style: none; }
 .afilters-body { display: grid; gap: 8px; margin-top: 8px; }
 .achat-tools .afilters[open] { flex-basis: 100%; order: 5; }
+
+.alb-turn { right: 70px; top: 14px; }
+.alb-img { transition: transform .2s; }
+/* the player of voice, audio and video messages */
+.apl { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--ink, #17171a); color: #fff; box-shadow: 0 -6px 18px rgba(0, 0, 0, .25); }
+.apl[hidden] { display: none; }
+.apl-btn { border: 0; background: transparent; color: #8ab4f8; font-size: 1.15rem; cursor: pointer; min-width: 32px; height: 36px; border-radius: 10px; }
+.apl-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
+.apl-btn:disabled { opacity: .35; cursor: default; }
+.apl-play { color: #4da3ff; font-size: 1.4rem; }
+.apl-who { flex: 1; min-width: 0; }
+.apl-time { color: rgba(255, 255, 255, .6); font-variant-numeric: tabular-nums; }
+.apl-vol { width: 84px; accent-color: #4da3ff; }
+.apl-spd { border: 0; background: transparent; color: #8ab4f8; font: inherit; font-weight: 700; border-bottom: 2px dashed currentColor; cursor: pointer; padding: 2px 4px; }
+@media (max-width: 640px) { .apl-vol, .apl-time { display: none; } }
+.aconv { padding-bottom: 64px; }
+.abub-player .spd { display: none; }

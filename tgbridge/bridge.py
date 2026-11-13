@@ -5,7 +5,7 @@ Safety rules built into this service:
   * Telegram sessions are stored encrypted (AES-256-GCM, key TGBRIDGE_KEY from the environment, never in the database);
   * personal (one-to-one) chats are mirrored by default; groups and channels only when chosen;
   * a chat is read-only unless two-way was switched on for it;
-  * Telegram's own service chat (login codes), bots and Saved Messages are never mirrored;
+  * Telegram's own service chat (login codes) and bots are never mirrored (Saved Messages are);
   * message texts are never written to the log;
   * /logout ends the session on Telegram's side too and deletes every file kept for that account.
 
@@ -174,6 +174,11 @@ def telethon_client(session_str=""):
     return TelegramClient(StringSession(session_str), API_ID, API_HASH, device_model="Suhbat-dosh bridge", app_version="1.0", lang_code="ru")
 
 
+def title_of(u):
+    """The name of a chat: Telegram's Saved Messages are the person's own chat with themselves."""
+    return "Избранное" if getattr(u, "is_self", False) else display_name(u)
+
+
 def display_name(u):
     if u is None:
         return ""
@@ -329,10 +334,10 @@ async def retry_loop():
 
 
 def private_ok(entity_id: int, entity) -> bool:
-    """One-to-one chats with real people: not bots, not Telegram's own service chat (it carries login codes)."""
+    """One-to-one chats, Saved Messages included: not bots, not Telegram's own service chat (it carries login codes)."""
     if entity_id == TELEGRAM_SERVICE:
         return False
-    return not getattr(entity, "bot", False) and not getattr(entity, "is_self", False)
+    return not getattr(entity, "bot", False)
 
 
 def media_kind(msg):
@@ -452,7 +457,7 @@ async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False
         if pr:
             await to_server({"owner": a.uid, "presence": True, "tg_chat": key, **pr})
         await to_server({
-            "owner": a.uid, "tg_chat": key, "kind": kind, "profile": True, "title": display_name(entity) or "",
+            "owner": a.uid, "tg_chat": key, "kind": kind, "profile": True, "title": title_of(entity) or "",
             "username": getattr(entity, "username", "") or "", "phone": getattr(entity, "phone", "") or "", "photo_id": photo_id,
         })
         if photo_id and a.chats.get(key, {}).get("photo") != photo_id:
@@ -738,7 +743,7 @@ def attach_handlers(a: Acct):
             topic = await topic_fields(a, key, event.message)
             async with chat_lock(a.uid, key):
               await to_server({
-                "owner": a.uid, "tg_chat": key, "kind": kind, "title": display_name(chat) if chat is not None else "",
+                "owner": a.uid, "tg_chat": key, "kind": kind, "title": title_of(chat) if chat is not None else "",
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
                 "reply_to": reply_id(event.message), "geo": geo_of(event.message), **topic,
@@ -747,7 +752,7 @@ def attach_handlers(a: Acct):
                 # the message is there at once as a mark ("[Фото]", "[Видео]"); the file follows in the background and replaces it, so a big
                 # film neither delays its own message nor holds back the ones after it
                 fill = asyncio.create_task(fill_media(a, event.message, mk, {
-                    "tg_chat": key, "chat_kind": kind, "title": display_name(chat) if chat is not None else "", "tg_msg": event.message.id,
+                    "tg_chat": key, "chat_kind": kind, "title": title_of(chat) if chat is not None else "", "tg_msg": event.message.id,
                     "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
                     "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True, **topic,
                 }))
@@ -830,7 +835,7 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
         topic = await topic_fields(a, str(d.id), m)
         mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
         if mk and await upload_media(a, m, mk, {
-            "tg_chat": str(d.id), "chat_kind": kind, "title": d.name or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+            "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
             "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
         }):
             continue

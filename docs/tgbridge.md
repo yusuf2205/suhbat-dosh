@@ -9,7 +9,7 @@ logs in to each person's **own** Telegram account as one more device (Telethon, 
   The administrator can forbid a person or remove what they linked (admin panel → *Доступ и рассылка* → *Мост с Телеграмом*): "Запретить" ends that
   person's session at once and keeps the copies; "Удалить" ends it and deletes all the mirrored chats.
 * **What is copied:** every personal (one-to-one) chat, **by default**, including the recent history (up to 150 messages per chat, once).
-  Groups and channels only when the owner picks them. Never copied: Telegram's service chat (it carries login codes), bots, Saved Messages,
+  Groups and channels only when the owner picks them. Never copied: Telegram's service chat (it carries login codes), bots,
   secret chats (Telegram does not expose them to this kind of client).
 * **Personal chats are shown to their owner and can be answered from here** (text; it goes to Telegram from the owner's account).
   An ordinary person cannot delete, clear, leave or edit them, and cannot stop the copying: only the administrator can
