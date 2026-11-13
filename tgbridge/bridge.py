@@ -161,6 +161,9 @@ class MockClient:
         self.last_file = {"chat": chat_id, "kind": kind, "name": name, "size": len(data), "caption": caption}
         return self.n
 
+    async def delete(self, chat_id, ids):
+        self.deleted = getattr(self, "deleted", []) + [[str(chat_id), list(ids)]]
+
     async def log_out(self):
         self.authorized = False
 
@@ -1269,6 +1272,27 @@ async def send_file(r):
     return web.json_response({"tg_msg": mid})
 
 
+async def delete_back(r):
+    """Deleted here → deleted in Telegram too, for everybody in the chat (the person decided so; the server keeps its own record of what it was)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    body = await r.json()
+    chat = str(body.get("chat"))
+    ids = [int(i) for i in (body.get("ids") or []) if str(i).lstrip("-").isdigit()][:100]
+    if not re.fullmatch(r"-?\d{1,20}", chat) or not ids:
+        return web.json_response({"error": "invalid"}, status=400)
+    try:
+        if MOCK:
+            await a.client.delete(int(chat), ids)
+        else:
+            await a.client.delete_messages(int(chat), ids, revoke=True)
+    except Exception as e:
+        log("delete:", type(e).__name__)
+        return web.json_response({"error": "telegram_refused"}, status=502)
+    return web.json_response({"ok": True})
+
+
 async def read_back(r):
     """The chat was read here: mark it read in Telegram too (only for chats that may be answered from here)."""
     a = who(r)
@@ -1293,6 +1317,8 @@ async def mock_event(r):
     b = await r.json()
     if b.get("type") == "acks":
         return web.json_response({"acks": getattr(a, "read_acks", [])})
+    if b.get("type") == "deletes":
+        return web.json_response({"deleted": getattr(a.client, "deleted", [])})
     if not a.me:
         return web.json_response({"forwarded": False})
     key = str(b.get("chat", ""))
@@ -1387,7 +1413,7 @@ def app():
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/read", read_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
+        web.post("/read", read_back), web.post("/delete", delete_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
     ])
     return a
 

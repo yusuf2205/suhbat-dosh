@@ -784,7 +784,18 @@ export function bridgeRead(chatId, upToLocalId) {
 }
 
 /** In a mirrored chat an ordinary person cannot delete, clear, leave or edit: the copy is an archive kept in step with Telegram. */
-export const bridgeLocked = (chatId, user) => !user.is_admin && !!q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ?', chatId);
+export const bridgeLocked = (chatId, user) => !user.is_admin && !!q.get("SELECT 1 AS x FROM tg_chats t JOIN chats c ON c.id = t.chat_id WHERE t.chat_id = ? AND c.imported_from = 'tgbridge'", chatId); // the own Saved chat is not a copy to protect
+
+/** The person whose Telegram it is may delete messages in the copy: the deletion goes to Telegram too. */
+export const bridgeMayDelete = (chatId, user) => !bridgeLocked(chatId, user) || !!q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ? AND user_id = ?', chatId, user.id);
+
+/** A message deleted here is deleted in Telegram as well (for everybody in that chat). It stays in the audit log of the administrator. */
+export function bridgeDelete(m) {
+  const row = q.get('SELECT * FROM tg_chats WHERE chat_id = ?', m.chat_id);
+  const tgId = tgNum(m.import_key || '');
+  if (!row || !tgId) return;
+  call('POST', '/delete', row.user_id, { chat: row.tg_chat, ids: [tgId] }).catch((e) => log('warn', 'bridge delete failed', { err: e.code || e.message }));
+}
 
 /** After a restart (and every half hour) tell the bridge the rules again, so both sides never drift apart. */
 export function startBridge() {

@@ -42,7 +42,7 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { personal } from './personal.js';
-import { bridge, bridgeConfigured, bridgeIn, bridgeLocked, bridgeOut, bridgeTwoWay } from './bridge.js';
+import { bridge, bridgeConfigured, bridgeDelete, bridgeIn, bridgeLocked, bridgeMayDelete, bridgeOut, bridgeTwoWay } from './bridge.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -1812,7 +1812,7 @@ api.delete('/messages/:id', (req, res) => {
   const m = getMessage(int(req.params.id, 'id'));
   if (!m) throw new HttpError(404, 'not_found');
   const me = requireMember(m.chat_id, req.user.id);
-  if (bridgeLocked(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_delete');
+  if (!bridgeMayDelete(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_delete');
   if (m.sender_id !== req.user.id) {
     const chat = q.get('SELECT type FROM chats WHERE id = ?', m.chat_id);
     const senderRole = membership(m.chat_id, m.sender_id)?.role ?? 'member';
@@ -1828,6 +1828,7 @@ api.delete('/messages/:id', (req, res) => {
   }
   q.run('UPDATE chats SET pinned_message_id = NULL WHERE pinned_message_id = ?', m.id);
   q.run('DELETE FROM messages WHERE id = ?', m.id);
+  bridgeDelete(m);
   if (m.file_id && !q.get('SELECT 1 AS x FROM messages WHERE file_id = ?', m.file_id)
     && !q.get('SELECT 1 AS x FROM stickers WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM sticker_set_items WHERE file_id = ?', m.file_id) && !q.get('SELECT 1 AS x FROM anim_files WHERE file_id = ?', m.file_id)) {
     q.run('DELETE FROM files WHERE id = ?', m.file_id);

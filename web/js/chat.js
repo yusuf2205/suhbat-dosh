@@ -1646,10 +1646,10 @@ function messageMenu(anchor, m) {
       onClick: () => api('POST', `/api/chats/${c.id}/pin`, pinned ? { message_id: m.id, unpin: true } : { message_id: m.id }).catch((e) => toast(errText(e.code))),
     });
   }
-  if ((mine || (c.type !== 'direct' && adminLike)) && !lockedChat(c)) {
+  if (mine || (c.type !== 'direct' && adminLike)) {
     items.push({
       icon: 'trash', label: t('msg.delete'), danger: true, onClick: async () => {
-        if (await confirmDialog(t('msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true })) {
+        if (await confirmDialog(t(c.tg_kind ? 'msg.delete_confirm_tg' : 'msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true })) {
           api('DELETE', `/api/messages/${m.id}`).catch((e) => toast(errText(e.code)));
         }
       },
@@ -1781,13 +1781,13 @@ function renderSelBar() {
   const c = activeChat();
   const msgs = selectedMessages();
   const adminLike = c.my_role === 'owner' || c.my_role === 'admin';
-  const canDelete = !lockedChat(c) && msgs.length > 0 && msgs.every((m) => m.sender_id === S.me.id || (c.type !== 'direct' && adminLike));
+  const canDelete = msgs.length > 0 && msgs.every((m) => m.sender_id === S.me.id || (c.type !== 'direct' && adminLike));
   view.selbar = h('div', { class: 'selbar' },
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.cancel'), onclick: exitSelect }, icon('close', 22)),
     h('b', { class: 'grow' }, t('sel.count', { n: selected.size })),
     h('button', { class: 'btn secondary', type: 'button', disabled: !msgs.length, onclick: () => { openForward(msgs); exitSelect(); } }, t('msg.forward')),
     h('button', { class: 'btn danger', type: 'button', disabled: !canDelete, onclick: async () => {
-      if (!(await confirmDialog(t('sel.delete_confirm', { n: msgs.length }), { okLabel: t('msg.delete'), danger: true }))) return;
+      if (!(await confirmDialog(t(c.tg_kind ? 'sel.delete_confirm_tg' : 'sel.delete_confirm', { n: msgs.length }), { okLabel: t('msg.delete'), danger: true }))) return;
       for (const m of msgs) await api('DELETE', `/api/messages/${m.id}`).catch(() => {});
       exitSelect();
     } }, t('msg.delete')));

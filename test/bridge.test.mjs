@@ -153,7 +153,7 @@ test('personal chats are mirrored by default and quietly, history comes along, g
   assert.equal((await call(admin.cookie, 'PUT', '/api/bridge/settings', { keep_days: 1 })).status, 404);
 });
 
-test('an ordinary person sees and answers the personal chats but cannot delete them; the administrator changes that part', { skip: !havePy }, async () => {
+test('an ordinary person sees and answers the personal chats and deletes single messages, but cannot clear, leave or edit them; the administrator changes the rest', { skip: !havePy }, async () => {
   await link(friend);
   const mine = await until(async () => { const r = (await call(friend.cookie, 'GET', '/api/bridge')).data.chats; return r.length >= 2 ? r : null; });
   assert.ok(mine, 'the person sees their personal chats');
@@ -171,12 +171,13 @@ test('an ordinary person sees and answers the personal chats but cannot delete t
   assert.equal(sent.status, 201);
   // but nothing can be deleted, cleared, edited or left by the person
   const target = msgs.find((m) => m.text === 'Привет другу');
-  assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${sent.data.message.id}`)).status, 403);
-  assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${target.id}`)).status, 403);
   assert.equal((await call(friend.cookie, 'PATCH', `/api/messages/${sent.data.message.id}`, { text: 'правка' })).status, 403);
   assert.equal((await call(friend.cookie, 'POST', `/api/chats/${fchat.chat_id}/clear`)).status, 403);
   assert.equal((await call(friend.cookie, 'POST', `/api/chats/${fchat.chat_id}/hide`)).status, 403);
   assert.equal((await call(friend.cookie, 'DELETE', `/api/chats/${fchat.chat_id}/members/${friend.user.id}`)).status, 403);
+  // single messages can be deleted by the person whose Telegram it is: the deletion goes to Telegram too
+  assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${sent.data.message.id}`)).status, 200);
+  assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${target.id}`)).status, 200);
   assert.equal((await call(friend.cookie, 'GET', `/api/chats/${fchat.chat_id}`)).status, 200, 'the chat is still there');
   // nor can the person stop the copying; only the administrator changes that
   assert.equal((await call(friend.cookie, 'PUT', '/api/bridge/chats', { auto_private: false, chats: [] })).status, 403);
@@ -495,4 +496,18 @@ test('Telegram Saved Messages land in the own "Избранное" of the person
   assert.deepEqual(texts, ['заметка из Телеграма', 'вторая']);
   // the same chat is the one the app makes for itself
   assert.equal((await call(u.cookie, 'POST', '/api/chats/saved')).data.chat.id, saved.id);
+});
+
+test('a message deleted here is deleted in Telegram too: in a copy of a chat and in Saved Messages', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002300', 'Удаляю');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', ...body }) }).then((r) => r.json());
+  const deletes = () => fetch(`http://127.0.0.1:${BPORT}/mock/event?u=${u.user.id}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'deletes' }) }).then((r) => r.json()).then((j) => j.deleted);
+  const a = await tgPost({ tg_chat: '6001', title: 'Собеседник', author: 'Собеседник', tg_msg: 11, text: 'его сообщение' });
+  const s = await tgPost({ tg_chat: '6002', title: 'Избранное', author: 'Я', out: true, tg_msg: 21, text: 'моя заметка' });
+  assert.ok(a.id && s.id);
+  assert.equal((await call(u.cookie, 'DELETE', `/api/messages/${a.id}`)).status, 200, 'the owner of the account may delete in the copy');
+  assert.equal((await call(u.cookie, 'DELETE', `/api/messages/${s.id}`)).status, 200);
+  const got = await until(async () => { const d = await deletes(); return d?.length >= 2 ? d : null; });
+  assert.deepEqual(got, [['6001', [11]], ['6002', [21]]], 'both deletions reached Telegram');
 });
