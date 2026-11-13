@@ -276,7 +276,7 @@ function onItem(ev) {
   const tid = ev.tid;
   const moving = ['pending', 'offered', 'active', 'verifying'].includes(ev.state);
   if (moving) {
-    live.set(tid, { ...(live.get(tid) || { done: ev.done, bps: 0 }), name: ev.name, size: ev.size, state: ev.state });
+    live.set(tid, { ...(live.get(tid) || { done: ev.done, bps: 0 }), name: ev.name, size: ev.size, state: ev.state, id: ev.id, mime: ev.mime === 'null' ? '' : ev.mime, dir: ev.dir });
     drawLive(tid);
   } else if (live.has(tid)) {
     live.delete(tid);
@@ -321,7 +321,7 @@ window.__nearby = (ev) => {
     case 'file':
       live.delete(ev.tid);
       drawLive(ev.tid);
-      if (view?.goTo && ['near', 'live'].includes(view.tab())) { view.goTo('got'); toast(t('nb.received_ok', { name: ev.name }), 3000); return; }
+      if (view?.goTo && (view.tab() === 'near' || (view.tab() === 'live' && !view.watching?.()))) { view.goTo('got'); toast(t('nb.received_ok', { name: ev.name }), 3000); return; }
       toast(t('nb.received_ok', { name: ev.name }), 7000, view ? null : () => openNearby('got'));
       view?.reloadChat?.();
       break;
@@ -588,6 +588,7 @@ export async function openNearby(startTab = 'near') {
     view.reloadChat = null;
     view.roomChanged = null;
     view.onPicked = null;
+    view.watching = null;
     view.lanStop?.();
     view.lanStop = null;
     onBarChange = null;
@@ -860,9 +861,37 @@ export async function openNearby(startTab = 'near') {
           h('span', { class: 'drive-text' }, h('b', null, b.title), h('small', { class: 'muted' }, t('nb.st_done'))),
           h('span', { class: 'nbx-ok' }, icon('check', 18)))));
       if (!bars.length && !finished.length) list.append(h('p', { class: 'muted nbx-empty' }, t('nb.nothing_moving_hint')));
+      syncPreviews();
       done.hidden = bars.length > 0 || !finished.length;
       phones.classList.toggle('idle', !bars.length);
     };
+    const pv = h('div', { class: 'nbx-previews' });
+    const pvEls = new Map(); // transfer id -> the element that shows what has arrived so far
+    view.watching = () => pvEls.size > 0;
+    const syncPreviews = () => {
+      const want = new Map([...live].filter(([, v]) => v.dir === 'in' && v.id && (isImage(v.mime) || isVideo(v.mime) || isAudio(v.mime))));
+      for (const [tid, v] of want) {
+        if (pvEls.has(tid)) continue;
+        const url = `/__nb/item/${v.id}`;
+        const el = isImage(v.mime) ? h('img', { class: 'nb-thumb', src: url, alt: v.name, 'data-url': url })
+          : isVideo(v.mime) ? h('video', { class: 'nb-thumb', src: url, controls: true, preload: 'auto', playsInline: true })
+            : h('audio', { src: url, controls: true });
+        el.addEventListener('error', () => { el.hidden = true; }); // an older app cannot show a file that is still arriving
+        el.addEventListener('load', () => { el.hidden = false; });
+        pvEls.set(tid, el);
+        pv.append(el);
+      }
+    };
+    // a picture shows the part that has come: it is asked for again while the rest arrives
+    const refresher = setInterval(() => {
+      if (!pv.isConnected) { clearInterval(refresher); return; }
+      for (const el of pvEls.values()) {
+        if (el.tagName !== 'IMG') continue;
+        const next = new Image();
+        next.onload = () => { if (el.isConnected) el.src = next.src; };
+        next.src = `${el.dataset.url}?p=${Date.now()}`;
+      }
+    }, 2000);
     const done = h('button', { class: 'btn nbx-send', type: 'button', onclick: () => { clearFinishedBars(); sendTarget = null; goTo('near'); } }, icon('check', 20), t('nb.done_title'));
     const phones = h('div', { class: 'nbx-phones', 'aria-hidden': 'true' }, h('i', { class: 'nbx-phone' }), h('span', { class: 'nbx-wave' }, icon('wifi', 28)), h('i', { class: 'nbx-phone' }));
     fill();
@@ -870,8 +899,10 @@ export async function openNearby(startTab = 'near') {
     put(content,
       phones,
       h('div', { class: 'nbx-center' }, title, speed),
+      pv,
       list,
       done,
+      h('button', { class: 'btn secondary nbx-send', type: 'button', onclick: () => goTo('got') }, icon('download', 20), t('nb.tab_got')),
       target ? h('div', { class: 'nbx-row nbx-route' }, h('span', { class: 'nbx-ico' }, icon('bolt', 20)), h('span', { class: 'drive-text' }, h('b', null, t(ROUTE[target.kind])))) : null);
   }
 

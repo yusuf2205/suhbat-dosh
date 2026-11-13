@@ -1141,7 +1141,16 @@ final class NearbyBridge {
             if ("item".equals(seg.get(1))) {
                 JSONObject row = store.byId(n);
                 File f = fileOf(row);
-                if (f == null) return notFound();
+                if (f == null) {
+                    // still arriving: what has come so far can be watched, the rest is waited for
+                    String tid = row == null ? "" : row.optString("tid");
+                    File part = new File(partsDir(), tid);
+                    long total = row == null ? 0 : row.optLong("size");
+                    if (tid.matches("[0-9a-fA-F-]{36}") && "in".equals(row.optString("dir")) && total > 0 && part.isFile()) {
+                        return ranged(new Growing(part, total, tid), total, mimeOf(row, new File(row.optString("name", "file"))), headers);
+                    }
+                    return notFound();
+                }
                 return ranged(new FileInputStream(f), f.length(), mimeOf(row, f), headers);
             }
             if ("shared".equals(seg.get(1)) && n >= 0 && n < shared.size()) {
@@ -1184,6 +1193,56 @@ final class NearbyBridge {
         }
         if (size > 0) h.put("Content-Length", String.valueOf(size));
         return new WebResourceResponse(mime, null, 200, "OK", h, in);
+    }
+
+    /** A file that is still being written: reads wait for the bytes to arrive, seeking is free. Ends when the file is whole, the transfer is lost, or nothing moves for a minute. */
+    private final class Growing extends InputStream {
+        private final java.io.RandomAccessFile raf;
+        private final long total;
+        private final String tid;
+        private long pos = 0;
+
+        Growing(File part, long total, String tid) throws IOException {
+            this.raf = new java.io.RandomAccessFile(part, "r");
+            this.total = total;
+            this.tid = tid;
+        }
+
+        /** How many bytes can be read at the current position, waiting while the file grows; 0 when it never will. */
+        private long ready() throws IOException {
+            long idle = 0;
+            while (pos < total) {
+                long have = raf.length();
+                if (have > pos) return have - pos;
+                JSONObject row = store.byTid(tid);
+                String st = row == null ? "failed" : row.optString("state");
+                if ("failed".equals(st) || idle > 60_000) return 0;
+                try { Thread.sleep(150); } catch (InterruptedException e) { return 0; }
+                idle += 150;
+            }
+            return 0;
+        }
+
+        @Override public int read() throws IOException {
+            if (ready() <= 0) return -1;
+            raf.seek(pos);
+            int b = raf.read();
+            if (b >= 0) pos++;
+            return b;
+        }
+
+        @Override public int read(@NonNull byte[] b, int off, int len) throws IOException {
+            long n = ready();
+            if (n <= 0) return -1;
+            raf.seek(pos);
+            int got = raf.read(b, off, (int) Math.min(len, n));
+            if (got > 0) pos += got;
+            return got;
+        }
+
+        @Override public long skip(long n) { long k = Math.max(0, Math.min(n, total - pos)); pos += k; return k; }
+
+        @Override public void close() throws IOException { raf.close(); }
     }
 
     private static final class Limited extends java.io.FilterInputStream {
