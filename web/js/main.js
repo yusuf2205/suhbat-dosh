@@ -58,6 +58,7 @@ function inDarkHours() {
 function applyTheme() {
   const dark = S.prefs.theme === 'dark' || (S.prefs.theme === 'auto' && mq.matches) || (S.prefs.theme === 'schedule' && inDarkHours());
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  if (S.prefs.palette && S.prefs.palette !== 'gold') document.documentElement.dataset.palette = S.prefs.palette; else delete document.documentElement.dataset.palette;
   document.documentElement.style.setProperty('--text-scale', String(S.prefs.textScale || 1));
   // compact interface: on small screens (a phone of 320x480 points and the like) or when switched on; the real screen size is used, so the keyboard does not toggle it
   const small = Math.min(screen.width, screen.height) <= 360 && Math.max(screen.width, screen.height) <= 700;

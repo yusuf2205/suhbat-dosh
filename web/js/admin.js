@@ -767,7 +767,6 @@ function mediaBar(list, whoWhen) {
   const spd = h('button', { class: 'apl-spd', type: 'button', title: 'Скорость' });
   const close = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Закрыть', title: 'Закрыть' }, '✕');
   const bar = h('div', { class: 'apl', hidden: true, role: 'region', 'aria-label': 'Плеер' }, prev, play, next, who, time, mute, vol, spd, close);
-  document.body.append(bar);
   const mmss = (t) => { const x = Math.max(0, Math.floor(t || 0)); return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
   const paint = () => {
     if (!cur) return;
@@ -811,6 +810,7 @@ function mediaBar(list, whoWhen) {
   spd.onclick = () => { const v = SPEEDS[(SPEEDS.indexOf(currentSpeed()) + 1) % SPEEDS.length]; setSpeed(v); paint(); };
   close.onclick = () => { if (cur) cur.pause(); cur = null; bar.hidden = true; };
   const watch = setInterval(() => { if (!list.isConnected) { clearInterval(watch); bar.remove(); } }, 1000);
+  return bar;
 }
 
 /** One message as a chat bubble: the owner of the chat on the right, everybody else on the left. */
@@ -1011,7 +1011,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const n = Math.round((t0 - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
     return n === 0 ? 'сегодня' : n === 1 ? 'вчера' : fmtShort(ts).split(',')[0];
   };
-  mediaBar(list, (m) => {
+  const playerBar = mediaBar(list, (m) => {
     const msg = all.find((x) => x.id === Number(m.closest('.abub')?.dataset.id));
     return msg ? `${authorOf(msg)} ${dayWord(msg.created_at)} в ${clock(msg.created_at)}` : '';
   });
@@ -1194,6 +1194,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const side = document.querySelector('.adm-side');
     const onTop = side && getComputedStyle(side).position === 'sticky' && side.getBoundingClientRect().width > innerWidth * 0.8;
     whoBar.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) : 0}px`);
+    whoBar.parentElement?.style.setProperty('--who-h', `${Math.ceil(whoBar.getBoundingClientRect().height)}px`);
   };
   window.addEventListener('resize', placeBar);
   paintHeading();
@@ -1206,7 +1207,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, whoBar, heading, tools, moreBtn, list),
+    h('div', { class: 'panel' }, whoBar, playerBar, heading, tools, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),

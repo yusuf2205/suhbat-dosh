@@ -619,6 +619,12 @@ export function openSettings() {
     onclick: () => { S.prefs.theme = key; savePrefs(); fire('theme'); draw(); },
   }, h('span', { class: 'tt-prev' }, h('i'), h('i')), h('span', { class: 'tt-name' }, label));
 
+  const PALETTES = {"gold":"#fbc700","ocean":"#2f6bff","violet":"#5b44f2","forest":"#1f9d55","rose":"#e11d74","graphite":"#3f3f46"};
+  const paletteTile = (key) => h('button', {
+    class: `pal-tile${(S.prefs.palette || 'gold') === key ? ' on' : ''}`, type: 'button', 'aria-pressed': String((S.prefs.palette || 'gold') === key),
+    onclick: () => { S.prefs.palette = key; savePrefs(); fire('theme'); draw(); },
+  }, h('span', { class: 'pal-dot', style: { background: PALETTES[key] } }), h('span', null, t(`st.pal_${key}`)));
+
   const timeInput = (key, def) => {
     const input = h('input', { class: 'input', type: 'time', value: S.prefs[key] || def, style: { width: 'auto' } });
     input.addEventListener('change', () => { S.prefs[key] = input.value || def; savePrefs(); fire('theme'); });
@@ -639,6 +645,8 @@ export function openSettings() {
           ...(S.prefs.theme === 'schedule' ? [group(h('div', { class: 'sfield' }, h('div', { class: 'row between' },
             h('label', null, t('st.theme_from'), ' ', timeInput('themeFrom', '21:00')),
             h('label', null, t('st.theme_to'), ' ', timeInput('themeTo', '07:00')))))] : []),
+          heading(t('st.palette')),
+          h('div', { class: 'pal-tiles' }, Object.keys(PALETTES).map(paletteTile)),
           heading(t('settings.text_size')),
           group(h('div', { class: 'sfield' }, h('div', { class: 'row between' }, h('span', null, t('settings.text_size')), val), size)),
           heading(t('guard.title')),

@@ -295,3 +295,67 @@ mark { background: color-mix(in srgb, var(--yel, #f6c90e) 55%, transparent); col
 }
 html.compact-ui .app .bottomnav button[aria-current='true'] { width: 50px; flex: 0 0 50px; padding: 0; gap: 0; }
 html.compact-ui .app .bottomnav button[aria-current='true'] .nb-label { display: none; }
+
+/* ===== colour themes: the accent of the whole app, on top of light or dark (chosen in Settings → Chats) ===== */
+:root[data-palette='ocean'] {
+  --brand: #2f6bff; --brand-2: #2f6bff; --brand-ink: #ffffff; --brand-text: #1d4ed8; --brand-soft: #e4edff;
+  --bg: #eef2f8; --surface-2: #f4f7fc; --line: #d9e2f2; --bubble-out: #dbe8ff; --g: linear-gradient(135deg, #2f6bff, #2f6bff);
+  --yel: #2f6bff; --yel-2: #2f6bff;
+}
+:root[data-theme='dark'][data-palette='ocean'] {
+  --brand: #5b8cff; --brand-2: #5b8cff; --brand-ink: #0b1220; --brand-text: #9db9ff; --brand-soft: #1b2a52;
+  --bg: #0c1220; --surface-2: #19233b; --line: #25324f; --bubble-out: #b4cdff; --g: linear-gradient(135deg, #5b8cff, #5b8cff);
+  --yel: #5b8cff; --yel-2: #5b8cff;
+  --surface: #131b2e;
+}
+:root[data-palette='violet'] {
+  --brand: #5b44f2; --brand-2: #5b44f2; --brand-ink: #ffffff; --brand-text: #4b35d6; --brand-soft: #ece9ff;
+  --bg: #f3f1fd; --surface-2: #f7f5ff; --line: #e2ddf8; --bubble-out: #e3deff; --g: linear-gradient(135deg, #5b44f2, #5b44f2);
+  --yel: #5b44f2; --yel-2: #5b44f2;
+}
+:root[data-theme='dark'][data-palette='violet'] {
+  --brand: #8d7bff; --brand-2: #8d7bff; --brand-ink: #14102e; --brand-text: #bcb0ff; --brand-soft: #2a2352;
+  --bg: #0f0d1d; --surface-2: #1e1a35; --line: #2c2748; --bubble-out: #cfc6ff; --g: linear-gradient(135deg, #8d7bff, #8d7bff);
+  --yel: #8d7bff; --yel-2: #8d7bff;
+  --surface: #171428;
+}
+:root[data-palette='forest'] {
+  --brand: #1f9d55; --brand-2: #1f9d55; --brand-ink: #ffffff; --brand-text: #15803d; --brand-soft: #dcf5e6;
+  --bg: #eef6f0; --surface-2: #f4faf6; --line: #d5e6da; --bubble-out: #d4f2de; --g: linear-gradient(135deg, #1f9d55, #1f9d55);
+  --yel: #1f9d55; --yel-2: #1f9d55;
+}
+:root[data-theme='dark'][data-palette='forest'] {
+  --brand: #4ade80; --brand-2: #4ade80; --brand-ink: #05210f; --brand-text: #86efac; --brand-soft: #12361f;
+  --bg: #0a120d; --surface-2: #17241c; --line: #223329; --bubble-out: #a8ecc3; --g: linear-gradient(135deg, #4ade80, #4ade80);
+  --yel: #4ade80; --yel-2: #4ade80;
+  --surface: #111b15;
+}
+:root[data-palette='rose'] {
+  --brand: #e11d74; --brand-2: #e11d74; --brand-ink: #ffffff; --brand-text: #be185d; --brand-soft: #fde4ef;
+  --bg: #fdf1f6; --surface-2: #fff6fa; --line: #f6d5e3; --bubble-out: #fbd5e5; --g: linear-gradient(135deg, #e11d74, #e11d74);
+  --yel: #e11d74; --yel-2: #e11d74;
+}
+:root[data-theme='dark'][data-palette='rose'] {
+  --brand: #f472b6; --brand-2: #f472b6; --brand-ink: #2a0a1a; --brand-text: #f9a8d4; --brand-soft: #4a1730;
+  --bg: #180b11; --surface-2: #2b1822; --line: #3d2230; --bubble-out: #f9bdd9; --g: linear-gradient(135deg, #f472b6, #f472b6);
+  --yel: #f472b6; --yel-2: #f472b6;
+  --surface: #22121a;
+}
+:root[data-palette='graphite'] {
+  --brand: #3f3f46; --brand-2: #3f3f46; --brand-ink: #ffffff; --brand-text: #27272a; --brand-soft: #e8e8ec;
+  --bg: #f1f1f3; --surface-2: #f6f6f8; --line: #dcdce0; --bubble-out: #e4e4e8; --g: linear-gradient(135deg, #3f3f46, #3f3f46);
+  --yel: #3f3f46; --yel-2: #3f3f46;
+}
+:root[data-theme='dark'][data-palette='graphite'] {
+  --brand: #d4d4d8; --brand-2: #d4d4d8; --brand-ink: #18181b; --brand-text: #e4e4e7; --brand-soft: #2a2a30;
+  --bg: #0e0e10; --surface-2: #1e1e22; --line: #2b2b31; --bubble-out: #d4d4d8; --g: linear-gradient(135deg, #d4d4d8, #d4d4d8);
+  --yel: #d4d4d8; --yel-2: #d4d4d8;
+  --surface: #17171a;
+}
+.rail .rail-item.active, .rail .rail-item[aria-current='true'] { color: var(--brand-ink, #17171a); }
+:root[data-palette] .rail .rail-item.active, :root[data-palette] .rail .rail-item[aria-current='true'] { color: var(--brand-ink); }
+.pal-tiles { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 16px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.pal-tile { border: 2px solid transparent; border-radius: 16px; background: none; padding: 6px 8px; font: inherit; color: var(--text); cursor: pointer; display: grid; gap: 6px; justify-items: center; min-width: 64px; }
+.pal-tile .pal-dot { width: 40px; height: 40px; border-radius: 50%; box-shadow: inset 0 0 0 3px rgba(255, 255, 255, .55), 0 2px 8px rgba(0, 0, 0, .2); }
+.pal-tile.on { border-color: var(--brand); }
+.pal-tile span:last-child { font-size: .82rem; font-weight: 600; }
