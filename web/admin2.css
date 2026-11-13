@@ -180,7 +180,7 @@
 .ajump:hover { transform: translateY(-2px); }
 .ajump[hidden] { display: none; }
 .abub-id { opacity: .55; }
-.alb { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, .88); display: grid; place-items: center; }
+.alb { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, .88); display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; overflow: hidden; }
 .alb-img { max-width: 92vw; max-height: 86vh; border-radius: 10px; object-fit: contain; }
 .alb-btn { position: absolute; border: 0; border-radius: 22px; min-width: 44px; height: 44px; padding: 0 14px; background: rgba(255, 255, 255, .16); color: #fff; font-size: 1.4rem; cursor: pointer; text-decoration: none; display: grid; place-items: center; }
 .alb-btn:hover { background: rgba(255, 255, 255, .3); }
