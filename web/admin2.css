@@ -396,3 +396,16 @@ table.t.health td { overflow-wrap: anywhere; }
 .xd-chk small { font-size: .78rem; }
 .xd-f select:disabled { opacity: .5; }
 
+
+/* the list of chats like a messenger; the filters of a conversation behind one button */
+.achats { display: grid; gap: 2px; }
+.achat { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; font: inherit; padding: 10px; border-radius: 14px; cursor: pointer; }
+.achat:hover { background: rgba(251, 199, 0, .16); }
+.achat-ava { flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: #fbc700; color: #17171a; font-weight: 700; }
+.achat-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.achat-main small { display: block; }
+.achat-side { flex: none; display: grid; gap: 2px; text-align: right; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.afilters > summary { list-style: none; }
+.afilters-body { display: grid; gap: 8px; margin-top: 8px; }
+.achat-tools .afilters[open] { flex-basis: 100%; order: 5; }

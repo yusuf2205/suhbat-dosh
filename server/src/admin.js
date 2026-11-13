@@ -235,8 +235,12 @@ admin.get('/chats', (req, res) => {
         people = q.all('SELECT u.id, u.name, u.username, u.phone FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ?', c.id);
         title = people.map((p) => p.name).join(' ↔ ');
       }
+      // the last line, so the list reads like a messenger: who wrote what last
+      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT 1', c.id);
+      const label = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', call: 'Звонок', location: 'Геопозиция' }[lm?.kind];
+      const last = lm ? { author: lm.import_author || lm.author || '', text: String(lm.text || label || '').slice(0, 120) } : null;
       return {
-        id: c.id, type: c.type, title, description: c.description, members: c.members, messages: c.messages,
+        last, id: c.id, type: c.type, title, description: c.description, members: c.members, messages: c.messages,
         owner: userRef(c.owner_id ? getUser(c.owner_id) : null), people, last_message_at: c.last_message_at, created_at: c.created_at,
       };
     }),

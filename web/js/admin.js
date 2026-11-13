@@ -647,19 +647,27 @@ async function showUser(id) {
 
 async function viewChats() {
   const { chats } = await loadDirectories();
-  const body = h('tbody');
+  const body = h('div', { class: 'achats' });
+  let kind = '';
+  const kinds = [['', 'Все'], ['direct', 'Личные'], ['group', 'Группы'], ['channel', 'Каналы']];
+  const kindChips = kinds.map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === kind), onclick: () => { kind = k; kindChips.forEach((b, i) => b.setAttribute('aria-pressed', String(kinds[i][0] === k))); draw(); } }, l));
   const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Название чата или слова из сообщений', 'aria-label': 'Поиск' });
   let mode = 'text';
   const modeChips = [['text', 'По словам'], ['meaning', '✨ По смыслу']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === mode), onclick: () => { mode = k; modeChips.forEach((b, i) => b.setAttribute('aria-pressed', String(i === (k === 'text' ? 0 : 1)))); findMessages(); } }, l));
   const found = h('section', { class: 'panel', hidden: true });
   const draw = () => {
     const t = search.value.trim().toLowerCase();
-    clear(body).append(...chats.filter((c) => !t || (c.title || '').toLowerCase().includes(t)).map((c) =>
-      h('tr', { class: 'click', onclick: () => openChat(c.id) },
-        h('td', null, h('b', null, c.title || `#${c.id}`)),
-        h('td', null, c.type === 'direct' ? 'личный' : c.type === 'channel' ? 'канал' : 'группа'),
-        h('td', null, String(c.members)), h('td', null, String(c.messages)),
-        h('td', null, c.owner ? c.owner.name : '—'), h('td', { class: 'ev-time' }, fmtDT(c.last_message_at)))));
+    const shown = chats.filter((c) => (!kind || c.type === kind) && (!t || (c.title || '').toLowerCase().includes(t)));
+    clear(body).append(...(shown.length ? shown.map((c) => {
+      const title = c.title || `#${c.id}`;
+      const lastLine = c.last ? `${c.last.author ? `${c.last.author}: ` : ''}${c.last.text}` : 'Сообщений нет';
+      return h('button', { class: 'achat', type: 'button', onclick: () => openChat(c.id) },
+        h('span', { class: 'achat-ava', 'aria-hidden': 'true' }, initials(title)),
+        h('span', { class: 'achat-main' }, h('b', { class: 'ellipsis' }, title), h('small', { class: 'muted ellipsis' }, lastLine)),
+        h('span', { class: 'achat-side' },
+          h('small', { class: 'muted' }, c.last_message_at ? fmtShort(c.last_message_at) : ''),
+          h('small', { class: 'muted' }, `${c.messages} сообщ.${c.type === 'direct' ? '' : ` · ${c.members} уч.`}`)));
+    }) : [h('p', { class: 'muted' }, 'Ничего не найдено')]));
   };
   // messages: by the words, or by meaning
   let seq = 0;
@@ -689,10 +697,10 @@ async function viewChats() {
   search.addEventListener('input', () => { draw(); clearTimeout(timer); timer = setTimeout(findMessages, 450); });
   draw();
   setView(state.readLimited ? h('p', { class: 'muted' }, 'Вам открыта только часть переписки: это решает главный администратор.') : '',
-    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
+    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips)),
+      h('div', { class: 'chips' }, kindChips)),
     found,
-    h('div', { class: 'panel tablewrap' }, h('table', { class: 't' },
-      h('thead', null, h('tr', null, ['Чат', 'Тип', 'Участников', 'Сообщений', 'Владелец', 'Последняя активность'].map((x) => h('th', null, x)))), body)));
+    h('div', { class: 'panel' }, body));
   search.focus();
 }
 
@@ -978,17 +986,20 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     chips.forEach((b, i) => b.setAttribute('aria-pressed', String(CHAT_KINDS[i][0] === f.kind)));
     meaningBtn.setAttribute('aria-pressed', String(f.meaning));
     clearBtn.hidden = !active();
+    filters.querySelector('summary').textContent = f.kind || f.author || f.since || f.until || f.meaning ? '⚙ Фильтры •' : '⚙ Фильтры';
   }
   const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
   const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip solid', title: 'Скачать переписку (с учётом фильтров)' }, '⬇ Скачать'),
     h('div', { class: 'amenu-list' }, exportLink('txt', 'Текст (.txt)'), exportLink('html', 'Страница (.html)'),
       h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('details').open = false; openExportDialog({ scope: 'chat', id, title: c0.title || state.chats.get(id)?.title || `Чат #${id}` }); } }, 'Архив с файлами, ссылка…')));
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
+  const filters = h('details', { class: 'afilters' }, h('summary', { class: 'chip' }, '⚙ Фильтры'),
+    h('div', { class: 'afilters-body' },
+      h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
+      h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until),
+      h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber)));
   const tools = h('div', { class: 'achat-tools' },
-    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), may('chats_export') ? exportMenu : null),
-    h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
-    h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until, clearBtn),
-    h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber));
+    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), filters, clearBtn, may('chats_export') ? exportMenu : null));
 
   // a message: its menu, on the three dots or the right mouse button; nothing lies over the text
   let popup = null;
