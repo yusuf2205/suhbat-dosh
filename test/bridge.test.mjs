@@ -479,3 +479,20 @@ test('a copy of a Telegram chat tells what it is in Telegram (personal chat, gro
   const kind = (t) => chats.find((c) => c.title === `✈ ${t}`)?.tg_kind;
   assert.deepEqual([kind('Личный'), kind('Группа'), kind('Канал')], ['user', 'group', 'channel']);
 });
+
+test('Telegram Saved Messages land in the own "Избранное" of the person, not in a chat of their own', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002200', 'Моё');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '5150', kind: 'user', title: 'Избранное', author: 'Моё', out: true, ...body }) }).then((r) => r.json());
+  assert.ok((await tgPost({ tg_msg: 1, text: 'заметка из Телеграма' })).id);
+  assert.equal((await tgPost({ tg_msg: 1, text: 'заметка из Телеграма' })).duplicate, true, 'twice is one');
+  assert.ok((await tgPost({ tg_msg: 2, text: 'вторая' })).id);
+  const chats = (await call(u.cookie, 'GET', '/api/chats')).data.chats;
+  assert.equal(chats.filter((c) => /Избранное/.test(c.title || '') && c.title !== 'Избранное').length, 0, 'no chat of its own for it');
+  const saved = chats.find((c) => c.saved);
+  assert.ok(saved, 'the own Saved chat exists');
+  const texts = (await call(u.cookie, 'GET', `/api/chats/${saved.id}/messages`)).data.messages.map((m) => m.text);
+  assert.deepEqual(texts, ['заметка из Телеграма', 'вторая']);
+  // the same chat is the one the app makes for itself
+  assert.equal((await call(u.cookie, 'POST', '/api/chats/saved')).data.chat.id, saved.id);
+});

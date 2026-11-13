@@ -17,7 +17,7 @@ import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, int, log, now, rateLimit, rid, str } from './util.js';
 import { config } from './config.js';
 import { checkName, filePath, readHead, receive, removeFile, sniff } from './files.js';
-import { audit, chatOut, getMessage, getUser, memberIds, messageOut } from './service.js';
+import { audit, chatOut, directKey, getMessage, getUser, memberIds, messageOut } from './service.js';
 import { emit } from './realtime.js';
 
 export const bridge = express.Router(); // signed-in routes
@@ -174,8 +174,27 @@ bridge.get('/bridge/dialogs', async (req, res) => {
   });
 });
 
-/** A muted chat of its own for one Telegram chat. */
-function createMirror(uid, meName, tgChat, title, kind, twoWay) {
+/** What the bridge calls Telegram's Saved Messages: those go into the person's own "Избранное" here, not into a chat of their own. */
+const SAVED_TITLE = 'Избранное';
+
+/** The person's own Saved chat (a chat with themselves), made when it does not exist yet. */
+function savedChatOf(uid) {
+  const key = directKey(uid, uid);
+  const have = q.get('SELECT id FROM chats WHERE direct_key = ?', key);
+  if (have) return have.id;
+  const r = q.run("INSERT INTO chats (type, direct_key, last_message_at, created_at) VALUES ('direct', ?, ?, ?)", key, now(), now());
+  const cid = Number(r.lastInsertRowid);
+  q.run("INSERT INTO members (chat_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)", cid, uid, now());
+  return cid;
+}
+
+/** A muted chat of its own for one Telegram chat (Saved Messages: the person's own Saved chat, read-only from here to Telegram). */
+function createMirror(uid, meName, tgChat, title, kind, twoWay, saved = false) {
+  if (saved) {
+    const cid = savedChatOf(uid);
+    q.run('INSERT INTO tg_chats (user_id, tg_chat, title, chat_id, two_way, kind) VALUES (?,?,?,?,?,?)', uid, tgChat, SAVED_TITLE, cid, 0, kind);
+    return cid;
+  }
   const r = q.run(
     "INSERT INTO chats (type, title, description, owner_id, imported_from, import_me, last_message_at, created_at) VALUES ('group', ?, ?, ?, 'tgbridge', ?, ?, ?)",
     `✈ ${title}`, `tgb:${tgChat}`, uid, meName || 'Я', now(), now(),
@@ -528,7 +547,7 @@ function deliver(b, file = null) {
     // a personal chat that is not mirrored yet: created now, unless the owner removed it or switched the default off
     if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return { ok: true, skipped: true };
     const title = String(b.title || b.author || tgChat).replace(/[\u0000-\u001f]/g, '').slice(0, 60);
-    createMirror(uid, o.tg_name, tgChat, title, 'user', true);
+    createMirror(uid, o.tg_name, tgChat, title, 'user', true, title === SAVED_TITLE && b.out === true);
     pushRules(uid).catch(() => { /* the bridge applies the default for a new personal chat anyway */ });
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }

@@ -840,7 +840,7 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
         }):
             continue
         await to_server({
-            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": d.name or "", "backfill": True, "tg_msg": m.id,
+            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "backfill": True, "tg_msg": m.id,
             "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
             "geo": geo_of(m), **topic,
         })
