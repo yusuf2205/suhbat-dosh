@@ -1841,6 +1841,42 @@ const GROUPS = [
   ['Система', 'disk', ['server', 'access', 'quality']],
 ];
 const groupOf = (tab) => GROUPS.find(([, , tabs]) => tabs.includes(tab));
+/** On a phone: a swipe sideways goes to the next or the previous section, like the categories in the messenger. */
+function addTabSwipe(target, order) {
+  let sx = 0;
+  let sy = 0;
+  let t0 = 0;
+  let on = false;
+  // not where the finger is moving something else: a table that scrolls, a slider, a player, a field, a picture
+  const busy = (el) => {
+    if (el.closest?.('input, textarea, select, audio, video, .tablewrap, .spark, svg, .alb, .adlg, [role=slider]')) return true;
+    for (let e = el; e && e !== target; e = e.parentElement) {
+      const o = getComputedStyle(e).overflowX;
+      if ((o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth + 4) return true;
+    }
+    return false;
+  };
+  target.addEventListener('touchstart', (e) => {
+    on = e.touches.length === 1 && matchMedia('(max-width: 860px)').matches && /^#[/][a-z]+$/.test(location.hash || '#/overview')
+      && e.touches[0].clientX > 28 && e.touches[0].clientX < innerWidth - 12 && !busy(e.target);
+    if (!on) return;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    t0 = Date.now();
+  }, { passive: true });
+  target.addEventListener('touchend', (e) => {
+    if (!on) return;
+    on = false;
+    const p = e.changedTouches[0];
+    const dx = p.clientX - sx;
+    const dy = p.clientY - sy;
+    if (Date.now() - t0 > 700 || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    const list = order();
+    const to = list[list.indexOf(state.tab) + (dx < 0 ? 1 : -1)];
+    if (to) setTab(to);
+  }, { passive: true });
+}
+
 let view;
 let navEl;
 let titleEl;
@@ -1976,6 +2012,7 @@ async function boot() {
     h('div', { class: 'adm-main' },
       h('header', { class: 'adm-head' }, h('div', null, titleEl, subEl), h('div', { class: 'adm-head-r' }, clock)),
       view)));
+  addTabSwipe(view, () => groups.flatMap((g) => g.tabs));
   startRouting();
 }
 boot();
