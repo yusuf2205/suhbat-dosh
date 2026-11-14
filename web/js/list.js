@@ -1,8 +1,8 @@
 import { featureOn } from './features.js';
 import { tgOnline } from './tgpresence.js';
 import { notifyBar } from './notifybar.js';
-import { justSwiped, swipeLeft } from './swipe.js';
-import { h, clear, debounce, hscroll } from './dom.js';
+import { justSwiped } from './swipe.js';
+import { h, clear, debounce, hscroll, longPress } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S, chatTitle, fire, isMuted, on } from './state.js';
 import { api, outbox } from './net.js';
@@ -116,6 +116,7 @@ export function mount(sidebar) {
 
   if (!wired) {
     wired = true;
+    swipeTabs(listEl);
     on('chats', render);
     on('tasks', render);
     on('folders', () => { drawTabs(); render(); });
@@ -171,6 +172,36 @@ const runRemote = debounce(async () => {
   }
   render();
 }, 300);
+
+/** Swipe the list sideways: the next or the previous category (all, unread, personal, groups, channels, then the folders). */
+function swipeTabs(target) {
+  let sx = 0;
+  let sy = 0;
+  let t0 = 0;
+  let on = false;
+  target.addEventListener('touchstart', (e) => {
+    on = e.touches.length === 1 && e.touches[0].clientX > 28 && e.touches[0].clientX < innerWidth - 12 && !tabsEl?.hidden; // the left edge is "back"
+    if (!on) return;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    t0 = Date.now();
+  }, { passive: true });
+  target.addEventListener('touchend', (e) => {
+    if (!on) return;
+    on = false;
+    const p = e.changedTouches[0];
+    const dx = p.clientX - sx;
+    const dy = p.clientY - sy;
+    if (Date.now() - t0 > 700 || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    const order = [...TABS, ...(S.folders || []).map((f) => `f:${f.id}`)];
+    const at = order.indexOf(S.filter);
+    const to = order[at + (dx < 0 ? 1 : -1)];
+    if (at < 0 || !to) return;
+    S.filter = to;
+    render();
+    target.animate([{ transform: `translateX(${dx < 0 ? 28 : -28}px)`, opacity: 0.35 }, { transform: 'none', opacity: 1 }], { duration: 200, easing: 'ease-out' });
+  }, { passive: true });
+}
 
 /** Built-in filters followed by the user's folders. */
 function drawTabs() {
@@ -283,10 +314,8 @@ function item(c) {
     h('span', { class: 'ci-top' }, h('span', { class: 'ci-title ellipsis' }, chatTitle(c), isMuted(c) ? h('span', { class: 'mute-ico', title: t('info.mute') }, ' 🔕') : null, c.pinned_at ? h('span', { class: 'pin-ico', title: t('ctx.pin') }, icon('pin', 14)) : null, groupCallOf(c.id) ? h('span', { class: 'live-call', title: t('gcall.in_progress') }, icon('phone', 14)) : null),
       h('span', { class: `ci-time${c.unread > 0 ? ' hot' : ''}` }, fmtListTime(c.last_message?.created_at ?? c.last_message_at))),
     h('span', { class: 'ci-bot' }, h('span', { class: 'ci-last ellipsis' }, lastLine(c)), badge)));
-  swipeLeft(btn, {
-    onMove: (dx, done) => { btn.style.transform = done || !dx ? '' : `translateX(${dx}px)`; },
-    onCommit: () => chatMenu(btn, c),
-  });
+  // a swipe now changes the category of the list (like Telegram); the menu of a chat opens on a long press
+  longPress(btn, () => chatMenu(btn, c), { skip: null });
   return btn;
 }
 
