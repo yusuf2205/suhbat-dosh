@@ -1193,8 +1193,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (!whoBar.isConnected) { window.removeEventListener('resize', placeBar); return; }
     const side = document.querySelector('.adm-side');
     const onTop = side && getComputedStyle(side).position === 'sticky' && side.getBoundingClientRect().width > innerWidth * 0.8;
-    whoBar.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) : 0}px`);
-    whoBar.parentElement?.style.setProperty('--who-h', `${Math.ceil(whoBar.getBoundingClientRect().height)}px`);
+    whoBar.parentElement.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) : 0}px`);
   };
   window.addEventListener('resize', placeBar);
   paintHeading();
@@ -1207,7 +1206,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, whoBar, playerBar, heading, tools, moreBtn, list),
+    h('div', { class: 'panel' }, h('div', { class: 'achat-stick' }, whoBar, playerBar), heading, tools, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),

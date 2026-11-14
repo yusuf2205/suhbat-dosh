@@ -433,7 +433,9 @@ table.t.health td { overflow-wrap: anywhere; }
 .alb-turn { right: 70px; top: 14px; }
 .alb-img { transition: transform .2s; }
 /* the player of voice, audio and video messages */
-.apl { position: sticky; top: calc(var(--adm-top, 0px) + var(--who-h, 52px) + 6px); z-index: 11; display: flex; align-items: center; gap: 10px; margin: 0 -6px 10px; padding: 6px 12px; border-radius: 14px; background: var(--ink-2, #26262b); color: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.achat-stick { position: sticky; top: var(--adm-top, 0px); z-index: 12; margin-bottom: 10px; }
+.achat-stick .achat-who { position: static; margin-bottom: 0; }
+.apl { margin-top: 6px; display: flex; align-items: center; gap: 10px; margin-left: -6px; margin-right: -6px; padding: 6px 12px; border-radius: 14px; background: var(--ink-2, #26262b); color: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
 .apl[hidden] { display: none; }
 .apl-btn { border: 0; background: transparent; color: #8ab4f8; font-size: 1.15rem; cursor: pointer; min-width: 32px; height: 36px; border-radius: 10px; }
 .apl-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .12); }
