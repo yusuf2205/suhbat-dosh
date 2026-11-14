@@ -1792,6 +1792,14 @@ const TABS = {
   reports: ['Жалобы', 'shield', 'Сообщения, на которые пожаловались пользователи'],
   admins: ['Администраторы', 'key', 'Кто что может: права выдаёт главный админ'],
 };
+/** The sections in categories: a category on top, its subsections under it. */
+const GROUPS = [
+  ['Обзор', 'grid', ['overview']],
+  ['Люди', 'users', ['users', 'admins', 'reports']],
+  ['Переписка', 'chat', ['chats', 'journal']],
+  ['Система', 'disk', ['server', 'access', 'quality']],
+];
+const groupOf = (tab) => GROUPS.find(([, , tabs]) => tabs.includes(tab));
 let view;
 let navEl;
 let titleEl;
@@ -1799,7 +1807,9 @@ let subEl;
 
 function showTab(tab, render = true) {
   state.tab = tab;
-  navEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === tab)));
+  navEl.querySelectorAll('button[data-tab]').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === tab)));
+  navEl.querySelectorAll('button[data-cat]').forEach((b) => b.setAttribute('aria-current', String(groupOf(tab)?.[0] === b.dataset.cat)));
+  navEl.fillSubs?.(tab);
   titleEl.textContent = TABS[tab][0];
   subEl.textContent = TABS[tab][2];
   if (render) VIEWS[tab]().then(applyDynamicStyles).catch((e) => setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)));
@@ -1891,8 +1901,19 @@ async function boot() {
     state.readLimited = !!rights.read_limited;
     state.catalog = rights.catalog;
   } catch { /* an older server: everything is refused by it anyway */ }
-  navEl = h('nav', { class: 'adm-nav', 'aria-label': 'Разделы' },
-    Object.entries(TABS).filter(([k]) => tabAllowed(k)).map(([k, [l, ico]]) => h('button', { type: 'button', dataset: { tab: k }, onclick: () => setTab(k) }, icon(ico, 20), h('span', null, l))));
+  // on a computer: the whole tree in the side menu. On a phone: the categories in a row, the subsections of the open one under it
+  const groups = GROUPS.map(([label, ico, tabs]) => ({ label, ico, tabs: tabs.filter(tabAllowed) })).filter((g) => g.tabs.length);
+  const tabBtn = (k) => h('button', { type: 'button', dataset: { tab: k }, onclick: () => setTab(k) }, icon(TABS[k][1], 20), h('span', null, TABS[k][0]));
+  const tree = h('div', { class: 'adm-tree' }, groups.map((g) => h('div', { class: 'adm-group' },
+    g.tabs.length > 1 ? h('div', { class: 'adm-cat-label' }, g.label) : null, g.tabs.map(tabBtn))));
+  const cats = h('div', { class: 'adm-cats' }, groups.map((g) => h('button', { type: 'button', dataset: { cat: g.label }, onclick: () => setTab(g.tabs.includes(state.tab) ? state.tab : g.tabs[0]) }, icon(g.ico, 20), h('span', null, g.label))));
+  const subs = h('div', { class: 'adm-subrow' });
+  navEl = h('nav', { class: 'adm-nav', 'aria-label': 'Разделы' }, tree, cats, subs);
+  navEl.fillSubs = (tab) => {
+    const g = groups.find((x) => x.tabs.includes(tab));
+    clear(subs).append(...(g && g.tabs.length > 1 ? g.tabs.map((k) => h('button', { type: 'button', dataset: { sub: k }, 'aria-current': String(k === tab), onclick: () => setTab(k) }, TABS[k][0])) : []));
+    subs.hidden = !subs.childElementCount;
+  };
   titleEl = h('h1');
   subEl = h('p', { class: 'muted' });
   view = h('main', { class: 'adm-view' });
