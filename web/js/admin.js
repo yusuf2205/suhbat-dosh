@@ -779,7 +779,17 @@ function mediaBar(list, whoWhen) {
     spd.textContent = `${currentSpeed()}x`;
     mute.textContent = cur.muted || cur.volume === 0 ? '🔇' : '🔊';
   };
+  // on a phone the player lives in the menu bar at the top, which is always in view; on a computer it sits under the name of the chat
+  let home = null;
+  const place = () => {
+    home ||= bar.parentElement;
+    const side = document.querySelector('.adm-side');
+    const to = matchMedia('(max-width: 860px)').matches && side ? side : home;
+    if (to && bar.parentElement !== to) to.append(bar);
+  };
+  window.addEventListener('resize', () => { if (bar.isConnected) place(); });
   const attach = (m) => {
+    place();
     if (cur === m) { paint(); return; }
     if (cur && !cur.paused) cur.pause();
     cur = m;

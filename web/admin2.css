@@ -333,6 +333,9 @@ td .btn.secondary.small + .btn.secondary.small { margin-left: 6px; }
   .adm-nav .adm-cats button span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .adm-subrow { display: flex; order: 9; flex-basis: 100%; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .adm-subrow[hidden] { display: none; }
+  .adm-side > .apl { order: 20; flex: 0 0 100%; box-sizing: border-box; max-width: 100%; min-width: 0; margin: 0; padding: 4px 6px; gap: 2px; box-shadow: none; background: var(--ink-2, #26262b); }
+  .adm-side > .apl .apl-btn { min-width: 30px; }
+  .adm-side > .apl .apl-who { font-size: .85rem; }
   .adm-subrow::-webkit-scrollbar { display: none; }
   .adm-subrow button { flex: none; border: 1px solid rgba(255, 255, 255, .18); background: transparent; color: var(--ink-muted); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: .84rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
   .adm-subrow button[aria-current='true'] { background: var(--yel); border-color: var(--yel); color: var(--ink); }
