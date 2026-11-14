@@ -1631,7 +1631,7 @@ function messageMenu(anchor, m) {
     more.push({ icon: 'bell', label: t('msg.remind'), onClick: () => pickTime(anchor, (ts) => remind(previewText(m).slice(0, 300), c.id, ts).catch((e) => toast(errText(e.code)))) });
     items.push({ icon: 'selectc', label: t('msg.select'), onClick: () => enterSelect(m.id) });
   }
-  if (mine && c.can_post && !lockedChat(c) && (m.kind === 'text' || m.file)) {
+  if (mine && c.can_post && (m.kind === 'text' || m.file)) {
     items.push({
       label: t('msg.edit'), onClick: () => {
         editing = m;

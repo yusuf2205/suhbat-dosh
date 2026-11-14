@@ -171,10 +171,18 @@ test('an ordinary person sees and answers the personal chats and deletes single 
   assert.equal(sent.status, 201);
   // but nothing can be deleted, cleared, edited or left by the person
   const target = msgs.find((m) => m.text === 'Привет другу');
-  assert.equal((await call(friend.cookie, 'PATCH', `/api/messages/${sent.data.message.id}`, { text: 'правка' })).status, 403);
   assert.equal((await call(friend.cookie, 'POST', `/api/chats/${fchat.chat_id}/clear`)).status, 403);
   assert.equal((await call(friend.cookie, 'POST', `/api/chats/${fchat.chat_id}/hide`)).status, 403);
   assert.equal((await call(friend.cookie, 'DELETE', `/api/chats/${fchat.chat_id}/members/${friend.user.id}`)).status, 403);
+  // an own message can be edited by the person whose Telegram it is: the edit goes to Telegram too; the messages of others cannot be edited
+  assert.equal((await call(friend.cookie, 'PATCH', `/api/messages/${target.id}`, { text: 'чужое' })).status, 403);
+  const edited = await call(friend.cookie, 'PATCH', `/api/messages/${sent.data.message.id}`, { text: 'правка' });
+  assert.equal(edited.status, 200);
+  const got = await until(async () => {
+    const j = await fetch(`http://127.0.0.1:${BPORT}/mock/event?u=${friend.user.id}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'edits' }) }).then((r) => r.json());
+    return j.edited?.length ? j.edited : null;
+  });
+  assert.equal(got?.[0]?.[2], 'правка', 'the edit reached Telegram');
   // single messages can be deleted by the person whose Telegram it is: the deletion goes to Telegram too
   assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${sent.data.message.id}`)).status, 200);
   assert.equal((await call(friend.cookie, 'DELETE', `/api/messages/${target.id}`)).status, 200);
@@ -484,7 +492,7 @@ test('a copy of a Telegram chat tells what it is in Telegram (personal chat, gro
 test('Telegram Saved Messages land in the own "Избранное" of the person, not in a chat of their own', { skip: !havePy }, async () => {
   const u = await phoneUser('+998900002200', 'Моё');
   await link(u);
-  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '5150', kind: 'user', title: 'Избранное', author: 'Моё', out: true, ...body }) }).then((r) => r.json());
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, tg_chat: '5150', kind: 'user', title: 'Избранное', saved: true, author: 'Моё', out: true, ...body }) }).then((r) => r.json());
   assert.ok((await tgPost({ tg_msg: 1, text: 'заметка из Телеграма' })).id);
   assert.equal((await tgPost({ tg_msg: 1, text: 'заметка из Телеграма' })).duplicate, true, 'twice is one');
   assert.ok((await tgPost({ tg_msg: 2, text: 'вторая' })).id);
@@ -510,4 +518,24 @@ test('a message deleted here is deleted in Telegram too: in a copy of a chat and
   assert.equal((await call(u.cookie, 'DELETE', `/api/messages/${s.id}`)).status, 200);
   const got = await until(async () => { const d = await deletes(); return d?.length >= 2 ? d : null; });
   assert.deepEqual(got, [['6001', [11]], ['6002', [21]]], 'both deletions reached Telegram');
+});
+
+test('a copy of Saved Messages made as a chat of its own is merged into the own Избранное, forwarded messages included', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002400', 'Сливаю');
+  await link(u);
+  const post = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', tg_chat: '5160', title: 'Избранное', author: 'Кто-то', ...body }) }).then((r) => r.json());
+  // the old way: not recognised as Saved (no flag), so it became a chat of its own
+  assert.ok((await post({ tg_msg: 1, text: 'старая заметка', out: true })).id);
+  assert.ok((await post({ tg_msg: 2, text: 'пересланное от другого', out: false })).id);
+  let chats = (await call(u.cookie, 'GET', '/api/chats')).data.chats;
+  assert.ok(chats.some((c) => c.title === '✈ Избранное'), 'the stray copy exists');
+  // now the bridge says it is Saved: everything moves over, forwarded messages too (they have no out flag)
+  assert.ok((await post({ tg_msg: 3, text: 'новая заметка', out: false, saved: true })).id);
+  chats = (await call(u.cookie, 'GET', '/api/chats')).data.chats;
+  assert.equal(chats.some((c) => c.title === '✈ Избранное'), false, 'the stray copy is gone');
+  const saved = chats.find((c) => c.saved);
+  assert.ok(saved);
+  const msgs = (await call(u.cookie, 'GET', `/api/chats/${saved.id}/messages`)).data.messages.map((m) => m.text);
+  assert.deepEqual(msgs, ['старая заметка', 'пересланное от другого', 'новая заметка']);
+  assert.equal((await post({ tg_msg: 3, text: 'новая заметка', out: false, saved: true })).duplicate, true, 'and no doubles');
 });

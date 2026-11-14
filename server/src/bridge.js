@@ -17,7 +17,7 @@ import { EVENTS } from '../../shared/contracts.js';
 import { HttpError, int, log, now, rateLimit, rid, str } from './util.js';
 import { config } from './config.js';
 import { checkName, filePath, readHead, receive, removeFile, sniff } from './files.js';
-import { audit, chatOut, directKey, getMessage, getUser, memberIds, messageOut } from './service.js';
+import { audit, chatOut, directKey, getMessage, getUser, memberIds, messageOut, refreshLastMessage } from './service.js';
 import { emit } from './realtime.js';
 
 export const bridge = express.Router(); // signed-in routes
@@ -543,11 +543,12 @@ function deliver(b, file = null) {
   if (geo && !file) text = geo;
   if (!text.trim() && !file) return { ok: true, skipped: true };
   let row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
+  if (row && row.title === SAVED_TITLE && (b.saved === true || b.saved === '1') && mergeSavedMirrors(uid)) row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   if (!row) {
     // a personal chat that is not mirrored yet: created now, unless the owner removed it or switched the default off
     if (b.kind !== 'user' || !o.auto_private || q.get('SELECT 1 AS x FROM tg_excluded WHERE user_id = ? AND tg_chat = ?', uid, tgChat)) return { ok: true, skipped: true };
     const title = String(b.title || b.author || tgChat).replace(/[\u0000-\u001f]/g, '').slice(0, 60);
-    createMirror(uid, o.tg_name, tgChat, title, 'user', true, title === SAVED_TITLE && b.out === true);
+    createMirror(uid, o.tg_name, tgChat, title, 'user', true, b.saved === true || b.saved === '1');
     pushRules(uid).catch(() => { /* the bridge applies the default for a new personal chat anyway */ });
     row = q.get('SELECT * FROM tg_chats WHERE user_id = ? AND tg_chat = ?', uid, tgChat);
   }
@@ -649,7 +650,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
   let out;
   try {
     out = deliver({
-    owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
+    owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, saved: qy.saved === '1', tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
     caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1', upgrade: qy.upgrade === '1',
     tg_topic: qy.tg_topic, topic_title: qy.topic_title, topic_color: qy.topic_color,
   }, { id: fid, kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
@@ -789,6 +790,43 @@ export const bridgeLocked = (chatId, user) => !user.is_admin && !!q.get("SELECT 
 /** The person whose Telegram it is may delete messages in the copy: the deletion goes to Telegram too. */
 export const bridgeMayDelete = (chatId, user) => !bridgeLocked(chatId, user) || !!q.get('SELECT 1 AS x FROM tg_chats WHERE chat_id = ? AND user_id = ?', chatId, user.id);
 
+/**
+ * Saved Messages copied as a chat of their own (before they were mapped to the person's own "Избранное"): the messages move to the own
+ * Saved chat, the copy is removed and the mapping points at the own chat from now on. Safe to run again.
+ */
+function mergeSavedMirrors(onlyUser = null) {
+  const rows = q.all(
+    `SELECT t.* FROM tg_chats t JOIN chats c ON c.id = t.chat_id WHERE t.title = ? AND t.kind = 'user' AND c.imported_from = 'tgbridge' ${onlyUser ? 'AND t.user_id = ?' : ''}`,
+    ...[SAVED_TITLE, ...(onlyUser ? [onlyUser] : [])],
+  );
+  for (const t of rows) {
+    let saved = 0;
+    tx(() => {
+      saved = savedChatOf(t.user_id);
+      // a message whose key is already in the own chat is a duplicate: it stays behind and goes with the old chat
+      q.run('UPDATE OR IGNORE messages SET chat_id = ?, sender_id = ?, topic_id = NULL WHERE chat_id = ?', saved, t.user_id, t.chat_id);
+      q.run('UPDATE tg_chats SET chat_id = ?, two_way = 0 WHERE user_id = ? AND tg_chat = ?', saved, t.user_id, t.tg_chat);
+      q.run('UPDATE files SET chat_id = ? WHERE chat_id = ?', saved, t.chat_id);
+      q.run('DELETE FROM chats WHERE id = ?', t.chat_id);
+      refreshLastMessage(saved);
+      const top = q.get('SELECT MAX(id) AS id FROM messages WHERE chat_id = ?', saved)?.id || 0;
+      q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?), hidden = 0 WHERE chat_id = ? AND user_id = ?', top, top, saved, t.user_id);
+    });
+    emit([t.user_id], { type: EVENTS.CHAT_REMOVE, chat_id: t.chat_id });
+    refreshChat(t.user_id, saved);
+    log('info', 'saved messages merged into the own Saved chat', { user: t.user_id });
+  }
+  return rows.length;
+}
+
+/** A message edited here is edited in Telegram as well (the person's own messages only: the caller checks that). */
+export function bridgeEdit(m, text) {
+  const row = q.get('SELECT * FROM tg_chats WHERE chat_id = ?', m.chat_id);
+  const tgId = tgNum(m.import_key || '');
+  if (!row || !tgId || !String(text || '').trim()) return;
+  call('POST', '/edit', row.user_id, { chat: row.tg_chat, id: tgId, text }).catch((e) => log('warn', 'bridge edit failed', { err: e.code || e.message }));
+}
+
 /** A message deleted here is deleted in Telegram as well (for everybody in that chat). It stays in the audit log of the administrator. */
 export function bridgeDelete(m) {
   const row = q.get('SELECT * FROM tg_chats WHERE chat_id = ?', m.chat_id);
@@ -799,6 +837,7 @@ export function bridgeDelete(m) {
 
 /** After a restart (and every half hour) tell the bridge the rules again, so both sides never drift apart. */
 export function startBridge() {
+  try { mergeSavedMirrors(); } catch (e) { log('warn', 'saved merge failed', { err: e.message }); }
   const run = async () => {
     if (!bridgeConfigured()) return;
     for (const o of q.all('SELECT user_id FROM tg_bridge')) { try { await pushRules(o.user_id); } catch { /* the bridge is not up yet */ } }

@@ -161,6 +161,9 @@ class MockClient:
         self.last_file = {"chat": chat_id, "kind": kind, "name": name, "size": len(data), "caption": caption}
         return self.n
 
+    async def edit(self, chat_id, msg_id, text):
+        self.edited = getattr(self, "edited", []) + [[str(chat_id), int(msg_id), text]]
+
     async def delete(self, chat_id, ids):
         self.deleted = getattr(self, "deleted", []) + [[str(chat_id), list(ids)]]
 
@@ -746,7 +749,7 @@ def attach_handlers(a: Acct):
             topic = await topic_fields(a, key, event.message)
             async with chat_lock(a.uid, key):
               await to_server({
-                "owner": a.uid, "tg_chat": key, "kind": kind, "title": title_of(chat) if chat is not None else "",
+                "owner": a.uid, "tg_chat": key, "kind": kind, "title": title_of(chat) if chat is not None else "", "saved": bool(getattr(chat, "is_self", False)),
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
                 "reply_to": reply_id(event.message), "geo": geo_of(event.message), **topic,
@@ -755,7 +758,7 @@ def attach_handlers(a: Acct):
                 # the message is there at once as a mark ("[Фото]", "[Видео]"); the file follows in the background and replaces it, so a big
                 # film neither delays its own message nor holds back the ones after it
                 fill = asyncio.create_task(fill_media(a, event.message, mk, {
-                    "tg_chat": key, "chat_kind": kind, "title": title_of(chat) if chat is not None else "", "tg_msg": event.message.id,
+                    "tg_chat": key, "chat_kind": kind, "title": title_of(chat) if chat is not None else "", "saved": "1" if getattr(chat, "is_self", False) else "", "tg_msg": event.message.id,
                     "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
                     "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True, **topic,
                 }))
@@ -838,12 +841,12 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
         topic = await topic_fields(a, str(d.id), m)
         mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
         if mk and await upload_media(a, m, mk, {
-            "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+            "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": "1" if getattr(d.entity, "is_self", False) else "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
             "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
         }):
             continue
         await to_server({
-            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "backfill": True, "tg_msg": m.id,
+            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": bool(getattr(d.entity, "is_self", False)), "backfill": True, "tg_msg": m.id,
             "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
             "geo": geo_of(m), **topic,
         })
@@ -1272,6 +1275,28 @@ async def send_file(r):
     return web.json_response({"tg_msg": mid})
 
 
+async def edit_back(r):
+    """Edited here → edited in Telegram too (text or the caption of a file; only the person's own messages, the server checks that)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    body = await r.json()
+    chat = str(body.get("chat"))
+    mid = str(body.get("id", ""))
+    text = str(body.get("text", ""))[:4000]
+    if not re.fullmatch(r"-?\d{1,20}", chat) or not re.fullmatch(r"\d{1,12}", mid) or not text.strip():
+        return web.json_response({"error": "invalid"}, status=400)
+    try:
+        if MOCK:
+            await a.client.edit(int(chat), int(mid), text)
+        else:
+            await a.client.edit_message(int(chat), int(mid), text)
+    except Exception as e:
+        log("edit:", type(e).__name__)
+        return web.json_response({"error": "telegram_refused"}, status=502)
+    return web.json_response({"ok": True})
+
+
 async def delete_back(r):
     """Deleted here → deleted in Telegram too, for everybody in the chat (the person decided so; the server keeps its own record of what it was)."""
     a = who(r)
@@ -1317,6 +1342,8 @@ async def mock_event(r):
     b = await r.json()
     if b.get("type") == "acks":
         return web.json_response({"acks": getattr(a, "read_acks", [])})
+    if b.get("type") == "edits":
+        return web.json_response({"edited": getattr(a.client, "edited", [])})
     if b.get("type") == "deletes":
         return web.json_response({"deleted": getattr(a.client, "deleted", [])})
     if not a.me:
@@ -1413,7 +1440,7 @@ def app():
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/read", read_back), web.post("/delete", delete_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
+        web.post("/read", read_back), web.post("/delete", delete_back), web.post("/edit", edit_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
     ])
     return a
 

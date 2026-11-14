@@ -42,7 +42,7 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { personal } from './personal.js';
-import { bridge, bridgeConfigured, bridgeDelete, bridgeIn, bridgeLocked, bridgeMayDelete, bridgeOut, bridgeTwoWay } from './bridge.js';
+import { bridge, bridgeConfigured, bridgeDelete, bridgeEdit, bridgeIn, bridgeLocked, bridgeMayDelete, bridgeOut, bridgeTwoWay } from './bridge.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -1798,11 +1798,12 @@ api.patch('/messages/:id', (req, res) => {
   if (!m) throw new HttpError(404, 'not_found');
   requireMember(m.chat_id, req.user.id);
   if (m.sender_id !== req.user.id) throw new HttpError(403, 'forbidden');
-  if (bridgeLocked(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_edit'); // an edit here would not reach Telegram
+  if (!bridgeMayDelete(m.chat_id, req.user)) throw new HttpError(403, 'bridge_no_edit'); // only the person whose Telegram it is; the edit goes there too
   if (isSecretChat(m.chat_id)) throw new HttpError(403, 'secret_no_edit'); // the server cannot re-encrypt
   const text = str(req.body?.text, 'text', { min: m.file_id ? 0 : 1, max: LIMITS.TEXT_MAX });
   aud(req, 'message.edit', { chat_id: m.chat_id, target_type: 'message', target_id: m.id, details: { old: m.text, new: text } });
   q.run('UPDATE messages SET text = ?, edited_at = ? WHERE id = ?', text, now(), m.id);
+  bridgeEdit(m, text);
   const message = messageOut(getMessage(m.id));
   emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message });
   res.json({ message });
