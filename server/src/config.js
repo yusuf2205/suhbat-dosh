@@ -42,6 +42,7 @@ export const config = {
   host: env.HOST || '0.0.0.0',
   dataDir,
   filesDir: path.join(dataDir, 'files'),
+  publicUrl: String(env.PUBLIC_URL || '').replace(/\/$/, ''),   // how the people reach the site (the daily check looks at it from the outside)
   downloadsDir: path.resolve(env.DOWNLOADS_DIR || path.join(dataDir, '..', 'downloads')),
   // the database may live on a faster disk than the files (DB_DIR, e.g. an SSD volume)
   dbFile: path.join(path.resolve(env.DB_DIR || dataDir), 'suhbat.db'),

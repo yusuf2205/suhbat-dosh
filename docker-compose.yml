@@ -14,6 +14,7 @@ services:
       DB_DIR: /db
       DOWNLOADS_DIR: /downloads
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      PUBLIC_URL: ${PUBLIC_URL:-https://suhbat-dosh.uz}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-3000}:3000"
     volumes:

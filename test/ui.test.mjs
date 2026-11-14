@@ -206,3 +206,115 @@ test('messenger on a phone: a swipe over the chat list changes the category', { 
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
+
+// ---------------------------------------------------------------- everything, on a phone and on a computer
+const VIEWPORTS = [['phone', { width: 390, height: 800 }, true], ['computer', { width: 1280, height: 800 }, false]];
+async function watchedPage(cookieStr, [, viewport, touch]) {
+  const ctx = await browser.newContext({ viewport, hasTouch: touch, isMobile: touch, deviceScaleFactor: 1 });
+  await ctx.addCookies(cookiesOf(cookieStr));
+  const page = await ctx.newPage();
+  const problems = [];
+  page.on('pageerror', (e) => problems.push(`script error: ${e}`));
+  // a screen must never make the server fail: no 5xx from the API on any of them
+  page.on('response', (r) => { if (r.status() >= 500 && r.url().includes('/api/')) problems.push(`server error ${r.status()} on ${new URL(r.url()).pathname}`); });
+  return { ctx, page, problems };
+}
+
+for (const vp of VIEWPORTS) {
+  test(`admin, ${vp[0]}: every section opens, shows its content and makes no errors`, { skip: !canRun }, async () => {
+    const { ctx, page, problems } = await watchedPage(seed.admin, vp);
+    try {
+      for (const tab of ['overview', 'users', 'admins', 'reports', 'chats', 'journal', 'server', 'access', 'quality']) {
+        await page.goto(`${BASE}/admin.html#/${tab}`);
+        await page.waitForSelector('.adm-view > *', { timeout: 15000 });
+        await page.waitForTimeout(700);
+        const failed = await page.$('.adm-view .panel.err');
+        assert.equal(failed, null, `${tab}: the screen shows an error: ${failed ? await failed.textContent() : ''}`);
+        const title = await page.textContent('.adm-head h1');
+        assert.ok(title && title.length > 2, `${tab}: has a title`);
+        const filled = await page.$eval('.adm-view', (v) => v.innerText.trim().length);
+        assert.ok(filled > 20, `${tab}: is not empty`);
+      }
+      // a person, a chat, and a person's page
+      await page.goto(`${BASE}/admin.html#/chats`);
+      await page.waitForSelector('.achat');
+      await page.click('.achat:has-text("Мадина")');
+      await page.waitForSelector('.achat');
+      await page.click('.achat:has-text("Любимый")');
+      await page.waitForSelector('.abub');
+      await page.goto(`${BASE}/admin.html#/user/${seed.madinaId}`);
+      await page.waitForSelector('.adm-view h2', { timeout: 15000 });
+      assert.deepEqual(problems, []);
+    } finally { await ctx.close(); }
+  });
+
+  test(`messenger, ${vp[0]}: the list, a chat, sending a message and the colours work and make no errors`, { skip: !canRun }, async () => {
+    const { ctx, page, problems } = await watchedPage(seed.madina, vp);
+    try {
+      await page.goto(`${BASE}/`);
+      await page.waitForSelector('.chatlist .ci');
+      // a chat opens and a message is sent from the composer; it reaches the server
+      await page.click(`.ci[data-chat-id="${seed.chat}"]`);
+      await page.waitForSelector('textarea');
+      const text = `проверка ${vp[0]} ${Date.now()}`;
+      await page.fill('textarea', text);
+      if (vp[2]) await page.click('.send-btn'); else await page.keyboard.press('Enter');   // on a phone Enter is a new line
+      await page.waitForSelector(`.messages .bubble:has-text("${text}")`, { timeout: 10000 });
+      const stored = (await call(seed.madina, 'GET', `/api/chats/${seed.chat}/messages`)).data.messages.map((m) => m.text);
+      assert.ok(stored.includes(text), 'the message is saved on the server');
+      // the colours: every one applies and changes the accent
+      const accents = new Set();
+      for (const pal of ['gold', 'ocean', 'violet', 'forest', 'rose', 'graphite']) {
+        await page.evaluate((p) => { const s = JSON.parse(localStorage.getItem('suhbat.prefs') || '{}'); s.palette = p; localStorage.setItem('suhbat.prefs', JSON.stringify(s)); }, pal);
+        await page.reload();
+        await page.waitForSelector('.chatlist .ci', { state: 'attached' });   // on a phone the open chat hides the list
+        const got = await page.evaluate(() => ({ p: document.documentElement.dataset.palette || 'gold', brand: getComputedStyle(document.documentElement).getPropertyValue('--brand').trim() }));
+        assert.equal(got.p, pal, `the ${pal} colours are applied`);
+        accents.add(got.brand);
+      }
+      assert.equal(accents.size, 6, 'the six palettes have six different accents');
+      assert.deepEqual(problems, []);
+    } finally { await ctx.close(); }
+  });
+}
+
+test('messenger on a phone: the bottom menu opens every screen, and the settings rows open one by one', { skip: !canRun }, async () => {
+  const { ctx, page, problems } = await watchedPage(seed.madina, VIEWPORTS[0]);
+  try {
+    await page.goto(`${BASE}/`);
+    await page.waitForSelector('.bottomnav button');
+    const n = (await page.$$('.bottomnav button')).length;
+    assert.ok(n >= 4, `the bottom menu has its buttons (${n})`);
+    for (let i = 0; i < n; i++) {
+      await page.goto(`${BASE}/`);
+      await page.waitForSelector('.bottomnav button');
+      await (await page.$$('.bottomnav button'))[i].click();
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Escape');
+    }
+    await page.goto(`${BASE}/`);
+    await page.waitForSelector('.bottomnav button');
+    const buttons = await page.$$('.bottomnav button');
+    await buttons[buttons.length - 1].click();
+    await page.waitForSelector('.srow', { timeout: 10000 });
+    const rows = (await page.$$('.srow')).length;
+    assert.ok(rows >= 8, `the settings have their rows (${rows})`);
+    for (let i = 0; i < rows; i++) {
+      const row = (await page.$$('.srow'))[i];
+      if (!row) break;
+      if (await row.evaluate((e) => e.classList.contains('danger'))) continue;   // log out and the like are not walked into
+      await row.click();
+      await page.waitForTimeout(350);
+      const back = await page.$('.settings-back, .modal-back, [aria-label="Назад"], [aria-label="Back"], .icon-btn.back');
+      if (back) await back.click(); else await page.keyboard.press('Escape');
+      await page.waitForTimeout(250);
+      if (!(await page.$('.srow'))) {
+        await page.goto(`${BASE}/`);
+        await page.waitForSelector('.bottomnav button');
+        await (await page.$$('.bottomnav button')).at(-1).click();
+        await page.waitForSelector('.srow');
+      }
+    }
+    assert.deepEqual(problems, []);
+  } finally { await ctx.close(); }
+});

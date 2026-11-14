@@ -108,6 +108,34 @@ function checkMeaning() {
   return check('Поиск по смыслу', pct >= 90 ? 'ok' : 'warn', `проиндексировано ${pct}% (${have} из ${need}); остальное досчитывается само`);
 }
 
+/** The site the way the people meet it: through the internet, the tunnel and the proxy. Pages, and every file of the build. */
+async function checkOutside() {
+  const base = config.publicUrl;
+  if (!base) return check('Сайт снаружи', 'ok', 'адрес не задан (PUBLIC_URL), проверка пропущена');
+  const get = async (p, opt = {}) => { try { return await fetch(base + p, { signal: AbortSignal.timeout(20_000), redirect: 'manual', ...opt }); } catch (e) { return { ok: false, status: 0, error: e.message }; } };
+  const problems = [];
+  let n = 0;
+  for (const p of ['/healthz', '/', '/admin.html', '/sw.js', '/manifest.webmanifest']) {
+    n++;
+    const r = await get(p);
+    if (r.status !== 200) problems.push(`${p}: ${r.status || 'нет ответа'}`);
+  }
+  const shell = await get('/shell.json');
+  let files = [];
+  if (shell.status === 200) files = await shell.json().catch(() => []); else problems.push(`/shell.json: ${shell.status || 'нет ответа'}`);
+  const queue = [...files];
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (queue.length) {
+      const u = queue.shift();
+      n++;
+      const r = await get(u);
+      if (r.status !== 200) problems.push(`${u.split('?')[0]}: ${r.status || 'нет ответа'}`);
+    }
+  }));
+  if (problems.length) return check('Сайт снаружи', 'bad', `не открывается: ${problems.slice(0, 4).join('; ')}${problems.length > 4 ? ` и ещё ${problems.length - 4}` : ''}`);
+  return check('Сайт снаружи', 'ok', `открывается через интернет: ${n} адресов`);
+}
+
 /** Telegram: every linked account is brought up to date and the result is counted. */
 async function checkTelegram() {
   const linked = q.all('SELECT b.user_id, u.name FROM tg_bridge b JOIN users u ON u.id = b.user_id');
@@ -150,7 +178,7 @@ export async function runIntegrity(trigger = 'auto', { quiet = false } = {}) {
   state.progress = 'начинаю';
   const t0 = Date.now();
   const checks = [];
-  const steps = [checkDatabase, checkSearchIndex, checkFiles, checkUploads, checkScheduled, checkBackups, checkDisk, checkMeaning, checkTelegram];
+  const steps = [checkDatabase, checkSearchIndex, checkFiles, checkUploads, checkScheduled, checkBackups, checkDisk, checkMeaning, checkOutside, checkTelegram];
   try {
     for (const fn of steps) {
       state.progress = fn.name.replace(/^check/, '');
