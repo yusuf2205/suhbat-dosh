@@ -645,29 +645,62 @@ async function showUser(id) {
   );
 }
 
-async function viewChats() {
-  const { chats } = await loadDirectories();
+/** One chat as a line of the list: a round mark, the title, the last line, the time and the numbers. */
+function chatLine(c) {
+  const title = c.title || `#${c.id}`;
+  const lastLine = c.last ? `${c.last.author ? `${c.last.author}: ` : ''}${c.last.text}` : 'Сообщений нет';
+  return h('button', { class: 'achat', type: 'button', onclick: () => openChat(c.id) },
+    h('span', { class: 'achat-ava', 'aria-hidden': 'true' }, initials(title)),
+    h('span', { class: 'achat-main' }, h('b', { class: 'ellipsis' }, title), h('small', { class: 'muted ellipsis' }, lastLine)),
+    h('span', { class: 'achat-side' },
+      h('small', { class: 'muted' }, c.last_message_at ? fmtShort(c.last_message_at) : ''),
+      h('small', { class: 'muted' }, `${c.messages} сообщ.${c.type === 'direct' ? '' : ` · ${c.members} уч.`}`)));
+}
+
+/** The chats of one person: personal, groups, channels. */
+async function showChatsOf(uid) {
+  showTab('chats', false);
+  const { chats } = await get(`/api/admin/chats/of/${uid}`);
+  await loadDirectories();
+  const kinds = [['direct', 'Личные'], ['group', 'Группы'], ['channel', 'Каналы']];
+  const count = (k) => chats.filter((c) => c.type === k).length;
+  let kind = kinds.find(([k]) => count(k))?.[0] || 'direct';
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Название чата', 'aria-label': 'Поиск по чатам этого человека' });
   const body = h('div', { class: 'achats' });
-  let kind = '';
-  const kinds = [['', 'Все'], ['direct', 'Личные'], ['group', 'Группы'], ['channel', 'Каналы']];
-  const kindChips = kinds.map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === kind), onclick: () => { kind = k; kindChips.forEach((b, i) => b.setAttribute('aria-pressed', String(kinds[i][0] === k))); draw(); } }, l));
-  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Название чата или слова из сообщений', 'aria-label': 'Поиск' });
+  const chips = kinds.map(([k, l]) => h('button', { class: 'chip', type: 'button', onclick: () => { kind = k; draw(); } }, `${l} ${count(k)}`));
+  const draw = () => {
+    chips.forEach((b, i) => b.setAttribute('aria-pressed', String(kinds[i][0] === kind)));
+    const t = search.value.trim().toLowerCase();
+    const shown = chats.filter((c) => c.type === kind && (!t || (c.title || '').toLowerCase().includes(t)));
+    clear(body).append(...(shown.length ? shown.map(chatLine) : [h('p', { class: 'muted' }, 'Здесь ничего нет')]));
+  };
+  search.addEventListener('input', draw);
+  draw();
+  const who = state.users.get(uid);
+  setView(backCrumb('#/chats', '← Все люди'),
+    h('h2', null, who ? who.name : `Пользователь #${uid}`),
+    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search)), h('div', { class: 'chips' }, chips)),
+    h('div', { class: 'panel' }, body));
+}
+
+async function viewChats() {
+  const { people } = await get('/api/admin/chats/people');
+  await loadDirectories();
+  const body = h('div', { class: 'achats' });
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя человека или слова из сообщений', 'aria-label': 'Поиск' });
   let mode = 'text';
   const modeChips = [['text', 'По словам'], ['meaning', '✨ По смыслу']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === mode), onclick: () => { mode = k; modeChips.forEach((b, i) => b.setAttribute('aria-pressed', String(i === (k === 'text' ? 0 : 1)))); findMessages(); } }, l));
   const found = h('section', { class: 'panel', hidden: true });
+  // every person is a category of their own: the numbers of personal chats, groups and channels, and a tap opens them
   const draw = () => {
     const t = search.value.trim().toLowerCase();
-    const shown = chats.filter((c) => (!kind || c.type === kind) && (!t || (c.title || '').toLowerCase().includes(t)));
-    clear(body).append(...(shown.length ? shown.map((c) => {
-      const title = c.title || `#${c.id}`;
-      const lastLine = c.last ? `${c.last.author ? `${c.last.author}: ` : ''}${c.last.text}` : 'Сообщений нет';
-      return h('button', { class: 'achat', type: 'button', onclick: () => openChat(c.id) },
-        h('span', { class: 'achat-ava', 'aria-hidden': 'true' }, initials(title)),
-        h('span', { class: 'achat-main' }, h('b', { class: 'ellipsis' }, title), h('small', { class: 'muted ellipsis' }, lastLine)),
-        h('span', { class: 'achat-side' },
-          h('small', { class: 'muted' }, c.last_message_at ? fmtShort(c.last_message_at) : ''),
-          h('small', { class: 'muted' }, `${c.messages} сообщ.${c.type === 'direct' ? '' : ` · ${c.members} уч.`}`)));
-    }) : [h('p', { class: 'muted' }, 'Ничего не найдено')]));
+    const shown = people.filter((p) => !t || (p.name || '').toLowerCase().includes(t) || (p.username || '').toLowerCase().includes(t));
+    clear(body).append(...(shown.length ? shown.map((p) => h('button', { class: 'achat', type: 'button', onclick: () => go(`#/chats/user/${p.id}`) },
+      h('span', { class: 'achat-ava', 'aria-hidden': 'true' }, initials(p.name)),
+      h('span', { class: 'achat-main' }, h('b', { class: 'ellipsis' }, p.name || `#${p.id}`, p.username ? h('small', { class: 'muted' }, ` @${p.username}`) : null),
+        h('span', { class: 'acounts' }, h('span', { class: 'acount' }, `Личные ${p.direct}`), h('span', { class: 'acount' }, `Группы ${p.group}`), h('span', { class: 'acount' }, `Каналы ${p.channel}`))),
+      h('span', { class: 'achat-side' }, h('small', { class: 'muted' }, p.last_at ? fmtShort(p.last_at) : ''), h('span', { class: 'ud-go', 'aria-hidden': 'true' }, icon('chevron', 16)))))
+      : [h('p', { class: 'muted' }, 'Никого не найдено')]));
   };
   // messages: by the words, or by meaning
   let seq = 0;
@@ -697,8 +730,7 @@ async function viewChats() {
   search.addEventListener('input', () => { draw(); clearTimeout(timer); timer = setTimeout(findMessages, 450); });
   draw();
   setView(state.readLimited ? h('p', { class: 'muted' }, 'Вам открыта только часть переписки: это решает главный администратор.') : '',
-    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips)),
-      h('div', { class: 'chips' }, kindChips)),
+    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
     found,
     h('div', { class: 'panel' }, body));
   search.focus();
@@ -1840,9 +1872,11 @@ async function route() {
   const hsh = location.hash || '#/overview';
   const u = /^#\/user\/(\d+)$/.exec(hsh);
   const c = /^#\/chat\/(\d+)(?:\/(\d+))?$/.exec(hsh);
+  const co = /^#\/chats\/user\/(\d+)$/.exec(hsh);
   const t = /^#\/([a-z]+)$/.exec(hsh);
   try {
     if (u) await showUser(Number(u[1]));
+    else if (co) await showChatsOf(Number(co[1]));
     else if (c) await showChat(Number(c[1]), c[2] ? Number(c[2]) : null);
     else {
       const first = Object.keys(TABS).find(tabAllowed);

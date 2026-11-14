@@ -247,6 +247,52 @@ admin.get('/chats', (req, res) => {
   });
 });
 
+/** Every person with their chats counted by kind: the first screen of "Chats and correspondence". */
+admin.get('/chats/people', (req, res) => {
+  const hidden = hiddenChatSql(req.user);
+  const rows = q.all(
+    `SELECT u.id, u.name, u.username, c.type, COUNT(*) AS n, MAX(c.last_message_at) AS last_at
+     FROM members mb JOIN users u ON u.id = mb.user_id JOIN chats c ON c.id = mb.chat_id
+     WHERE mb.banned = 0 AND u.is_bot = 0 AND NOT ${hidden.sql} GROUP BY u.id, c.type`, ...hidden.params,
+  );
+  const by = new Map();
+  for (const r of rows) {
+    if (personHiddenFrom(r.id, req.user)) continue;
+    const p = by.get(r.id) || { id: r.id, name: r.name, username: r.username, direct: 0, group: 0, channel: 0, last_at: 0 };
+    p[r.type] = r.n;
+    p.last_at = Math.max(p.last_at, r.last_at || 0);
+    by.set(r.id, p);
+  }
+  res.json({ people: [...by.values()].sort((a, b) => b.last_at - a.last_at) });
+});
+
+/** The chats of one person, the same lines as the full list. */
+admin.get('/chats/of/:uid', (req, res) => {
+  const uid = int(req.params.uid, 'uid');
+  if (!getUser(uid) || personHiddenFrom(uid, req.user)) throw new HttpError(404, 'not_found');
+  const hidden = hiddenChatSql(req.user);
+  const rows = q.all(
+    `SELECT c.*, (SELECT COUNT(*) FROM members WHERE chat_id = c.id AND banned = 0) AS members,
+       (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages
+     FROM members mb JOIN chats c ON c.id = mb.chat_id WHERE mb.user_id = ? AND NOT ${hidden.sql} ORDER BY c.last_message_at DESC LIMIT 1000`, uid, ...hidden.params,
+  );
+  res.json({
+    chats: rows.map((c) => {
+      let title = c.title;
+      if (c.type === 'direct') {
+        const peers = q.all('SELECT u.name FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? AND m.user_id != ?', c.id, uid);
+        title = peers.length ? peers.map((p) => p.name).join(' ↔ ') : 'Избранное';
+      }
+      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT 1', c.id);
+      const label = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', call: 'Звонок', location: 'Геопозиция' }[lm?.kind];
+      return {
+        id: c.id, type: c.type, title, members: c.members, messages: c.messages, last_message_at: c.last_message_at,
+        last: lm ? { author: lm.import_author || lm.author || '', text: String(lm.text || label || '').slice(0, 120) } : null,
+      };
+    }),
+  });
+});
+
 admin.get('/chats/:id', (req, res) => {
   const id = int(req.params.id, 'id');
   const c = q.get('SELECT * FROM chats WHERE id = ?', id);
