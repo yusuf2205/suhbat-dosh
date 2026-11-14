@@ -325,7 +325,7 @@ td .btn.secondary.small + .btn.secondary.small { margin-left: 6px; }
 .adm-group .adm-cat-label ~ button { margin-left: 8px; }
 .adm-cats, .adm-subrow { display: none; }
 @media (max-width: 860px) {
-  .adm-side { flex-wrap: wrap; overflow: visible; row-gap: 6px; }
+  .adm-side { flex-wrap: wrap; overflow: visible; row-gap: 6px; height: auto; align-self: start; align-content: flex-start; }
   .adm-nav { display: contents; }
   .adm-tree { display: none; }
   .adm-cats { display: flex; gap: 4px; flex: 1; min-width: 0; }
