@@ -92,25 +92,80 @@ function showWindow() {
   win.focus();
 }
 
+// what the page tells the shell: how many unread messages, and until when notifications are off (the page owns both)
+let shellState = { unread: 0, dndUntil: 0 };
+const clock = (ts) => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const goTo = (where) => { showWindow(); setTimeout(() => win?.webContents.send('suhbat:go', where), win ? 0 : 1500); };
+const setDnd = (until) => win?.webContents.send('suhbat:dnd', until);
+const tomorrow8 = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); return d.getTime(); };
+
+async function checkUpdatesNow() {
+  const r = await checkUpdates();
+  const body = r.state === 'available' ? `Найдена версия ${r.version}, она загружается`
+    : r.state === 'downloaded' ? `Версия ${r.version} загружена: установите её из меню`
+      : r.state === 'error' ? 'Не удалось проверить обновления' : 'Установлена последняя версия';
+  try { new Notification({ title: 'Suhbat-dosh', body, silent: true }).show(); } catch { /* notifications are off in the system */ }
+  refreshTray();
+}
+
+function trayMenu() {
+  const cfg = readConfig();
+  const dnd = shellState.dndUntil > Date.now();
+  const u = shellState.unread;
+  return Menu.buildFromTemplate([
+    { label: u ? `Непрочитанных: ${u}` : 'Нет непрочитанных', click: showWindow },
+    { label: 'Открыть Suhbat-dosh', click: showWindow },
+    { type: 'separator' },
+    { label: 'Избранное', click: () => goTo('saved') },
+    { label: 'Новое сообщение', click: () => goTo('new') },
+    { label: 'Рядом', click: () => goTo('nearby') },
+    { type: 'separator' },
+    dnd
+      ? { label: `Не беспокоить: до ${clock(shellState.dndUntil)}`, submenu: [{ label: 'Включить уведомления', click: () => setDnd(0) }] }
+      : {
+        label: 'Не беспокоить',
+        submenu: [
+          { label: 'На 1 час', click: () => setDnd(Date.now() + 3600e3) },
+          { label: 'На 8 часов', click: () => setDnd(Date.now() + 8 * 3600e3) },
+          { label: 'До завтра (8:00)', click: () => setDnd(tomorrow8()) },
+        ],
+      },
+    { type: 'separator' },
+    {
+      label: 'Запускать при входе в систему', type: 'checkbox', checked: cfg.autostart !== false,
+      click: (i) => { writeConfig({ ...readConfig(), autostart: i.checked }); applyAutostart(); },
+    },
+    { type: 'separator' },
+    { label: `Версия ${app.getVersion()}`, enabled: false },
+    ...(updateState.state === 'downloaded'
+      ? [{ label: `Установить обновление ${updateState.version || ''} и перезапустить`, click: () => { app.isQuitting = true; autoUpdater.quitAndInstall(true, true); } }]
+      : [{ label: 'Проверить обновления', click: () => { checkUpdatesNow(); } }]),
+    { type: 'separator' },
+    { label: 'Выход', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+}
+
+function refreshTray() {
+  if (!tray) return;
+  tray.setContextMenu(trayMenu());
+  tray.setToolTip(shellState.unread ? `Suhbat-dosh · непрочитанных: ${shellState.unread}` : 'Suhbat-dosh');
+}
+
+ipcMain.handle('suhbat:state', (_e, s) => {
+  shellState = { unread: Math.max(0, Math.min(99999, Number(s?.unread) || 0)), dndUntil: Number(s?.dndUntil) || 0 };
+  try { app.setBadgeCount(shellState.unread); } catch { /* not supported here */ }
+  refreshTray();
+  return true;
+});
+
 function createTray() {
   try {
     const img = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 20, height: 20 });
     tray = new Tray(img);
   } catch { tray = null; return; }
-  tray.setToolTip('Suhbat-dosh');
-  const cfg = () => readConfig();
-  const menu = () => Menu.buildFromTemplate([
-    { label: 'Открыть Suhbat-dosh', click: showWindow },
-    { type: 'separator' },
-    {
-      label: 'Запускать при входе в систему', type: 'checkbox', checked: cfg().autostart !== false,
-      click: (i) => { writeConfig({ ...readConfig(), autostart: i.checked }); applyAutostart(); },
-    },
-    { type: 'separator' },
-    { label: 'Выход', click: () => { app.isQuitting = true; app.quit(); } },
-  ]);
-  tray.setContextMenu(menu());
+  refreshTray();
   tray.on('click', showWindow);
+  tray.on('right-click', refreshTray); // the time of "do not disturb" runs out by itself: the menu is made fresh
 }
 
 function applyAutostart() {
@@ -147,6 +202,7 @@ let updateState = { state: 'idle' };
 
 function pushUpdate(s) {
   updateState = s;
+  refreshTray();
   win?.webContents.send('suhbat:update', s);
 }
 

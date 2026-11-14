@@ -129,7 +129,17 @@ matchMedia('(min-width: 1280px)').addEventListener?.('change', () => renderPane(
 function updateTitle() {
   const n = [...S.chats.values()].reduce((a, c) => a + (isMuted(c) ? 0 : c.unread), 0);
   document.title = n ? `(${n}) Suhbat-dosh` : 'Suhbat-dosh';
+  pushShellState(n);
 }
+/** The desktop app shows the unread count and the "do not disturb" time in its tray menu. */
+let lastShell = '';
+function pushShellState(n) {
+  if (!window.suhbatShell?.setState) return;
+  const s = { unread: n ?? [...S.chats.values()].reduce((a, c) => a + (isMuted(c) ? 0 : c.unread), 0), dndUntil: S.prefs.dndUntil > Date.now() ? S.prefs.dndUntil : 0 };
+  const key = JSON.stringify(s);
+  if (key !== lastShell) { lastShell = key; window.suhbatShell.setState(s).catch(() => {}); }
+}
+setInterval(() => pushShellState(), 30_000);
 on('chats', updateTitle);
 
 // ---------------------------------------------------------------- data sync
@@ -481,6 +491,14 @@ document.addEventListener('suhbat:logout-local', () => fire('logged-out-request'
     window.__openChat = (id) => fire('open-chat', Number(id));
     window.__nativeBack = handleBack;
     window.suhbatShell?.onOpenChat?.((id) => fire('open-chat', Number(id)));
+    // the tray menu of the desktop app: quick ways in, and "do not disturb"
+    window.suhbatShell?.onGo?.((where) => {
+      if (where === 'saved') import('./rail.js').then((m) => m.openSaved());
+      else if (where === 'new') import('./dialogs.js').then((m) => m.openNewChat());
+      else if (where === 'nearby') import('./nearby.js').then((m) => m.openNearby());
+    });
+    window.suhbatShell?.onDnd?.((until) => { S.prefs.dndUntil = Number(until) || 0; savePrefs(); fire('theme'); pushShellState(); });
+    pushShellState();
     // desktop app: system notifications are on by default (it keeps running in the tray)
     try {
       if (navigator.userAgent.includes('SuhbatShell/desktop') && !localStorage.getItem('suhbat.deskNotif')) {
