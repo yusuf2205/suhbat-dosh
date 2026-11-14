@@ -1847,22 +1847,27 @@ function addTabSwipe(target, order) {
   let sy = 0;
   let t0 = 0;
   let on = false;
-  // not where the finger is moving something else: a table that scrolls, a slider, a player, a field, a picture
-  const busy = (el) => {
-    if (el.closest?.('input, textarea, select, audio, video, .tablewrap, .spark, svg, .alb, .adlg, [role=slider]')) return true;
+  // not where the finger moves something else: a slider, a player, a field, a dialog
+  const hard = (el) => !!el.closest?.('input, textarea, select, audio, video, .alb, .adlg, [role=slider]');
+  // a wide table scrolls sideways under the finger: when it did, the swipe was its own; when it did not (it is at its edge, or fits), the swipe changes the section
+  const scrollerOf = (el) => {
     for (let e = el; e && e !== target; e = e.parentElement) {
       const o = getComputedStyle(e).overflowX;
-      if ((o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth + 4) return true;
+      if ((o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth + 4) return e;
     }
-    return false;
+    return null;
   };
+  let sc = null;
+  let sc0 = 0;
   target.addEventListener('touchstart', (e) => {
     on = e.touches.length === 1 && matchMedia('(max-width: 860px)').matches && /^#[/][a-z]+$/.test(location.hash || '#/overview')
-      && e.touches[0].clientX > 28 && e.touches[0].clientX < innerWidth - 12 && !busy(e.target);
+      && e.touches[0].clientX > 28 && e.touches[0].clientX < innerWidth - 12 && !hard(e.target);
     if (!on) return;
     sx = e.touches[0].clientX;
     sy = e.touches[0].clientY;
     t0 = Date.now();
+    sc = scrollerOf(e.target);
+    sc0 = sc ? sc.scrollLeft : 0;
   }, { passive: true });
   target.addEventListener('touchend', (e) => {
     if (!on) return;
@@ -1870,7 +1875,8 @@ function addTabSwipe(target, order) {
     const p = e.changedTouches[0];
     const dx = p.clientX - sx;
     const dy = p.clientY - sy;
-    if (Date.now() - t0 > 700 || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
+    if (sc && Math.abs(sc.scrollLeft - sc0) > 2) return;
+    if (Date.now() - t0 > 900 || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8) return;
     const list = order();
     const to = list[list.indexOf(state.tab) + (dx < 0 ? 1 : -1)];
     if (to) setTab(to);
