@@ -26,6 +26,8 @@ const RULES = [
   ['POST', /^\/users\/\d+\/(ban|logout)$/, 'users_manage'],
   ['PUT', /^\/users\/\d+\/quota$/, 'users_manage'],
   ['DELETE', /^\/users\/\d+$/, 'users_delete'],
+  ['POST', /^\/users\/\d+\/purge$/, 'users_delete'],
+  ['GET', /^\/users\/\d+\/purge$/, 'users_delete'],
   ['GET', /^\/chats$/, 'chats_read'],
   ['GET', /^\/chats\/\d+(\/(messages|stats|find))?$/, 'chats_read'],
   ['GET', /^\/search$/, 'chats_read'],

@@ -990,8 +990,27 @@ async def start_existing():
         except Exception as e:
             log("catch-up failed:", type(e).__name__)
         log("connected account", a.uid)
+        t = asyncio.create_task(catchup_loop(a))   # a safety net for updates that Telegram holds back after a gap
+        FILLS.add(t)
+        t.add_done_callback(FILLS.discard)
         if not a.synced or not a.deep:   # an account copied the old short way (150 messages) gets the whole history once
             a.bf_task = asyncio.create_task(delayed_backfill(a))
+
+
+CATCHUP_EVERY = int(os.environ.get("CATCHUP_EVERY", "45"))
+
+
+async def catchup_loop(a: Acct):
+    """Telegram sometimes keeps updates back (after a reconnect or its own internal errors) and delivers them minutes later in one burst.
+    Asking for the difference every little while brings them in at once; with nothing new it is a single cheap call."""
+    while a.client is not None and a.me:
+        await asyncio.sleep(CATCHUP_EVERY)
+        try:
+            await asyncio.wait_for(a.client.catch_up(), timeout=60)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log("periodic catch-up skipped:", type(e).__name__)
 
 
 async def delayed_backfill(a: Acct):

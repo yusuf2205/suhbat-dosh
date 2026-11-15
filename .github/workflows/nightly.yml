@@ -1,0 +1,18 @@
+# Every night (and on demand) the live site is checked from the outside: the HTTP smoke test and a real browser on a phone and a desktop screen.
+# A red run sends a message from GitHub to the owner.
+name: Nightly check of the site
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * *'
+
+jobs:
+  site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci --no-audit --no-fund
+      - run: node scripts/smoke-prod.mjs
+      - run: node scripts/ui-prod.mjs

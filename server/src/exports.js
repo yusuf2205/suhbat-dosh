@@ -97,20 +97,63 @@ function renderTxt(title, groups) {
   return `${title}\n${'='.repeat(Math.min(60, title.length))}\n\n${groups.map((g) => `# ${g.chat} (${g.type})\n${g.items.map(line).join('\n')}`).join('\n\n')}\n`;
 }
 
+const DAY = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Tashkent' });
+const CLOCK = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tashkent' });
+
+/** A page that reads like the chat itself: bubbles, a side and a colour for each person, days as dividers, the pictures inside. */
 function renderHtml(title, groups, mediaPath) {
+  let inline = 0;   // a page without a folder of files carries small pictures inside itself (up to a limit)
   const media = (e) => {
     if (!e.file) return '';
     const href = mediaPath ? esc(mediaPath(e)) : null;
-    if (!href) return `<div class="f">${esc(e.file.name)}</div>`;
+    if (!href) {
+      if (e.file.mime.startsWith('image/') && inline < 20_000_000) {
+        try {
+          const thumb = `${filePath(e.file.id)}.thumb`;
+          const src = fs.existsSync(thumb) ? thumb : (e.file.size <= 250_000 ? filePath(e.file.id) : null);
+          if (src) {
+            const buf = fs.readFileSync(src);
+            inline += buf.length;
+            return `<img src="data:${src === thumb ? 'image/jpeg' : e.file.mime};base64,${buf.toString('base64')}" alt="">`;
+          }
+        } catch { /* the file is gone: only its name */ }
+      }
+      return `<div class="f">📎 ${esc(e.file.name)}</div>`;
+    }
     if (e.file.mime.startsWith('image/')) return `<a href="${href}"><img src="${href}" alt="" loading="lazy"></a>`;
     if (e.file.mime.startsWith('video/')) return `<video src="${href}" controls preload="none"></video>`;
     if (e.file.mime.startsWith('audio/')) return `<audio src="${href}" controls preload="none"></audio>`;
-    return `<div class="f"><a href="${href}">${esc(e.file.name)}</a></div>`;
+    return `<div class="f">📎 <a href="${href}">${esc(e.file.name)}</a></div>`;
   };
-  return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>${esc(title)}</title>
-<style>body{font:15px/1.45 system-ui,sans-serif;max-width:780px;margin:24px auto;padding:0 12px;background:#fffaf0;color:#1d1d1f}h2{margin:28px 0 6px}.m{background:#fff;border-radius:14px;padding:8px 12px;margin:6px 0;box-shadow:0 1px 3px #0001;overflow-wrap:anywhere}.w{font-weight:600;color:#8a6200}.t{color:#888;font-size:.8em;float:right}img,video{max-width:100%;max-height:360px;border-radius:10px;display:block;margin-top:6px}.x{opacity:.6;font-size:.85em}</style>
-<h1>${esc(title)}</h1>
-${groups.map((g) => `<h2>${esc(g.chat)} <small class="x">${esc(g.type)} · ${g.items.length}</small></h2>${g.items.map((e) => `<div class="m"><span class="t">${esc(stamp(e.at))}</span><div class="w">${esc(e.author)}</div>${e.kind !== 'text' && !e.file ? `[${esc(KIND[e.kind] || e.kind)}] ` : ''}${esc(e.text).replace(/\n/g, '<br>')}${media(e)}${e.deleted_in_telegram ? '<div class="x">удалено в Телеграме</div>' : ''}</div>`).join('\n')}`).join('\n')}
+  const section = (g) => {
+    const people = [...new Set(g.items.map((e) => e.author))];
+    let lastDay = '';
+    let prev = null;
+    const msgs = g.items.map((e) => {
+      const d = DAY.format(e.at);
+      const sep = d !== lastDay ? `<div class="d"><span>${esc(d)}</span></div>` : '';
+      lastDay = d;
+      const n = people.indexOf(e.author);
+      const same = !sep && prev === e.author;
+      prev = e.author;
+      const label = e.kind !== 'text' && !e.file ? `<div class="k">${esc(KIND[e.kind] || e.kind)}</div>` : '';
+      return `${sep}<div class="r s${n % 2}"><div class="m${e.deleted_in_telegram ? ' x' : ''}">${same ? '' : `<div class="w c${n % 6}">${esc(e.author)}</div>`}${media(e)}${label}${e.text ? `<div class="b">${esc(e.text)}</div>` : ''}<span class="t">${esc(CLOCK.format(e.at))}${e.edited_at ? ' · изменено' : ''}${e.deleted_in_telegram ? ' · удалено в Телеграме' : ''}</span></div></div>`;
+    }).join('\n');
+    return `<h2>${esc(g.chat)} <small>${esc(g.type)} · ${g.items.length}</small></h2>${msgs}`;
+  };
+  const total = groups.reduce((a, g) => a + g.items.length, 0);
+  return `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>
+:root{color-scheme:light}body{font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#efe7d0;color:#1d1d1f}
+header{position:sticky;top:0;z-index:2;background:#fbc700;padding:10px 16px;box-shadow:0 1px 4px #0003}header h1{margin:0;font-size:1.05rem}header small{opacity:.7}
+main{max-width:780px;margin:0 auto;padding:6px 10px 40px}h2{margin:26px 0 4px;font-size:1rem}h2 small{font-weight:400;color:#7a6a2e}.d{text-align:center;margin:14px 0 6px}.d span{background:#0000001f;color:#fff;border-radius:999px;padding:3px 12px;font-size:.78rem}
+.r{display:flex;margin:2px 0}.r.s1{justify-content:flex-end}.m{max-width:82%;background:#fff;border-radius:14px 14px 14px 4px;padding:6px 10px 4px;box-shadow:0 1px 2px #0002;overflow-wrap:anywhere}
+.s1 .m{background:#fff3b8;border-radius:14px 14px 4px 14px}.m.x{opacity:.65}.w{font-weight:700;font-size:.85rem}.c0{color:#b25e00}.c1{color:#1c7c3a}.c2{color:#1c5fa8}.c3{color:#9b2d8f}.c4{color:#a82d2d}.c5{color:#00796b}
+.b{white-space:pre-wrap}.k{color:#7a6a2e;font-size:.85rem}.f{font-size:.85rem}.t{display:block;text-align:right;color:#888;font-size:.7rem;margin-top:2px}img,video{display:block;max-width:100%;max-height:340px;border-radius:10px;margin:4px 0}audio{width:100%;margin:4px 0}
+@media print{header{position:static;box-shadow:none}body{background:#fff}.m{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
+</style>
+<header><h1>${esc(title)}</h1><small>${total} сообщ.</small></header>
+<main>${groups.map(section).join('\n')}</main>
 </html>`;
 }
 

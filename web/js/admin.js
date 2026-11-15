@@ -621,9 +621,33 @@ async function showUser(id) {
 
   const dir = state.users.get(id) || {};
   const qIn = h('input', { class: 'input', type: 'number', min: 0, placeholder: 'МБ (пусто — как у всех, 0 — без лимита)', 'aria-label': 'Лимит хранилища, МБ', value: dir.quota ? Math.round(dir.quota / 1048576) : '' });
+  // free the disk: the files of this person go, the messages stay (a mirrored one is not downloaded again)
+  const PK = [['image', 'Фото'], ['video', 'Видео'], ['audio', 'Аудио и голосовые'], ['file', 'Другие файлы']];
+  const picks = new Map(PK.map(([k]) => [k, h('input', { type: 'checkbox', checked: k !== 'image' })]));
+  const olderSel = h('select', { class: 'input', 'aria-label': 'Возраст файлов' }, [['', 'любые по возрасту'], ['30', 'старше 30 дней'], ['90', 'старше 90 дней'], ['365', 'старше года']].map(([v, t]) => h('option', { value: v }, t)));
+  const purgeInfo = h('p', { class: 'muted' }, '…');
+  const purgeQs = () => new URLSearchParams({ kinds: PK.filter(([k]) => picks.get(k).checked).map(([k]) => k).join(','), ...(olderSel.value ? { older_days: olderSel.value } : {}) });
+  const recount = async () => {
+    try {
+      const r = await get(`/api/admin/users/${id}/purge?${purgeQs()}`);
+      purgeInfo.textContent = r.files ? `Будет удалено: ${r.files} файлов, ${fmtBytes(r.bytes)}. Сообщения останутся.` : 'Под выбранное ничего не подходит';
+      purgeBtn.disabled = !r.files;
+    } catch (e) { purgeInfo.textContent = errMsg(e); }
+  };
+  const purgeBtn = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+    if (!(await askConfirm('Удалить файлы этого пользователя с диска? Это нельзя отменить. Сами сообщения останутся, но без вложений.'))) return;
+    try { const r = await send('POST', `/api/admin/users/${id}/purge`, { confirm: true, kinds: purgeQs().get('kinds'), older_days: olderSel.value || undefined }); notify(`Удалено ${r.files} файлов, освобождено ${fmtBytes(r.bytes)}`); await openUser(id); } catch (e) { notify(errMsg(e)); }
+  } }, 'Удалить файлы');
+  for (const el of [...picks.values(), olderSel]) el.addEventListener('change', recount);
+  const purge = !may('users_delete') ? null : h('div', { class: 'ud-purge' },
+    h('h3', null, 'Освободить место'),
+    h('div', { class: 'ud-purge-kinds' }, PK.map(([k, t]) => h('label', { class: 'chk' }, picks.get(k), ` ${t}`))),
+    olderSel, purgeInfo, purgeBtn);
   const storage = fold('Хранилище', fmtBytes(dir.storage || 0),
     h('p', { class: 'muted' }, `Занято файлами в чатах: ${fmtBytes(dir.storage || 0)}${dir.quota ? ` из ${fmtBytes(dir.quota)}` : ' (без лимита)'}`),
-    h('div', { class: 'toolbar' }, qIn, h('button', { class: 'btn', type: 'button', onclick: run(null, () => send('PUT', `/api/admin/users/${id}/quota`, { mb: qIn.value === '' ? null : Number(qIn.value) })) }, 'Сохранить лимит')));
+    h('div', { class: 'toolbar' }, qIn, h('button', { class: 'btn', type: 'button', onclick: run(null, () => send('PUT', `/api/admin/users/${id}/quota`, { mb: qIn.value === '' ? null : Number(qIn.value) })) }, 'Сохранить лимит')),
+    purge);
+  if (purge) recount();
 
   const profile = fold('Профиль', null,
     h('dl', { class: 'dl' },
@@ -693,6 +717,24 @@ async function viewChats() {
   let mode = 'text';
   const modeChips = [['text', 'По словам'], ['meaning', '✨ По смыслу']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === mode), onclick: () => { mode = k; modeChips.forEach((b, i) => b.setAttribute('aria-pressed', String(i === (k === 'text' ? 0 : 1)))); findMessages(); } }, l));
   const found = h('section', { class: 'panel', hidden: true });
+  // filters of the search in messages: what kind, whose, when, in which chats
+  const fKind = h('select', { class: 'input', 'aria-label': 'Что искать' }, [['', 'любые сообщения'], ['photo', 'фото'], ['video', 'видео'], ['voicemsg', 'голосовые'], ['audio', 'аудио'], ['file', 'файлы'], ['link', 'ссылки'], ['gif', 'GIF']].map(([v, t]) => h('option', { value: v }, t)));
+  const fType = h('select', { class: 'input', 'aria-label': 'Где искать' }, [['', 'везде'], ['direct', 'личные чаты'], ['group', 'группы'], ['channel', 'каналы']].map(([v, t]) => h('option', { value: v }, t)));
+  const fAuthor = h('input', { class: 'input', type: 'search', placeholder: 'Чьи (имя)', 'aria-label': 'Автор' });
+  const fSince = h('input', { class: 'input', type: 'date', 'aria-label': 'С даты' });
+  const fUntil = h('input', { class: 'input', type: 'date', 'aria-label': 'По дату' });
+  const filtersOn = () => !!(fKind.value || fType.value || fAuthor.value.trim() || fSince.value || fUntil.value);
+  const filterQs = () => {
+    const p = new URLSearchParams();
+    if (fKind.value) p.set('kind', fKind.value);
+    if (fType.value) p.set('chat_type', fType.value);
+    if (fAuthor.value.trim()) p.set('author', fAuthor.value.trim());
+    if (fSince.value) p.set('since', String(new Date(`${fSince.value}T00:00:00`).getTime()));
+    if (fUntil.value) p.set('until', String(new Date(`${fUntil.value}T23:59:59`).getTime()));
+    return p.toString();
+  };
+  const filterBox = h('details', { class: 'afilters' }, h('summary', null, icon('filter', 16), ' Фильтры'),
+    h('div', { class: 'afilters-grid' }, fKind, fType, fAuthor, h('label', { class: 'afilters-d' }, 'С ', fSince), h('label', { class: 'afilters-d' }, 'По ', fUntil)));
   // every person is a category of their own: the numbers of personal chats, groups and channels, and a tap opens them
   const draw = () => {
     const t = search.value.trim().toLowerCase();
@@ -709,11 +751,12 @@ async function viewChats() {
   async function findMessages() {
     const term = search.value.trim();
     const mine = ++seq;
-    if (term.length < (mode === 'meaning' ? 3 : 2)) { found.hidden = true; return; }
+    const narrowed = mode === 'text' && filtersOn();   // with a filter the words may be left out: "all voice messages of this person"
+    if (term.length < (mode === 'meaning' ? 3 : 2) && !(narrowed && term.length === 0)) { found.hidden = true; return; }
     found.hidden = false;
     clear(found).append(h('p', { class: 'muted' }, 'Ищу…'));
     let r;
-    try { r = await get(`/api/admin/search?mode=${mode}&q=${encodeURIComponent(term)}`); } catch (e) {
+    try { r = await get(`/api/admin/search?mode=${mode}&q=${encodeURIComponent(term)}${mode === 'text' && filtersOn() ? `&${filterQs()}` : ''}`); } catch (e) {
       if (mine !== seq) return;
       clear(found).append(h('p', { class: 'muted' }, e.status === 503 || /503|semantic_unavailable/.test(String(e.message)) ? 'Поиск по смыслу сейчас недоступен: служба не запущена. Работает поиск по словам.' : errMsg(e)));
       return;
@@ -730,9 +773,11 @@ async function viewChats() {
   }
   let timer = 0;
   search.addEventListener('input', () => { draw(); clearTimeout(timer); timer = setTimeout(findMessages, 450); });
+  for (const el of [fKind, fType, fSince, fUntil]) el.addEventListener('change', findMessages);
+  fAuthor.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(findMessages, 450); });
   draw();
   setView(state.readLimited ? h('p', { class: 'muted' }, 'Вам открыта только часть переписки: это решает главный администратор.') : '',
-    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips))),
+    h('div', { class: 'achat-tools' }, h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), h('div', { class: 'chips' }, modeChips)), filterBox),
     found,
     h('div', { class: 'panel' }, body));
   search.focus();

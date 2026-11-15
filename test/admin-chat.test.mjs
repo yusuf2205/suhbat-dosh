@@ -92,3 +92,50 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
   assert.equal((await call(admin.cookie, 'GET', `${url}/find`)).status, 400);
   void list;
 });
+
+test('freeing the disk: the files of a person go, the messages stay; only who may delete accounts can do it', async () => {
+  const admin = await login('+998900000001', 'Админ');
+  const a = await login('+998901110011', 'Лола');
+  const b = await login('+998901110012', 'Бахром');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  const data = crypto.randomBytes(50_000);
+  const init = await call(a.cookie, 'POST', `/api/chats/${chat.id}/uploads`, { name: 'x.bin', size: data.length, client_id: 'client-purge-1' });
+  const put = await fetch(`${BASE}/api/uploads/${init.data.upload_id}?offset=0`, { method: 'PUT', headers: { cookie: a.cookie, 'content-type': 'application/octet-stream' }, body: data });
+  assert.equal(put.status, 200);
+  const done = await call(a.cookie, 'POST', `/api/uploads/${init.data.upload_id}/complete`);
+  assert.equal(done.status, 201);
+  const msg = done.data.message;
+  const base = `/api/admin/users/${a.data.user.id}/purge`;
+  assert.equal((await call(a.cookie, 'GET', base)).status, 403, 'an ordinary person');
+  const pre = await call(admin.cookie, 'GET', `${base}?kinds=file`);
+  assert.equal(pre.data.files, 1);
+  assert.equal(pre.data.bytes, data.length);
+  assert.equal((await call(admin.cookie, 'GET', `${base}?kinds=video`)).data.files, 0, 'another kind: nothing');
+  assert.equal((await call(admin.cookie, 'GET', `${base}?older_days=30`)).data.files, 0, 'too fresh');
+  assert.equal((await call(admin.cookie, 'POST', base, { kinds: 'file' })).status, 400, 'no confirmation');
+  const r = await call(admin.cookie, 'POST', base, { confirm: true, kinds: 'file' });
+  assert.equal(r.data.files, 1);
+  assert.equal((await call(admin.cookie, 'GET', base)).data.files, 0);
+  const left = (await call(admin.cookie, 'GET', `/api/admin/chats/${chat.id}/messages?limit=50`)).data.messages;
+  assert.ok(left.some((m) => m.id === msg.id), 'the message stays');
+});
+
+test('search in the whole history with filters: kind, person, period, type of chat; words may be left out', async () => {
+  const admin = await login('+998900000001', 'Админ');
+  const a = await login('+998901110021', 'Зарина');
+  const b = await login('+998901110022', 'Тимур');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  const say = (who, text) => call(who.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text, client_id: crypto.randomUUID() });
+  await say(a, 'встреча в пятницу https://example.com/a');
+  await say(b, 'встреча перенесена');
+  const find = (qs) => call(admin.cookie, 'GET', `/api/admin/search?${qs}`);
+  assert.equal((await find('q=встреча')).data.results.length, 2);
+  assert.equal((await find('q=встреча&author=Тимур')).data.results.length, 1, 'only one person');
+  assert.equal((await find('q=встреча&kind=link')).data.results.length, 1, 'only links');
+  assert.equal((await find('q=встреча&chat_type=group')).data.results.length, 0, 'no such chat type');
+  assert.equal((await find('q=встреча&chat_type=direct')).data.results.length, 2);
+  assert.equal((await find('q=встреча&since=' + (Date.now() + 86400000))).data.results.length, 0, 'a period in the future');
+  assert.equal((await find('author=Зарина')).data.results.length, 1, 'no words: all of one person');
+  assert.equal((await find('q=')).status, 400, 'neither words nor filters');
+  assert.equal((await find('q=встреча&chat_type=bad')).status, 400);
+});

@@ -507,10 +507,18 @@ admin.post('/integrity/run', (req, res) => {
 
 // Search across the messages: the words themselves (any letter case) or the meaning of a phrase. Every search is written to the journal.
 admin.get('/search', async (req, res) => {
-  const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 200 });
-  const meaning = req.query.mode === 'meaning';
+  // narrowing: a kind of message (photo, video, voice...), a person, a period, a type of chat; the words may then be left out
+  const narrow = chatFilter(0, { ...req.query, q: '' });
+  const ct = String(req.query.chat_type ?? '');
+  if (ct && !['direct', 'group', 'channel'].includes(ct)) throw new HttpError(400, 'invalid_input');
+  const where = narrow.where.slice(1);
+  const wparams = narrow.params.slice(1);
+  if (ct) { where.push('m.chat_id IN (SELECT id FROM chats WHERE type = ?)'); wparams.push(ct); }
+  const filtered = where.length > 0;
+  const term = filtered && !String(req.query.q ?? '').trim() ? '' : str(String(req.query.q ?? ''), 'q', { min: 2, max: 200 });
+  const meaning = req.query.mode === 'meaning' && !!term;
   const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
-  audit(req.user.id, 'admin.search', { target_type: chatId !== undefined ? 'chat' : null, target_id: chatId !== undefined ? String(chatId) : null, chat_id: chatId ?? null, ip: req.ip, details: { q: term.slice(0, 100), mode: meaning ? 'meaning' : 'text' } });
+  audit(req.user.id, 'admin.search', { target_type: chatId !== undefined ? 'chat' : null, target_id: chatId !== undefined ? String(chatId) : null, chat_id: chatId ?? null, ip: req.ip, details: { q: term.slice(0, 100), mode: meaning ? 'meaning' : 'text', ...(filtered ? { kind: req.query.kind || undefined, author: req.query.author || undefined, chat_type: ct || undefined } : {}) } });
   let rows;
   let scores = new Map();
   if (meaning) {
@@ -522,12 +530,13 @@ admin.get('/search', async (req, res) => {
     // the whole history at once: words of three letters or more go through the full-text index (text, speech of voice messages, file names), shorter ones are matched on what it left
     const words = term.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
     const long = words.filter((w) => [...w].length >= 3);
-    const conds = [];
-    const args = [];
-    if (long.length) { conds.push('id IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)'); args.push(long.map((w) => `"${w.replace(/"/g, '""')}"`).join(' AND ')); }
-    for (const w of words.filter((x) => [...x].length < 3)) { conds.push("lc(text) LIKE ? ESCAPE '\\'"); args.push(`%${escapeLike(w)}%`); }
+    const conds = [...where];
+    const args = [...wparams];
+    if (long.length) { conds.push('m.id IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)'); args.push(long.map((w) => `"${w.replace(/"/g, '""')}"`).join(' AND ')); }
+    for (const w of words.filter((x) => [...x].length < 3)) { conds.push("lc(m.text) LIKE ? ESCAPE '\\'"); args.push(`%${escapeLike(w)}%`); }
+    if (chatId !== undefined) { conds.push('m.chat_id = ?'); args.push(chatId); }
     const hidden = hiddenChatSql(req.user);
-    rows = q.all(`SELECT * FROM messages WHERE ${conds.join(' AND ')} ${chatId !== undefined ? 'AND chat_id = ?' : ''} AND chat_id NOT IN (SELECT c.id FROM chats c WHERE ${hidden.sql}) ORDER BY created_at DESC, id DESC LIMIT 30`, ...args, ...(chatId !== undefined ? [chatId] : []), ...hidden.params);
+    rows = q.all(`SELECT m.* FROM messages m WHERE ${conds.join(' AND ')} AND m.chat_id NOT IN (SELECT c.id FROM chats c WHERE ${hidden.sql}) ORDER BY m.created_at DESC, m.id DESC LIMIT 60`, ...args, ...hidden.params);
   }
   rows = rows.filter((m) => !chatHiddenFrom(m.chat_id, req.user));
   res.json({ results: rows.map((m) => ({ ...adminMessage(m), score: scores.get(m.id) ?? null })), mode: meaning ? 'meaning' : 'text' });
@@ -558,11 +567,48 @@ admin.get('/chats/:id/export', (req, res) => {
     return;
   }
   const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-  res.type('text/html; charset=utf-8').send(`<!doctype html><html lang="ru"><meta charset="utf-8"><title>${esc(title)}</title>
-<style>body{font:15px/1.45 system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 12px;background:#fffaf0;color:#1d1d1f}.m{background:#fff;border-radius:14px;padding:8px 12px;margin:6px 0;box-shadow:0 1px 3px #0001}.w{font-weight:600;color:#8a6200}.t{color:#888;font-size:.8em;float:right}</style>
-<h1>${esc(title)}</h1><p>${items.length} сообщ.</p>
-${items.map((i) => `<div class="m"><span class="t">${esc(i.when)}</span><div class="w">${esc(i.who)}</div>${esc(i.what)}</div>`).join('\n')}
+  // a page that reads like the chat: bubbles, a side for each person, days as dividers, small pictures inside the file
+  let inline = 0;
+  const picture = (m) => {
+    if (m.kind !== 'image' || !m.file_id || inline > 15_000_000) return '';
+    try {
+      const thumb = `${filePath(m.file_id)}.thumb`;
+      const src = fs.existsSync(thumb) ? thumb : (fs.statSync(filePath(m.file_id)).size <= 250_000 ? filePath(m.file_id) : null);
+      if (!src) return '';
+      const buf = fs.readFileSync(src);
+      inline += buf.length;
+      const mime = src === thumb ? 'image/jpeg' : (q.get('SELECT mime FROM files WHERE id = ?', m.file_id)?.mime || 'image/jpeg');
+      return `<img alt="" src="data:${mime};base64,${buf.toString('base64')}">`;
+    } catch { return ''; }
+  };
+  const people = [...new Set(rows.map((m) => m.import_author || getUser(m.sender_id)?.name || '—'))];
+  const day = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Tashkent' });
+  const hm = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tashkent' });
+  let lastDay = '';
+  const body = rows.map((m, n) => {
+    const who = people.indexOf(m.import_author || getUser(m.sender_id)?.name || '—');
+    const name = people[who];
+    const d = day.format(m.created_at);
+    const sep = d !== lastDay ? `<div class="d"><span>${esc(d)}</span></div>` : '';
+    lastDay = d;
+    const same = n > 0 && !sep && (rows[n - 1].import_author || getUser(rows[n - 1].sender_id)?.name || '—') === name;
+    const label = m.kind === 'text' ? '' : `<div class="k">${esc(KIND_LABEL[m.kind] || m.kind)}${m.duration ? ` · ${Math.floor(m.duration / 60)}:${String(m.duration % 60).padStart(2, '0')}` : ''}</div>`;
+    const file = m.file_id && m.kind !== 'image' ? q.get('SELECT name FROM files WHERE id = ?', m.file_id)?.name : '';
+    return `${sep}<div class="r s${who % 2}"><div class="m${m.tg_deleted ? ' x' : ''}">${same ? '' : `<div class="w c${who % 6}">${esc(name)}</div>`}${picture(m)}${label}${file ? `<div class="f">📎 ${esc(file)}</div>` : ''}${m.text ? `<div class="b">${esc(m.text)}</div>` : ''}<span class="t">${esc(hm.format(m.created_at))}${m.edited_at ? ' · изменено' : ''}${m.tg_deleted ? ' · удалено в Телеграме' : ''}</span></div></div>`;
+  }).join('\n');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox");
+  res.type('text/html; charset=utf-8').send(`<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>
+:root{color-scheme:light}body{font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#efe7d0;color:#1d1d1f}
+header{position:sticky;top:0;background:#fbc700;padding:10px 16px;box-shadow:0 1px 4px #0003}header h1{margin:0;font-size:1.05rem}header small{opacity:.7}
+main{max-width:760px;margin:0 auto;padding:10px 10px 40px}.d{text-align:center;margin:14px 0 6px}.d span{background:#0000001f;color:#fff;border-radius:999px;padding:3px 12px;font-size:.78rem}
+.r{display:flex;margin:2px 0}.r.s1{justify-content:flex-end}.m{max-width:80%;background:#fff;border-radius:14px 14px 14px 4px;padding:6px 10px 4px;box-shadow:0 1px 2px #0002;overflow-wrap:anywhere}
+.s1 .m{background:#fff3b8;border-radius:14px 14px 4px 14px}.m.x{opacity:.65}.w{font-weight:700;font-size:.85rem}.c0{color:#b25e00}.c1{color:#1c7c3a}.c2{color:#1c5fa8}.c3{color:#9b2d8f}.c4{color:#a82d2d}.c5{color:#00796b}
+.b{white-space:pre-wrap}.k{color:#7a6a2e;font-size:.85rem}.f{font-size:.85rem}.t{display:block;text-align:right;color:#888;font-size:.7rem;margin-top:2px}img{display:block;max-width:100%;max-height:320px;border-radius:10px;margin:4px 0}
+@media print{header{position:static;box-shadow:none}body{background:#fff}.m{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
+</style>
+<header><h1>${esc(title)}</h1><small>${rows.length} сообщ. · ${esc(rows.length ? `${day.format(rows[0].created_at)} — ${day.format(rows[rows.length - 1].created_at)}` : '')}</small></header>
+<main>${body}</main>
 </html>`);
 });
 
@@ -660,6 +706,51 @@ admin.delete('/users/:id', (req, res) => {
   for (const [id, uids] of watchers) emit(uids, { type: EVENTS.CHAT_REMOVE, chat_id: id });
   audit(req.user.id, 'admin.delete_user', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { name: u.name, username: u.username } });
   res.json({ ok: true });
+});
+
+/**
+ * Free the disk: the files of one person (what they sent and what the copy of their Telegram holds), the messages stay.
+ * A mirrored message whose file is gone is put on the "do not fetch again" list, otherwise the next pass would download it anew.
+ * Filters: kinds (image, video, audio, file), a chat, older than N days.
+ */
+const PURGE_KINDS = { image: "f.mime LIKE 'image/%'", video: "f.mime LIKE 'video/%'", audio: "f.mime LIKE 'audio/%'", file: "f.mime NOT LIKE 'image/%' AND f.mime NOT LIKE 'video/%' AND f.mime NOT LIKE 'audio/%'" };
+function purgeFilter(req) {
+  const u = target(req);
+  const b = { ...req.query, ...(req.body || {}) };
+  const kinds = String(b.kinds || '').split(',').filter((k) => PURGE_KINDS[k]);
+  const where = ['(f.owner_id = ? OR f.chat_id IN (SELECT chat_id FROM tg_chats WHERE user_id = ?))', 'f.chat_id IS NOT NULL'];
+  const args = [u.id, u.id];
+  if (kinds.length) where.push(`(${kinds.map((k) => PURGE_KINDS[k]).join(' OR ')})`);
+  if (b.chat_id) { where.push('f.chat_id = ?'); args.push(int(b.chat_id, 'chat_id')); }
+  if (b.older_days) { where.push('f.created_at < ?'); args.push(now() - int(b.older_days, 'older_days', { min: 1, max: 3650 }) * 86400_000); }
+  // a profile photo, a sticker or a story is not "data in chats": only files that a message or a chat holds
+  where.push('(EXISTS (SELECT 1 FROM messages m WHERE m.file_id = f.id))');
+  return { u, sql: where.join(' AND '), args };
+}
+
+admin.get('/users/:id/purge', (req, res) => {
+  const { sql, args } = purgeFilter(req);
+  const total = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f WHERE ${sql}`, ...args);
+  const by = {};
+  for (const [k, cond] of Object.entries(PURGE_KINDS)) by[k] = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f WHERE ${sql} AND ${cond}`, ...args);
+  res.json({ ...total, by });
+});
+
+admin.post('/users/:id/purge', (req, res) => {
+  if (req.body?.confirm !== true) throw new HttpError(400, 'confirm_required');
+  const { u, sql, args } = purgeFilter(req);
+  const ids = q.all(`SELECT f.id, f.size FROM files f WHERE ${sql}`, ...args);
+  const t = now();
+  tx(() => {
+    for (const f of ids) {
+      q.run("INSERT OR IGNORE INTO tg_media_skip (message_id, reason, at) SELECT m.id, 'purged', ? FROM messages m WHERE m.file_id = ? AND m.import_key LIKE 'tg:%'", t, f.id);
+      q.run('DELETE FROM files WHERE id = ?', f.id);
+    }
+  });
+  for (const f of ids) removeFile(f.id);
+  const bytes = ids.reduce((a, f) => a + f.size, 0);
+  audit(req.user.id, 'admin.purge_files', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { files: ids.length, bytes, kinds: req.body?.kinds || '', chat_id: req.body?.chat_id || null, older_days: req.body?.older_days || null } });
+  res.json({ ok: true, files: ids.length, bytes });
 });
 
 // ------------------------------------------------------------------ registration, invitations

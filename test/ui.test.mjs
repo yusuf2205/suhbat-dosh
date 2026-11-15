@@ -222,6 +222,20 @@ test('admin: the gallery of a conversation on a phone: icon buttons, square pict
   } finally { await ctx.close(); }
 });
 
+test('admin: the summary window fits a phone screen', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.tbtn');
+    await page.click('.tbtn[aria-label="Сводка"]');
+    await page.waitForSelector('.asum');
+    const r = await page.$eval('.asum', (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, w: innerWidth, sw: document.documentElement.scrollWidth }; });
+    assert.ok(r.l >= 0 && r.r <= r.w + 1, `the window is inside the screen: ${JSON.stringify(r)}`);
+    assert.ok(r.sw <= r.w + 1, 'the page does not scroll sideways');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('admin: a turned picture stays centred and inside the screen', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.admin);
   try {
