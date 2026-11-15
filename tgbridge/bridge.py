@@ -32,8 +32,9 @@ SERVER = os.environ.get("SERVER_URL", "http://suhbat:3000").rstrip("/")
 API_ID = int(os.environ.get("TG_API_ID", "0") or 0)
 API_HASH = os.environ.get("TG_API_HASH", "")
 MOCK = os.environ.get("TGBRIDGE_MOCK") == "1"
-BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "150"))
-BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "200"))
+BACKFILL_MESSAGES = int(os.environ.get("BACKFILL_MESSAGES", "0"))   # 0: the whole history of every chat
+CHANNEL_HISTORY = int(os.environ.get("CHANNEL_HISTORY", "150"))   # channels are not copied whole: only this many of the latest posts
+BACKFILL_DIALOGS = int(os.environ.get("BACKFILL_DIALOGS", "0")) or None   # 0: every chat of the account
 TELEGRAM_SERVICE = 777000
 HEAVY = asyncio.Semaphore(int(os.environ.get("BRIDGE_HEAVY_JOBS", "10")))   # history copies and light passes running at once
 RECENT_DAYS = 3        # the light pass looks only at chats with something new in the last days
@@ -230,6 +231,7 @@ class Acct:
         self.prof_at = {}          # chat -> when its name / @username / phone / photo were last sent
         self.topics = {}           # chat -> { "at": when the list was fetched, "map": topic id -> (title, color) } (groups with topics)
         self.synced = False        # the first complete copy of the personal chats has finished
+        self.deep = False          # the copy of the WHOLE history (all chats, picked groups and channels too) has finished
 
     @property
     def session_file(self):
@@ -245,12 +247,13 @@ class Acct:
                 d = json.load(f)
             self.auto_private = bool(d.get("auto_private", True))
             self.synced = bool(d.get("synced", False))
+            self.deep = bool(d.get("deep", False))
             self.chats = {str(k): v for k, v in d.get("chats", {}).items()}
         except Exception:
             pass
 
     def save_list(self):
-        write_secret(self.list_file, json.dumps({"auto_private": self.auto_private, "chats": self.chats, "synced": self.synced}).encode())
+        write_secret(self.list_file, json.dumps({"auto_private": self.auto_private, "chats": self.chats, "synced": self.synced, "deep": self.deep}).encode())
 
     async def persist_session(self):
         write_secret(self.session_file, seal("mock" if MOCK else self.client.session.save()))
@@ -831,26 +834,44 @@ async def topic_fields(a: Acct, key: str, msg) -> dict:
 
 async def copy_dialog(a: Acct, d, limit=None, media_since=None):
     """The recent history of one personal chat, oldest first. Messages newer than media_since come with their photos, videos and files at once."""
+    kind = "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"
     msgs = []
-    async for m in a.client.iter_messages(d.entity, limit=limit or BACKFILL_MESSAGES):
+
+    async def flush():
+        for m in reversed(msgs):
+            sender = await m.get_sender()
+            topic = await topic_fields(a, str(d.id), m)
+            mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
+            if mk and await upload_media(a, m, mk, {
+                "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": "1" if getattr(d.entity, "is_self", False) else "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
+                "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
+            }):
+                continue
+            await to_server({
+                "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": bool(getattr(d.entity, "is_self", False)), "backfill": True, "tg_msg": m.id,
+                "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+                "geo": geo_of(m), **topic,
+            })
+        msgs.clear()
+
+    # newest first, in portions of 300 (a chat of a hundred thousand messages is never held in memory whole)
+    async for m in a.client.iter_messages(d.entity, limit=limit or (CHANNEL_HISTORY if kind == "channel" else BACKFILL_MESSAGES) or None):   # channels: only the recent posts
         if describe(m):
             msgs.append(m)
-    kind = "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"
-    for m in reversed(msgs):
-        sender = await m.get_sender()
-        topic = await topic_fields(a, str(d.id), m)
-        mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
-        if mk and await upload_media(a, m, mk, {
-            "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": "1" if getattr(d.entity, "is_self", False) else "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
-            "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
-        }):
-            continue
-        await to_server({
-            "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": bool(getattr(d.entity, "is_self", False)), "backfill": True, "tg_msg": m.id,
-            "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
-            "geo": geo_of(m), **topic,
-        })
+        if len(msgs) >= 300:
+            await flush()
+    await flush()
     await sync_profile(a, d.entity, str(d.id), kind)
+
+
+async def copy_picked(a: Acct, keys):
+    async with HEAVY:
+        try:
+            async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+                if str(d.id) in keys:
+                    await copy_dialog(a, d)
+        except Exception as e:
+            log("history of a picked chat skipped:", repr(e)[:80])
 
 
 async def run_backfill(a: Acct):
@@ -875,7 +896,7 @@ async def _run_backfill(a: Acct):
             return
         todo = []
         async for d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
-            if d.is_user and private_ok(d.id, d.entity):
+            if (d.is_user and private_ok(d.id, d.entity)) or (not d.is_user and str(d.id) in a.chats):   # picked groups and channels get their whole history too
                 todo.append(d)
         a.backfill["total"] = len(todo)
         for d in todo:
@@ -890,6 +911,7 @@ async def _run_backfill(a: Acct):
             await asyncio.sleep(0.6)  # be gentle with Telegram's limits
         a.backfill["state"] = "done"
         a.synced = True
+        a.deep = True
         a.save_list()
         await to_server({"owner": a.uid, "sync_done": True})
     except asyncio.CancelledError:
@@ -962,7 +984,7 @@ async def start_existing():
         except Exception as e:
             log("catch-up failed:", type(e).__name__)
         log("connected account", a.uid)
-        if not a.synced:
+        if not a.synced or not a.deep:   # an account copied the old short way (150 messages) gets the whole history once
             a.bf_task = asyncio.create_task(delayed_backfill(a))
 
 
@@ -1138,8 +1160,12 @@ async def set_chats(r):
         return web.json_response({"error": "not_linked"}, status=409)
     body = await r.json()
     a.auto_private = bool(body.get("auto_private", True))
+    before = set(a.chats)
     a.chats = {str(c["id"]): {"two_way": bool(c.get("two_way")), "photo": str(c.get("photo") or "")} for c in body.get("chats", [])[:600]}
     a.save_list()
+    fresh = set(a.chats) - before
+    if fresh and a.deep and not MOCK:
+        asyncio.create_task(copy_picked(a, fresh))   # a group or channel that was just picked gets its whole history at once
     return web.json_response({"ok": True, "count": len(a.chats)})
 
 
