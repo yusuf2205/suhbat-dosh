@@ -194,7 +194,9 @@ function eventsTable(events, opts) {
 // ---------------------------------------------------------------- views
 function setView(...nodes) {
   stopLive();
+  parkPlayer();   // what plays goes on while the page changes
   clear(view).append(...nodes.flat());
+  placePlayer();
   window.scrollTo(0, 0);
 }
 
@@ -772,8 +774,7 @@ document.addEventListener('suhbat:phone', async (e) => {
   try { await navigator.clipboard.writeText(e.detail.phone); notify(`Номер ${e.detail.phone} скопирован`, 2500); } catch { notify(e.detail.phone); }
 });
 
-/** A player with the speed under it. */
-/** A sticker or a GIF copied from Telegram (and a video sticker): shown the way it is in Telegram, playing by itself without controls. */
+/** A player with the speed under it (the video of a message keeps its own controls). */
 const isMotion = (f) => /^(gif|sticker)[.]/.test(f.name || '') || f.mime === 'video/webm';
 const isSticker = (f) => /^sticker[.]/.test(f.name || '') || f.mime === 'video/webm' || f.mime === 'image/webp';
 
@@ -782,13 +783,177 @@ function player(media) {
   return h('div', { class: 'abub-player' }, media);
 }
 
-/**
- * One player for all the voice, audio and video messages of a conversation, like in Telegram: previous, play, next,
- * who said it and when, the time, the volume, the speed. When one ends the next one in the conversation starts.
- */
-function mediaBar(list, whoWhen) {
-  const medias = () => [...list.querySelectorAll('audio.abub-audio, video.abub-vid:not(.abub-motion)')];
-  let cur = null;
+// ---------------------------------------------------------------- the one player of the console
+// A voice message or a piece of music is drawn the way Telegram draws it (a round button, a waveform that fills as it plays, the time) and is played by
+// ONE sound object that lives outside of any page: going to another conversation, another section or reloading the list does not stop it.
+// The bar (previous, play, next, who, time, volume, speed) follows the sound; when a message ends the next one of that conversation starts.
+const BARS = 38;
+const wave = (seed) => {
+  let x = 0;
+  for (const ch of String(seed)) x = (x * 31 + ch.charCodeAt(0)) >>> 0;
+  return Array.from({ length: BARS }, (_, i) => { x = (x * 1664525 + 1013904223) >>> 0; const v = (x >>> 24) / 255; return Math.round(20 + 80 * (Math.abs(Math.sin(i * 0.6 + v * 2.2)) * 0.55 + v * 0.45)); });
+};
+const mmss = (t) => { const x = Math.max(0, Math.floor(t || 0)); return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+
+function voiceBubble(m) {
+  const f = m.file;
+  return h('div', { class: `avm${m.kind === 'audio' ? ' avm-music' : ''}`, dataset: { fid: f.id, src: `/api/admin/files/${f.id}`, dur: String(m.duration || 0) } },
+    h('button', { class: 'avm-play', type: 'button', 'aria-label': 'Играть / пауза' }, '▶'),
+    h('div', { class: 'avm-body' },
+      m.kind === 'audio' ? h('div', { class: 'avm-name ellipsis', title: f.name }, f.name) : '',
+      h('div', { class: 'avm-wave', role: 'slider', 'aria-label': 'Перемотка', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0 }, wave(f.id).map((p) => h('i', { style: { height: `${p}%` } }))),
+      h('span', { class: 'avm-time' }, mmss(m.duration || 0))));
+}
+
+const AUD = new Audio();
+AUD.preload = 'auto';
+const PL = { item: null, queue: [], list: null, whoWhen: null, bar: null, src: '', ui: null };
+const PL_SEL = '.avm, video.abub-vid:not(.abub-motion)';
+const sameItem = (a, b) => !!a && !!b && a.fid === b.fid;
+const itemOf = (el) => (el.matches('.avm')
+  ? { kind: 'a', fid: el.dataset.fid, src: el.dataset.src, dur: Number(el.dataset.dur) || 0, el, who: PL.whoWhen?.(el) || '' }
+  : { kind: 'v', fid: `v:${el.currentSrc || el.src}`, el, who: PL.whoWhen?.(el) || '' });
+const listItems = () => (PL.list?.isConnected ? [...PL.list.querySelectorAll(PL_SEL)].map(itemOf) : []);
+const curMedia = () => (PL.item ? (PL.item.kind === 'a' ? AUD : PL.item.el) : null);
+const queueNow = () => {
+  const l = listItems();
+  if (!PL.item || l.some((x) => sameItem(x, PL.item))) PL.queue = l;   // the queue of the conversation that is open, or the one the sound came from
+  return PL.queue;
+};
+const keepHost = () => {
+  let k = document.getElementById('apl-keep');
+  if (!k) { k = h('div', { id: 'apl-keep', 'aria-hidden': 'true', style: { position: 'fixed', left: '-9999px', top: '0', width: '1px', height: '1px', overflow: 'hidden' } }); document.body.append(k); }
+  return k;
+};
+const floatHost = () => {
+  let k = document.getElementById('apl-float');
+  if (!k) { k = h('div', { id: 'apl-float', class: 'apl-float' }); document.body.append(k); }
+  return k;
+};
+/** A video that plays is moved out of the page before the page is rebuilt (taking a playing video out of the page would stop it). */
+function keepVideos() {
+  if (!PL.item) return;
+  queueNow();
+  const host = keepHost();
+  for (const it of PL.queue) if (it.kind === 'v' && it.el.isConnected && !host.contains(it.el)) host.append(it.el);
+  if (PL.item.kind === 'v' && !host.contains(PL.item.el)) host.append(PL.item.el);
+  for (const v of [...host.children]) if (!PL.queue.some((it) => it.el === v) && v !== PL.item?.el) v.remove();
+}
+/** A section or a conversation is about to be replaced: what plays goes on, the bar stays in view. */
+function parkPlayer() {
+  if (!PL.bar) return;
+  keepVideos();
+  if (PL.item && PL.bar.parentElement?.className !== 'adm-side') floatHost().append(PL.bar);
+}
+function placePlayer() {
+  const bar = PL.bar;
+  if (!bar) return;
+  const side = document.querySelector('.adm-side');
+  const stick = document.querySelector('.achat-stick');
+  const to = matchMedia('(max-width: 860px)').matches && side ? side : (stick || floatHost());
+  if (bar.parentElement !== to) to.append(bar);
+}
+window.addEventListener('resize', () => { if (PL.bar?.isConnected) placePlayer(); });
+
+function paintPlayer() {
+  const u = PL.ui;
+  const m = curMedia();
+  for (const el of document.querySelectorAll('.avm')) {
+    const act = PL.item?.kind === 'a' && el.dataset.fid === PL.item.fid;
+    const playing = act && !AUD.paused;
+    el.classList.toggle('act', act);
+    el.classList.toggle('playing', playing);
+    el.querySelector('.avm-play').textContent = playing ? '⏸' : '▶';
+    const total = act && Number.isFinite(AUD.duration) && AUD.duration > 0 ? AUD.duration : Number(el.dataset.dur) || 0;
+    const frac = act && total ? Math.min(1, AUD.currentTime / total) : 0;
+    const bars = el.querySelectorAll('.avm-wave i');
+    const on = Math.round(frac * bars.length);
+    bars.forEach((b, i) => b.classList.toggle('on', i < on));
+    el.querySelector('.avm-wave').setAttribute('aria-valuenow', String(Math.round(frac * 100)));
+    el.querySelector('.avm-time').textContent = act ? `${mmss(AUD.currentTime)} / ${mmss(total)}` : mmss(total);
+  }
+  if (!u || !PL.item || !m) return;
+  u.play.textContent = m.paused ? '▶' : '⏸';
+  u.time.textContent = mmss(m.currentTime);
+  const all = PL.queue;
+  const at = all.findIndex((x) => sameItem(x, PL.item));
+  u.prev.disabled = at <= 0;
+  u.next.disabled = at < 0 || at >= all.length - 1;
+  u.spd.textContent = `${currentSpeed()}x`;
+  u.mute.textContent = m.muted || m.volume === 0 ? '🔇' : '🔊';
+}
+
+function playItem(it, from = 0) {
+  const same = sameItem(PL.item, it);
+  if (PL.item?.kind === 'v' && PL.item.el !== it.el) PL.item.el.pause();
+  if (it.kind === 'a') for (const v of document.querySelectorAll('video')) if (!v.paused) v.pause();
+  PL.item = it;
+  queueNow();
+  PL.bar.hidden = false;
+  placePlayer();
+  PL.ui.who.textContent = it.who;
+  const vol = Number(PL.ui.vol.value);
+  if (it.kind === 'a') {
+    if (!same || PL.src !== it.src) { AUD.src = it.src; PL.src = it.src; if (from) AUD.addEventListener('loadedmetadata', () => { AUD.currentTime = from; }, { once: true }); }
+    else if (from) AUD.currentTime = from;
+    AUD.volume = vol;
+    AUD.playbackRate = currentSpeed();
+    AUD.play().catch(() => {});
+  } else {
+    AUD.pause();
+    it.el.playbackRate = currentSpeed();
+    it.el.volume = vol;
+    if (from) it.el.currentTime = from;
+    it.el.play().catch(() => {});
+  }
+  paintPlayer();
+}
+function stepPlayer(d) {
+  const all = queueNow();
+  const to = all[all.findIndex((x) => sameItem(x, PL.item)) + d];
+  if (!to) return;
+  const live = PL.list?.isConnected && [...PL.list.querySelectorAll(PL_SEL)].find((el) => itemOf(el).fid === to.fid);
+  if (live) live.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  playItem(live ? itemOf(live) : to);
+}
+
+for (const ev of ['play', 'pause', 'timeupdate', 'durationchange', 'loadedmetadata', 'volumechange']) AUD.addEventListener(ev, paintPlayer);
+AUD.addEventListener('ended', () => stepPlayer(1));
+const isTheVideo = (e) => e.target?.matches?.('video.abub-vid:not(.abub-motion)');
+document.addEventListener('play', (e) => {
+  if (!isTheVideo(e) || !PL.bar) return;
+  AUD.pause();   // a video that starts takes the place of the sound
+  if (PL.item?.kind === 'v' && PL.item.el === e.target) { paintPlayer(); return; }
+  PL.item = itemOf(e.target);
+  queueNow();
+  PL.bar.hidden = false;
+  placePlayer();
+  PL.ui.who.textContent = PL.item.who;
+  e.target.playbackRate = currentSpeed();
+  paintPlayer();
+}, true);
+for (const ev of ['pause', 'timeupdate']) document.addEventListener(ev, (e) => { if (isTheVideo(e) && e.target === PL.item?.el) paintPlayer(); }, true);
+document.addEventListener('ended', (e) => { if (isTheVideo(e) && e.target === PL.item?.el) stepPlayer(1); }, true);
+
+// a tap on the round button plays or pauses; a tap on the waveform goes to that place
+document.addEventListener('click', (e) => {
+  const box = e.target.closest?.('.avm');
+  if (!box || !PL.bar) return;
+  const wv = e.target.closest('.avm-wave');
+  const it = itemOf(box);
+  const mine = sameItem(PL.item, it);
+  if (wv) {
+    const r = wv.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / (r.width || 1)));
+    const total = mine && Number.isFinite(AUD.duration) && AUD.duration > 0 ? AUD.duration : it.dur;
+    if (!total) return;
+    if (mine) { AUD.currentTime = frac * total; if (AUD.paused) AUD.play().catch(() => {}); } else playItem(it, frac * total);
+  } else if (e.target.closest('.avm-play')) {
+    if (mine && !AUD.paused) AUD.pause(); else playItem(it);
+  }
+});
+
+function buildPlayerBar() {
   const prev = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Предыдущее', title: 'Предыдущее' }, '⏮');
   const play = h('button', { class: 'apl-btn apl-play', type: 'button', 'aria-label': 'Играть', title: 'Играть / пауза' }, '▶');
   const next = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Следующее', title: 'Следующее' }, '⏭');
@@ -799,60 +964,24 @@ function mediaBar(list, whoWhen) {
   const spd = h('button', { class: 'apl-spd', type: 'button', title: 'Скорость' });
   const close = h('button', { class: 'apl-btn', type: 'button', 'aria-label': 'Закрыть', title: 'Закрыть' }, '✕');
   const bar = h('div', { class: 'apl', hidden: true, role: 'region', 'aria-label': 'Плеер' }, prev, play, next, who, time, mute, vol, spd, close);
-  const mmss = (t) => { const x = Math.max(0, Math.floor(t || 0)); return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-  const paint = () => {
-    if (!cur) return;
-    play.textContent = cur.paused ? '▶' : '⏸';
-    time.textContent = mmss(cur.currentTime);
-    const all = medias();
-    const at = all.indexOf(cur);
-    prev.disabled = at <= 0;
-    next.disabled = at < 0 || at >= all.length - 1;
-    spd.textContent = `${currentSpeed()}x`;
-    mute.textContent = cur.muted || cur.volume === 0 ? '🔇' : '🔊';
-  };
-  // on a phone the player lives in the menu bar at the top, which is always in view; on a computer it sits under the name of the chat
-  let home = null;
-  const place = () => {
-    home ||= bar.parentElement;
-    const side = document.querySelector('.adm-side');
-    const to = matchMedia('(max-width: 860px)').matches && side ? side : home;
-    if (to && bar.parentElement !== to) to.append(bar);
-  };
-  window.addEventListener('resize', () => { if (bar.isConnected) place(); });
-  const attach = (m) => {
-    place();
-    if (cur === m) { paint(); return; }
-    if (cur && !cur.paused) cur.pause();
-    cur = m;
-    m.playbackRate = currentSpeed();
-    m.volume = Number(vol.value);
-    bar.hidden = false;
-    who.textContent = whoWhen(m);
-    paint();
-  };
-  const step = (d) => {
-    const all = medias();
-    const to = all[all.indexOf(cur) + d];
-    if (!to) return;
-    attach(to);
-    to.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    to.currentTime = 0;
-    to.play().catch(() => {});
-  };
-  list.addEventListener('play', (e) => { if (e.target.matches?.('audio, video')) attach(e.target); }, true);
-  list.addEventListener('pause', (e) => { if (e.target === cur) paint(); }, true);
-  list.addEventListener('timeupdate', (e) => { if (e.target === cur) time.textContent = mmss(cur.currentTime); }, true);
-  list.addEventListener('ended', (e) => { if (e.target === cur) step(1); }, true);
-  prev.onclick = () => (cur && cur.currentTime > 3 ? (cur.currentTime = 0) : step(-1));
-  next.onclick = () => step(1);
-  play.onclick = () => { if (!cur) return; if (cur.paused) cur.play().catch(() => {}); else cur.pause(); };
-  vol.oninput = () => { if (cur) { cur.muted = false; cur.volume = Number(vol.value); paint(); } };
-  mute.onclick = () => { if (cur) { cur.muted = !cur.muted; paint(); } };
-  spd.onclick = () => { const v = SPEEDS[(SPEEDS.indexOf(currentSpeed()) + 1) % SPEEDS.length]; setSpeed(v); paint(); };
-  close.onclick = () => { if (cur) cur.pause(); cur = null; bar.hidden = true; };
-  const watch = setInterval(() => { if (!list.isConnected) { clearInterval(watch); bar.remove(); } }, 1000);
+  PL.ui = { prev, play, next, who, time, vol, mute, spd };
+  prev.onclick = () => { const m = curMedia(); if (m && m.currentTime > 3) m.currentTime = 0; else stepPlayer(-1); };
+  next.onclick = () => stepPlayer(1);
+  play.onclick = () => { const m = curMedia(); if (!m) return; if (m.paused) m.play().catch(() => {}); else m.pause(); };
+  vol.oninput = () => { const m = curMedia(); if (m) { m.muted = false; m.volume = Number(vol.value); paintPlayer(); } };
+  mute.onclick = () => { const m = curMedia(); if (m) { m.muted = !m.muted; paintPlayer(); } };
+  spd.onclick = () => { const v = SPEEDS[(SPEEDS.indexOf(currentSpeed()) + 1) % SPEEDS.length]; setSpeed(v); const m = curMedia(); if (m) m.playbackRate = v; paintPlayer(); };
+  close.onclick = () => { curMedia()?.pause(); PL.item = null; PL.queue = []; AUD.removeAttribute('src'); PL.src = ''; bar.hidden = true; paintPlayer(); };
   return bar;
+}
+
+/** The bar of the player for the conversation that is open (the same bar and the same sound for the whole console). */
+function mediaBar(list, whoWhen) {
+  PL.list = list;
+  PL.whoWhen = whoWhen;
+  PL.bar ||= buildPlayerBar();
+  if (PL.item) queueNow();
+  return PL.bar;
 }
 
 /** One message as a chat bubble: the owner of the chat on the right, everybody else on the left. */
@@ -872,7 +1001,7 @@ function messageNode(m, ctx, prev) {
     m.reply_to ? h('div', { class: 'abub-quote' }, h('b', null, m.reply_to.sender_name || 'сообщение'), ' ', ...richText(m.reply_to.text)) : '',
     m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
     m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: `abub-img${isSticker(m.file) ? ' abub-sticker' : ''}`, src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
-    m.file && (m.kind === 'voice' || m.kind === 'audio') ? player(h('audio', { class: 'abub-audio', controls: true, preload: 'metadata', src: `/api/admin/files/${m.file.id}` })) : '',
+    m.file && (m.kind === 'voice' || m.kind === 'audio') ? voiceBubble(m) : '',
     m.file && m.kind === 'video' && isMotion(m.file) ? h('video', { class: 'abub-vid abub-motion', autoplay: true, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` }) : '',
     m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
     m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
@@ -991,6 +1120,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     group: info.chat.type !== 'direct' && info.members.length > 2,
   };
   const draw = () => {
+    keepVideos();   // a video that plays must not be taken out of the page with the rest
     clear(list);
     const gallery = ['media', 'photo', 'video', 'gif'].includes(f.kind);
     list.classList.toggle('agal', gallery);
@@ -1003,6 +1133,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     }
     ctx.term = f.meaning ? '' : f.q;
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
+    paintPlayer();
   };
   const heading = h('h2');
   const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${f.q || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
@@ -1222,12 +1353,21 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (!list.isConnected) { clearInterval(live); return; }
     if (document.visibilityState !== 'visible' || jumpMode || f.q || f.kind || f.author || f.since || f.until) return;
     try {
-      const last = [...all].reverse().find((m) => typeof m.id === 'number');
-      const r = await get(`/api/admin/chats/${id}/messages?after=${last ? last.id : 0}&limit=100`);
-      if (!r.messages.length) return;
+      const last = all.reduce((mx, m) => (typeof m.id === 'number' && m.id > mx ? m.id : mx), 0);   // the highest number: by time the last one may have a lower number
+      const r = await get(`/api/admin/chats/${id}/messages?after=${last}&limit=100`);
+      const fresh = r.messages.filter((m) => !all.some((x) => x.id === m.id));
+      if (!fresh.length) return;
       const sc = scroller();
       const atEnd = stick || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240;
-      for (const m of r.messages) { list.append(...messageNode(m, ctx, all.at(-1))); all.push(m); }
+      if (fresh.some((m) => m.created_at < (all.at(-1)?.created_at ?? 0))) {
+        // history that is copied later arrives with older times: it takes its place by the time, like in Telegram
+        all.push(...fresh);
+        all.sort((x, y) => (x.created_at - y.created_at) || (x.id - y.id));
+        anchor = takeAnchor();
+        draw();
+        holdAnchor();
+      } else { for (const m of fresh) { list.append(...messageNode(m, ctx, all.at(-1))); all.push(m); } paintPlayer(); }
+      r.messages = fresh;
       hist.total = (hist.total ?? 0) + r.messages.length;
       paintHeading();
       if (atEnd) toEnd();
@@ -1867,7 +2007,7 @@ function addTabSwipe(target, order) {
   let t0 = 0;
   let on = false;
   // not where the finger moves something else: a slider, a player, a field, a dialog
-  const hard = (el) => !!el.closest?.('input, textarea, select, audio, video, .alb, .adlg, [role=slider]');
+  const hard = (el) => !!el.closest?.('input, textarea, select, audio, video, .avm, .alb, .adlg, [role=slider]');
   // a wide table scrolls sideways under the finger: when it did, the swipe was its own; when it did not (it is at its edge, or fits), the swipe changes the section
   const scrollerOf = (el) => {
     for (let e = el; e && e !== target; e = e.parentElement) {

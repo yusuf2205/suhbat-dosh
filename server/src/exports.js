@@ -50,17 +50,19 @@ export function describeScope(scope, id) {
 
 /** The messages, oldest first, in pieces (a long chat is never held in memory at once). Secret and encrypted messages cannot be read by the server and are skipped. */
 function* messagesOf({ scope, scope_id: id, since, until }) {
-  let last = 0;
+  let lastAt = -1;
+  let lastId = 0;   // by the time of writing, then the number: copied history of Telegram stands where it was written
   for (;;) {
-    const where = [`m.id > ?`, `m.kind != 'secret'`, `c.e2e = 0`];
-    const params = [last];
+    const where = [`(m.created_at, m.id) > (?, ?)`, `m.kind != 'secret'`, `c.e2e = 0`];
+    const params = [lastAt, lastId];
     if (scope === 'chat') { where.push('m.chat_id = ?'); params.push(id); } else if (scope === 'message') { where.push('m.id = ?'); params.push(id); } else { where.push('m.sender_id = ?'); params.push(id); }
     if (since) { where.push('m.created_at >= ?'); params.push(since); }
     if (until) { where.push('m.created_at <= ?'); params.push(until); }
-    const rows = q.all(`SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE ${where.join(' AND ')} ORDER BY m.id LIMIT 500`, ...params);
+    const rows = q.all(`SELECT m.* FROM messages m JOIN chats c ON c.id = m.chat_id WHERE ${where.join(' AND ')} ORDER BY m.created_at, m.id LIMIT 500`, ...params);
     if (!rows.length) return;
     for (const m of rows) yield m;
-    last = rows.at(-1).id;
+    lastAt = rows.at(-1).created_at;
+    lastId = rows.at(-1).id;
   }
 }
 

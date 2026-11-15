@@ -161,19 +161,31 @@ test('admin: every person is a category with personal chats, groups and channels
   } finally { await ctx.close(); }
 });
 
-test('admin: the player sits in the menu bar, shows who and when, and goes on to the next voice message by itself', { skip: !canRun }, async () => {
+test('admin: voice messages look like Telegram, the player shows who and when, goes on to the next by itself, and keeps playing when the section changes', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.admin);
   try {
     await open(`/admin.html#/chat/${seed.chat}`);
-    await page.waitForSelector('audio.abub-audio');
-    await page.evaluate(async () => { const a = document.querySelectorAll('audio.abub-audio')[0]; a.muted = true; a.scrollIntoView({ block: 'center' }); await a.play(); });
+    await page.waitForSelector('.avm');
+    assert.equal(await page.$$eval('.avm-wave i', (b) => b.length > 20), true, 'a waveform is drawn');
+    assert.equal(await page.$$eval('audio.abub-audio', (a) => a.length), 0, 'no grey browser players');
+    await page.locator('.avm .avm-play').first().click();
     await page.waitForSelector('.apl:not([hidden])');
     assert.equal(await page.$eval('.apl', (e) => e.parentElement.className), 'adm-side', 'on a phone the player is in the top bar, always in view');
     const top = await page.$eval('.apl', (e) => Math.round(e.getBoundingClientRect().top));
     assert.ok(top >= 0 && top < 200, `and in view (${top})`);
     assert.match(await page.textContent('.apl-who'), /Мадина|Любимый/);
-    await page.evaluate(() => { document.querySelectorAll('audio.abub-audio')[0].currentTime = 1.8; });
-    await page.waitForFunction(() => { const a = document.querySelectorAll('audio.abub-audio'); return a[0].paused && !a[1].paused; }, null, { timeout: 8000 });
+    assert.equal(await page.$eval('.avm.act .avm-play', (b) => b.textContent), '⏸', 'the message that plays shows pause');
+    if (process.env.UI_SHOT) await page.screenshot({ path: process.env.UI_SHOT });
+    // a tap near the end of the waveform: the message ends and the next one starts by itself
+    const box = await page.locator('.avm-wave').first().boundingBox();
+    await page.mouse.click(box.x + box.width * 0.98, box.y + box.height / 2);
+    await page.waitForFunction(() => { const a = document.querySelectorAll('.avm'); return !a[0].classList.contains('act') && a[1]?.classList.contains('act'); }, null, { timeout: 8000 });
+    // another section: the sound and the bar stay
+    await page.evaluate(() => { location.hash = '#/overview'; });
+    await page.waitForFunction(() => !document.querySelector('.avm'), null, { timeout: 8000 });
+    assert.equal(await page.$eval('.apl', (e) => e.hidden), false, 'the bar is still there');
+    assert.match(await page.textContent('.apl-who'), /Мадина|Любимый/);
+    assert.ok(await page.$eval('.apl', (e) => e.isConnected && e.getBoundingClientRect().height > 0), 'and visible');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

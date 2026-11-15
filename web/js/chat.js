@@ -1080,7 +1080,7 @@ export function upsert(chatId, m) {
   }
   b.list.sort((a, c) => {
     if (a.pending !== c.pending) return a.pending ? 1 : -1;
-    return a.pending ? a.created_at - c.created_at : a.id - c.id;
+    return a.pending ? a.created_at - c.created_at : (a.created_at - c.created_at) || (a.id - c.id);   // by the time written: copied history stands where it was written
   });
   if (S.active === chatId) {
     const atBottom = isNearBottom();

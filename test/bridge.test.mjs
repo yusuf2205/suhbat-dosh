@@ -539,3 +539,24 @@ test('a copy of Saved Messages made as a chat of its own is merged into the own 
   assert.deepEqual(msgs, ['старая заметка', 'пересланное от другого', 'новая заметка']);
   assert.equal((await post({ tg_msg: 3, text: 'новая заметка', out: false, saved: true })).duplicate, true, 'and no doubles');
 });
+
+test('history copied later (higher numbers, older times) stands in its place by time, for the person and for the administrator, and pages back correctly', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002500', 'Порядок');
+  await link(u);
+  const post = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', tg_chat: '5170', title: 'Старый друг', author: 'Друг', backfill: true, ...body }) }).then((r) => r.json());
+  const day = 86400000;
+  const t0 = Date.now() - 30 * day;
+  // the newest ones come first (the recent copy), the older history is copied afterwards
+  for (const [n, d] of [[5, 5], [6, 6], [7, 7]]) assert.ok((await post({ tg_msg: n, text: `m${n}`, ts: t0 + d * day })).id);
+  for (const [n, d] of [[1, 1], [2, 2], [3, 3], [4, 4]]) assert.ok((await post({ tg_msg: n, text: `m${n}`, ts: t0 + d * day })).id);
+  const chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Старый друг' || /Старый друг/.test(c.title));
+  assert.ok(chat);
+  const order = (r) => r.data.messages.map((m) => m.text);
+  assert.deepEqual(order(await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?limit=100`)), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7']);
+  // paging back from the middle goes by time, too
+  const all = (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?limit=100`)).data.messages;
+  const m5 = all.find((m) => m.text === 'm5');
+  assert.deepEqual(order(await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?limit=2&before=${m5.id}`)), ['m3', 'm4']);
+
+  assert.deepEqual(order(await call(admin.cookie, 'GET', `/api/admin/chats/${chat.id}/messages?limit=100`)), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7']);
+});

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto2 from 'node:crypto';
 import { config } from './config.js';
-import { q, tx } from './db.js';
+import { q, tx, place } from './db.js';
 import {
   CHAT_TYPES, EVENTS, LIMITS, PRIVACY_VALUES, REACTIONS,
 } from '../../shared/contracts.js';
@@ -1109,8 +1109,9 @@ api.get('/chats/:id/messages', (req, res) => {
     hasMore = rows.length > limit;
     rows = rows.slice(0, limit);
   } else {
+    const at = before === undefined ? { sql: '1', args: [] } : place(before, '<');
     rows = q.all(
-      `SELECT * FROM messages WHERE chat_id = ? AND id < ? AND id > ?${tcond} ORDER BY id DESC LIMIT ?`, id, before ?? Number.MAX_SAFE_INTEGER, floor, limit + 1,
+      `SELECT * FROM messages WHERE chat_id = ? AND ${at.sql} AND id > ?${tcond} ORDER BY created_at DESC, id DESC LIMIT ?`, id, ...at.args, floor, limit + 1,
     );
     hasMore = rows.length > limit;
     rows = rows.slice(0, limit).reverse();
@@ -1243,7 +1244,7 @@ api.get('/messages/:id/thread', (req, res) => {
     `WITH RECURSIVE t(id) AS (
        SELECT id FROM messages WHERE reply_to = ?1
        UNION SELECT m.id FROM messages m JOIN t ON m.reply_to = t.id)
-     SELECT m.* FROM messages m JOIN t ON t.id = m.id WHERE m.chat_id = ?2 AND m.id > ?3 ORDER BY m.id LIMIT 300`,
+     SELECT m.* FROM messages m JOIN t ON t.id = m.id WHERE m.chat_id = ?2 AND m.id > ?3 ORDER BY m.created_at, m.id LIMIT 300`,
     root.id, root.chat_id, me.cleared_before || 0,
   );
   res.json({ root: messageOut(root), replies: rows.map(messageOut) });
@@ -1767,13 +1768,14 @@ api.get('/chats/:id/media', (req, res) => {
   const id = int(req.params.id, 'id');
   requireMember(id, req.user.id);
   const kind = oneOf(String(req.query.kind || 'media'), 'kind', ['media', 'files', 'links']);
-  const before = int(req.query.before, 'before', { optional: true }) ?? Number.MAX_SAFE_INTEGER;
+  const beforeId = int(req.query.before, 'before', { optional: true });
+  const at = beforeId === undefined ? { sql: '1', args: [] } : place(beforeId, '<');
   const limit = int(req.query.limit, 'limit', { min: 1, max: 100, optional: true }) ?? 60;
   const where = kind === 'media' ? "kind IN ('image','video') AND once = 0"
     : kind === 'files' ? "kind IN ('file','audio')"
       : "kind = 'text' AND text LIKE '%http%'";
   const rows = q.all(
-    `SELECT * FROM messages WHERE chat_id = ? AND id < ? AND ${where} ORDER BY id DESC LIMIT ?`, id, before, limit + 1,
+    `SELECT * FROM messages WHERE chat_id = ? AND ${at.sql} AND ${where} ORDER BY created_at DESC, id DESC LIMIT ?`, id, ...at.args, limit + 1,
   );
   const page = rows.slice(0, limit).map((r) => {
     const m = messageOut(r);

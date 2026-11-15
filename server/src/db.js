@@ -89,6 +89,17 @@ export const q = {
 };
 
 /** Answers while the database answers (the health check). */
+/**
+ * "Before / after this message" by the time it was written, not by its number: the history of a Telegram chat that is copied later has
+ * higher numbers but older times, and it must stand in its place, like in Telegram. op: '<', '<=' or '>'; col: the table alias.
+ */
+export function place(mid, op, col = '') {
+  const p = col ? `${col}.` : '';
+  const c = q.get('SELECT created_at AS t, id FROM messages WHERE id = ?', mid);
+  if (!c) return { sql: `${p}id ${op} ?`, args: [mid] };
+  return { sql: `(${p}created_at, ${p}id) ${op} (?, ?)`, args: [c.t, c.id] };
+}
+
 export function ping() {
   db.prepare('SELECT 1').get();
 }

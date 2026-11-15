@@ -160,7 +160,6 @@
 .abub-text mark { background: #ffdf0b; color: #17171a; border-radius: 3px; }
 /* how fast a recording plays */
 .abub-player { display: grid; gap: 4px; }
-.abub-audio { max-width: 100%; }
 .spd { display: flex; flex-wrap: wrap; gap: 3px; }
 .spd-btn { min-height: 26px; padding: 0 8px; border: 1px solid rgba(0, 0, 0, .16); border-radius: 13px; background: rgba(255, 255, 255, .5); color: #17171a; font: inherit; font-size: .74rem; font-variant-numeric: tabular-nums; cursor: pointer; }
 .spd-btn:hover { background: rgba(251, 199, 0, .4); }
@@ -190,8 +189,7 @@
 .abub-vid { display: block; width: 320px; max-width: 100%; max-height: 360px; border-radius: 14px; background: #000; }
 .abub-dl { display: block; margin-top: 4px; font-size: .78rem; opacity: .75; }
 .abub:has(.abub-vid) { min-width: min(340px, 92%); }
-.abub-audio { width: 260px; max-width: 100%; height: 40px; display: block; }
-.abub:has(.abub-audio) { min-width: min(290px, 90%); }
+.abub:has(.avm) { min-width: min(300px, 92%); }
 .abub-flag { font-size: .78rem; border-radius: 10px; padding: 2px 8px; justify-self: start; }
 .abub-flag.bad { background: color-mix(in srgb, #d6453d 18%, transparent); color: #b3261e; }
 .abub-edits { font-size: .8rem; color: var(--muted); }
@@ -460,3 +458,21 @@ table.t.health td { overflow-wrap: anywhere; }
 .amedia-row:hover:not(:disabled) { background: var(--surface-2); }
 .amedia-row:disabled { opacity: .45; cursor: default; }
 .amedia-ico { width: 28px; text-align: center; font-size: 1.2rem; }
+
+/* a voice message or music, the way Telegram draws it: a round button, a waveform that fills as it plays, the time */
+.avm { --avm: #3390ec; display: flex; align-items: center; gap: 12px; padding: 4px 2px; }
+.avm-play { flex: none; width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--avm); color: #fff; font-size: 1.15rem; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0 0 0 2px; transition: box-shadow .2s, transform .1s; }
+.avm-play:hover { filter: brightness(1.08); }
+.avm-play:active { transform: scale(.96); }
+.avm.playing .avm-play { box-shadow: 0 0 0 6px rgba(51, 144, 236, .2); padding: 0; }
+.avm-body { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.avm-name { font-weight: 600; font-size: .9rem; }
+.avm-wave { display: flex; align-items: center; gap: 2px; height: 30px; cursor: pointer; touch-action: pan-y; }
+.avm-wave i { flex: 1 1 0; min-width: 2px; max-width: 4px; border-radius: 2px; background: rgba(51, 144, 236, .3); transition: background .15s; }
+.avm-wave i.on { background: var(--avm); }
+.avm-time { font-size: .8rem; color: var(--muted, #8a8a93); font-variant-numeric: tabular-nums; }
+.avm.act .avm-time { color: var(--avm); }
+/* the bar of the player when no conversation is open: it stays in view and the sound goes on */
+.apl-float { position: fixed; top: 10px; right: 10px; z-index: 70; width: min(540px, calc(100vw - 20px)); }
+.apl-float .apl { margin: 0; }
+@media (max-width: 860px) { .apl-float { left: 10px; width: auto; } }

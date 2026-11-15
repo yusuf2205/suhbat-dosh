@@ -1,6 +1,6 @@
 import express from 'express';
 import { bridgeAdmin, bridgeCleanup } from './bridge.js';
-import { q, tx } from './db.js';
+import { q, tx, place } from './db.js';
 import { HttpError, escapeLike, int, now, str } from './util.js';
 import { dropSession, emit, isOnline } from './realtime.js';
 import { audit, getUser, memberIds, messageOut } from './service.js';
@@ -359,12 +359,15 @@ admin.get('/chats/:id/messages', (req, res) => {
   let page;
   let more;
   if (around !== undefined && before === undefined) {
-    const older = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id <= ? ORDER BY m.id DESC LIMIT 41`, ...f.params, around);
-    const newer = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id > ? ORDER BY m.id LIMIT 40`, ...f.params, around);
+    const le = place(around, '<=', 'm');
+    const gt = place(around, '>', 'm');
+    const older = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND ${le.sql} ORDER BY m.created_at DESC, m.id DESC LIMIT 41`, ...f.params, ...le.args);
+    const newer = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND ${gt.sql} ORDER BY m.created_at, m.id LIMIT 40`, ...f.params, ...gt.args);
     page = [...older.slice(0, 40).reverse(), ...newer];
     more = older.length > 40;
   } else {
-    const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND m.id < ? ORDER BY m.id DESC LIMIT ?`, ...f.params, before ?? Number.MAX_SAFE_INTEGER, limit + 1);
+    const lt = before === undefined ? { sql: '1', args: [] } : place(before, '<', 'm');
+    const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} AND ${lt.sql} ORDER BY m.created_at DESC, m.id DESC LIMIT ?`, ...f.params, ...lt.args, limit + 1);
     page = rows.slice(0, limit).reverse();
     more = rows.length > limit;
   }
@@ -432,7 +435,7 @@ admin.get('/chats/:id/find', (req, res) => {
   if (mid === undefined && at === undefined) throw new HttpError(400, 'invalid_input');
   const row = mid !== undefined
     ? q.get('SELECT id FROM messages WHERE id = ? AND chat_id = ?', mid, id)
-    : q.get('SELECT id FROM messages WHERE chat_id = ? AND created_at >= ? ORDER BY created_at, id LIMIT 1', id, at) || q.get('SELECT id FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1', id);
+    : q.get('SELECT id FROM messages WHERE chat_id = ? AND created_at >= ? ORDER BY created_at, id LIMIT 1', id, at) || q.get('SELECT id FROM messages WHERE chat_id = ? ORDER BY created_at DESC, id DESC LIMIT 1', id);
   if (!row) throw new HttpError(404, 'not_found');
   res.json({ id: row.id });
 });
