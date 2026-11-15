@@ -63,11 +63,12 @@ function png(w, h) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+let dataDir;
 before(async () => {
   if (!canRun) return;
   const env = {
     ...process.env, PORT: String(PORT), HOST: '127.0.0.1', NODE_ENV: 'development', OTP_MODE: 'dev', LOG_LEVEL: 'error', OTP_REQUESTS_PER_IP: '300',
-    DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-ui-')), SUPERADMIN_PHONES: ADMIN_PHONE,
+    DATA_DIR: (dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'suhbat-ui-'))), SUPERADMIN_PHONES: ADMIN_PHONE,
   };
   delete env.NODE_OPTIONS; delete env.NODE_TEST_CONTEXT;
   server = spawn(process.execPath, ['server/src/index.js'], { cwd: root, env, stdio: 'inherit' });
@@ -218,6 +219,33 @@ test('admin: the gallery of a conversation on a phone: icon buttons, square pict
     assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '2');
     await pinch(160, 90);    // fingers together: smaller
     assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '3');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('admin: copied older history takes its place by the time without redrawing the page or moving what is being read', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.abub');
+    await page.waitForTimeout(1200);
+    const first = await page.$eval('.abub', (e) => e.dataset.id);
+    await page.evaluate(() => window.scrollTo(0, 300));   // reading somewhere in the middle
+    await page.waitForTimeout(300);
+    const gap = await page.evaluate(() => document.querySelector('.achat-who').getBoundingClientRect().top - document.querySelector('.adm-side').getBoundingClientRect().bottom);
+    assert.ok(Math.abs(gap) <= 2, `the bar of the chat sticks right under the menu, no gap (${gap}px)`);
+    const mark = await page.evaluate(() => { const el = [...document.querySelectorAll('.abub')].find((e) => e.getBoundingClientRect().top > 100); el.dataset.keep = '1'; return { id: el.dataset.id, top: Math.round(el.getBoundingClientRect().top) }; });
+    // a message that the copy of a Telegram chat adds later, with an older time than the first one
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(dataDir, 'suhbat.db'));
+    const f = db.prepare('SELECT created_at, sender_id FROM messages WHERE id = ?').get(Number(first));
+    db.prepare("INSERT INTO messages (chat_id, sender_id, kind, text, created_at) VALUES (?, ?, 'text', 'самое раннее', ?)").run(seed.chat, f.sender_id, f.created_at - 86400000);
+    db.close();
+    await page.waitForFunction(() => [...document.querySelectorAll('.abub')].some((e) => e.textContent.includes('самое раннее')), null, { timeout: 12000 });
+    const after = await page.evaluate(() => { const el = document.querySelector('[data-keep="1"]'); return el ? Math.round(el.getBoundingClientRect().top) : null; });
+    assert.notEqual(after, null, 'the page was not redrawn: the same element is still there');
+    assert.ok(Math.abs(after - mark.top) <= 2, `the place being read did not move (${mark.top} -> ${after})`);
+    assert.equal(await page.$eval('.abub', (e) => e.textContent.includes('самое раннее')), true, 'and it stands first, by its time');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

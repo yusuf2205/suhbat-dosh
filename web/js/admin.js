@@ -960,17 +960,17 @@ function playItem(it, from = 0) {
   }
   paintPlayer();
 }
-function stepPlayer(d) {
+function stepPlayer(d, byHand = true) {
   const all = queueNow();
   const to = all[all.findIndex((x) => sameItem(x, PL.item)) + d];
   if (!to) return;
   const live = PL.list?.isConnected && [...PL.list.querySelectorAll(PL_SEL)].find((el) => itemOf(el).fid === to.fid);
-  if (live) live.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (live && byHand) live.scrollIntoView({ block: 'center', behavior: 'smooth' });   // the player going on by itself never moves the page under the reader
   playItem(live ? itemOf(live) : to);
 }
 
 for (const ev of ['play', 'pause', 'timeupdate', 'durationchange', 'loadedmetadata', 'volumechange']) AUD.addEventListener(ev, paintPlayer);
-AUD.addEventListener('ended', () => stepPlayer(1));
+AUD.addEventListener('ended', () => stepPlayer(1, false));
 const isTheVideo = (e) => e.target?.matches?.('video.abub-vid:not(.abub-motion)');
 document.addEventListener('play', (e) => {
   if (!isTheVideo(e) || !PL.bar) return;
@@ -985,7 +985,7 @@ document.addEventListener('play', (e) => {
   paintPlayer();
 }, true);
 for (const ev of ['pause', 'timeupdate']) document.addEventListener(ev, (e) => { if (isTheVideo(e) && e.target === PL.item?.el) paintPlayer(); }, true);
-document.addEventListener('ended', (e) => { if (isTheVideo(e) && e.target === PL.item?.el) stepPlayer(1); }, true);
+document.addEventListener('ended', (e) => { if (isTheVideo(e) && e.target === PL.item?.el) stepPlayer(1, false); }, true);
 
 // a tap on the round button plays or pauses; a tap on the waveform goes to that place
 document.addEventListener('click', (e) => {
@@ -1296,8 +1296,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   list.addEventListener('load', () => { if (stick) toEnd(); else holdAnchor(); }, true);   // pictures change the height as they arrive
   let ready = false;   // the page settles on the newest message first; its own scrolling must not count as the user's
   setTimeout(() => { ready = true; }, 900);
+  let lastScrollAt = 0;
+  for (const ev of ['touchstart', 'touchmove', 'wheel', 'keydown']) window.addEventListener(ev, () => { lastScrollAt = Date.now(); }, { passive: true });
   const onScroll = () => {
     if (!list.isConnected) { window.removeEventListener('scroll', onScroll); return; }
+    lastScrollAt = Date.now();
     if (!ready) return;
     const sc = scroller();
     if (sc.scrollHeight - sc.scrollTop - sc.clientHeight > 160) stick = false;   // scrolled away from the end by any means (wheel, bar, touch, keys)
@@ -1462,6 +1465,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const live = setInterval(async () => {
     if (!list.isConnected) { clearInterval(live); return; }
     if (document.visibilityState !== 'visible' || jumpMode || f.q || f.kind || f.author || f.since || f.until) return;
+    if (Date.now() - lastScrollAt < 1500) return;   // the reader is moving the page: nothing may change under the finger
     try {
       const last = all.reduce((mx, m) => (typeof m.id === 'number' && m.id > mx ? m.id : mx), 0);   // the highest number: by time the last one may have a lower number
       const r = await get(`/api/admin/chats/${id}/messages?after=${last}&limit=100`);
@@ -1470,11 +1474,24 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       const sc = scroller();
       const atEnd = stick || sc.scrollHeight - sc.scrollTop - sc.clientHeight < 240;
       if (fresh.some((m) => m.created_at < (all.at(-1)?.created_at ?? 0))) {
-        // history that is copied later arrives with older times: it takes its place by the time, like in Telegram
-        all.push(...fresh);
-        all.sort((x, y) => (x.created_at - y.created_at) || (x.id - y.id));
+        // history that is copied later arrives with older times: each takes its place by the time, like in Telegram.
+        // One by one into the page, never a redraw of everything: the place being read does not jump
         anchor = takeAnchor();
-        draw();
+        for (const m of fresh.sort((x, y) => (x.created_at - y.created_at) || (x.id - y.id))) {
+          let i = all.findIndex((x) => x.created_at > m.created_at || (x.created_at === m.created_at && x.id > m.id));
+          if (i < 0) i = all.length;
+          const next = all[i];
+          const ref = next ? bubbleOf(next.id) : null;
+          const nodes = messageNode(m, ctx, all[i - 1]);
+          if (ref) {
+            const lead = ref.previousElementSibling?.classList.contains('aday') ? ref.previousElementSibling : ref;   // a day heading belongs to the message after it
+            // the message after it may have had a day heading only because of the one before: it keeps its own when the day differs
+            for (const n of nodes) list.insertBefore(n, lead);
+            if (lead !== ref && dayOf(m.created_at) === dayOf(next.created_at)) lead.remove();
+          } else list.append(...nodes);
+          all.splice(i, 0, m);
+        }
+        paintPlayer();
         holdAnchor();
       } else { for (const m of fresh) { list.append(...messageNode(m, ctx, all.at(-1))); all.push(m); } paintPlayer(); }
       r.messages = fresh;
@@ -1504,9 +1521,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (!whoBar.isConnected) { window.removeEventListener('resize', placeBar); return; }
     const side = document.querySelector('.adm-side');
     const onTop = side && getComputedStyle(side).position === 'sticky' && side.getBoundingClientRect().width > innerWidth * 0.8;
-    whoBar.parentElement.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) : 0}px`);
+    document.documentElement.style.setProperty('--adm-top', `${onTop ? Math.ceil(side.getBoundingClientRect().height) - 1 : 0}px`);
   };
   window.addEventListener('resize', placeBar);
+  // the menu changes its height (the row of sections appears, a font loads): the bar follows it, otherwise a gap shows between them
+  try { const side = document.querySelector('.adm-side'); if (side && window.ResizeObserver) { const ro = new ResizeObserver(placeBar); ro.observe(side); const stop = setInterval(() => { if (!whoBar.isConnected) { ro.disconnect(); clearInterval(stop); } }, 2000); } } catch { /* the bar stays where it was */ }
   paintHeading();
   draw();
   setView(
