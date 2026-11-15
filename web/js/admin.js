@@ -1500,15 +1500,34 @@ function bridgePanel(data) {
 
   const act = (ico, label, cls, title, onclick) => h('button', { class: `btn small ud-act ${cls}`.trim(), type: 'button', title: title || label, 'aria-label': label, onclick }, icon(ico, 16), h('span', null, label));
 
+  // how far the copy of the history is: a line under the name, kept up to date while the panel is open
+  const progs = new Map();
+  const fill = (u, box) => {
+    clear(box);
+    if (!u.linked) return;
+    const p = u.live?.progress;
+    const n = (v) => Number(v || 0).toLocaleString('ru-RU');
+    const files = u.files_waiting ? ` · файлов докачивается: ${n(u.files_waiting)}` : '';
+    if (p?.state === 'running' || p?.state === 'queued') {
+      const pct = p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
+      box.append(h('div', { class: 'tb-bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('i', { style: { width: `${p.state === 'queued' ? 0 : pct}%` } })),
+        h('small', { class: 'muted' }, p.state === 'queued' ? 'История ждёт очереди' : `История копируется: чатов ${n(p.done)} из ${n(p.total)} · сообщений ${n(p.msgs)}${p.current ? ` · сейчас: ${p.current}` : ''}${files}`));
+    } else if (u.live?.deep) box.append(h('small', { class: 'tb-done' }, `✔ История скопирована полностью${p?.errors ? ` (чатов пропущено: ${p.errors})` : ''}${files}`));
+    else if (u.live) box.append(h('small', { class: 'muted' }, `Полная история ещё не скопирована${files}`));
+  };
   const rowOf = (u) => {
     const sub = h('div', { class: 'tb-sub', hidden: true });
+    const prog = h('div', { class: 'tb-prog' });
+    progs.set(u.id, prog);
+    fill(u, prog);
     const live = u.linked && !(u.live && !u.live.connected);
     const el = h('div', { class: `tb-row${u.linked ? '' : ' off'}` },
       h('div', { class: 'tb-main' },
         h('span', { class: `ud-ci ${u.linked ? 'direct' : 'channel'}`, 'aria-hidden': 'true' }, (u.name || '?').slice(0, 1).toUpperCase()),
         h('span', { class: 'ud-cm' },
           h('b', { class: 'ellipsis' }, u.name, u.username ? h('span', { class: 'muted' }, ` @${u.username}`) : null, u.is_admin ? [' ', h('span', { class: 'pill ok' }, 'админ')] : null),
-          u.linked ? h('small', { class: 'muted ellipsis' }, `Телеграм: ${u.tg_name || '—'}${u.tg_username ? ` @${u.tg_username}` : ''}`) : h('small', { class: 'muted' }, u.allowed ? 'Телеграм не подключён' : 'Подключать запрещено')),
+          u.linked ? h('small', { class: 'muted ellipsis' }, `Телеграм: ${u.tg_name || '—'}${u.tg_username ? ` @${u.tg_username}` : ''}`) : h('small', { class: 'muted' }, u.allowed ? 'Телеграм не подключён' : 'Подключать запрещено'),
+          prog),
         h('span', { class: 'tb-chips' },
           u.linked ? h('span', { class: `pill ${live ? 'ok' : ''}` }, live ? 'подключён' : 'нет связи') : (!u.allowed ? h('span', { class: 'pill warn' }, 'запрещено') : null),
           u.linked ? h('span', { class: 'pill', title: 'скопировано чатов' }, `${u.chats} чатов`) : null,
@@ -1542,6 +1561,14 @@ function bridgePanel(data) {
     clear(list).append(...(shown.length ? shown.map(rowOf) : [h('p', { class: 'muted' }, 'Никого не найдено')]));
   }
 
+  const tick = setInterval(async () => {
+    if (!list.isConnected) { clearInterval(tick); return; }
+    if (document.visibilityState !== 'visible') return;
+    try {
+      const fresh = (await get('/api/admin/bridge')).users;
+      for (const f of fresh) { const u = users.find((x) => x.id === f.id); if (u) { Object.assign(u, { live: f.live, files_waiting: f.files_waiting, chats: f.chats, messages: f.messages }); const box = progs.get(u.id); if (box?.isConnected) fill(u, box); } }
+    } catch { /* the next tick */ }
+  }, 8000);
   const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя или @username', 'aria-label': 'Поиск', oninput: (e) => { query = e.target.value; draw(); } });
   const chips = [['all', 'Все'], ['on', 'Подключены'], ['off', 'Не подключены']].map(([k, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(k === filter), onclick: () => { filter = k; chips.forEach((b, i) => b.setAttribute('aria-pressed', String(['all', 'on', 'off'][i] === k))); draw(); } }, l));
   draw();

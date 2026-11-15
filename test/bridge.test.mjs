@@ -560,3 +560,15 @@ test('history copied later (higher numbers, older times) stands in its place by 
 
   assert.deepEqual(order(await call(admin.cookie, 'GET', `/api/admin/chats/${chat.id}/messages?limit=100`)), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7']);
 });
+
+test('the console shows how far the copy of the history is: chats, messages, finished or not, files still to come', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002600', 'Прогресс');
+  await link(u);
+  const row = async () => (await call(admin.cookie, 'GET', '/api/admin/bridge')).data.users.find((x) => x.id === u.user.id);
+  const done = await until(async () => { const r = await row(); return r?.live?.progress?.state === 'done' ? r : null; });
+  assert.ok(done, 'the first copy finished');
+  assert.equal(typeof done.live.progress.msgs, 'number');
+  assert.equal(done.live.progress.total >= 1, true);
+  assert.equal(done.live.progress.done, done.live.progress.total);
+  assert.equal(typeof done.files_waiting, 'number');
+});

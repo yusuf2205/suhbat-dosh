@@ -492,3 +492,10 @@ table.t.health td { overflow-wrap: anywhere; }
 .aperm-arrow { transition: transform .15s; color: var(--muted, #8a8a93); }
 .aperm-card[open] > summary .aperm-arrow { transform: rotate(180deg); }
 .aperm-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+
+/* the progress of the copy of a Telegram history */
+.tb-prog { display: grid; gap: 4px; margin-top: 4px; }
+.tb-prog:empty { display: none; }
+.tb-bar { height: 6px; border-radius: 4px; background: var(--surface-2, #f1ead0); overflow: hidden; max-width: 360px; }
+.tb-bar i { display: block; height: 100%; background: linear-gradient(90deg, #fbc700, #ffe433); transition: width .6s; }
+.tb-done { color: #1c8a4a; }

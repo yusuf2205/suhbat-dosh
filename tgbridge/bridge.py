@@ -836,9 +836,11 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
     """The recent history of one personal chat, oldest first. Messages newer than media_since come with their photos, videos and files at once."""
     kind = "user" if d.is_user else "channel" if d.is_channel and not d.is_group else "group"
     msgs = []
+    a.backfill["current"] = ((title_of(d.entity) if d.is_user else d.name) or "")[:60]
 
     async def flush():
         for m in reversed(msgs):
+            a.backfill["msgs"] = a.backfill.get("msgs", 0) + 1
             sender = await m.get_sender()
             topic = await topic_fields(a, str(d.id), m)
             mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
@@ -878,7 +880,7 @@ async def run_backfill(a: Acct):
     """Copy the recent history of every personal chat once (quietly: no notifications, nothing unread)."""
     a.backfill = {"state": "queued", "done": 0, "total": 0}
     async with HEAVY:
-        a.backfill = {"state": "running", "done": 0, "total": 0}
+        a.backfill = {"state": "running", "done": 0, "total": 0, "msgs": 0, "started": int(time.time())}
         await _run_backfill(a)
 
 
@@ -889,6 +891,7 @@ async def _run_backfill(a: Acct):
             a.backfill["total"] = len(dialogs_)
             for d in dialogs_:
                 for m in await a.client.history(d["id"], BACKFILL_MESSAGES):
+                    a.backfill["msgs"] = a.backfill.get("msgs", 0) + 1
                     await to_server({"owner": a.uid, "tg_chat": str(d["id"]), "kind": "user", "title": d["title"], "backfill": True, **m})
                 a.backfill["done"] += 1
             a.backfill["state"] = "done"
@@ -1018,7 +1021,8 @@ def who(request) -> Acct:
 async def accounts(_r):
     """For the administrator's panel: who is connected right now and how the first copy is going."""
     return web.json_response({"accounts": {u: {"connected": bool(a.me and a.client and a.client.is_connected()), "synced": a.synced, "backfill": a.backfill["state"],
-                                               "last_sync": int(a.last_sync), "resyncing": bool(a.resync_task and not a.resync_task.done())}
+                                               "last_sync": int(a.last_sync), "resyncing": bool(a.resync_task and not a.resync_task.done()),
+                                               "deep": a.deep, "progress": {k: a.backfill.get(k) for k in ("state", "done", "total", "msgs", "errors", "current", "started")}}
                                            for u, a in ACCTS.items() if a.me}})
 
 

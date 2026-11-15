@@ -282,9 +282,12 @@ bridgeAdmin.get('/', async (req, res) => {
      FROM users u LEFT JOIN tg_denied a ON a.user_id = u.id LEFT JOIN tg_bridge b ON b.user_id = u.id
      WHERE u.is_bot = 0 AND u.banned_at IS NULL ORDER BY (b.user_id IS NULL), (a.user_id IS NOT NULL) DESC, u.name LIMIT 500`,
   );
+  // files that are still only a mark such as "[Фото]" and will be fetched in the background
+  const marks = Object.values(PLACEHOLDERS).flat();
+  const waiting = (uid) => q.get(`SELECT COUNT(*) AS n FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = ? AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')}) AND m.id NOT IN (SELECT message_id FROM tg_media_skip)`, uid, ...marks.map((m) => `${m}%`))?.n ?? 0;
   res.json({
     configured: bridgeConfigured(),
-    users: rows.map((r) => ({
+    users: rows.map((r) => ({ files_waiting: r.linked_id ? waiting(r.id) : 0,
       id: r.id, name: r.name, username: r.username, is_admin: !!r.is_admin, allowed: !!r.is_admin || !r.denied_at,
       linked: !!r.linked_id, live: live[String(r.id)] || null, tg_name: r.tg_name || '', tg_username: r.tg_username || '', auto_private: !!r.auto_private, chats: r.chats, messages: r.messages,
     })),
