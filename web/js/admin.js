@@ -1029,18 +1029,19 @@ const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['me
 function openLightbox(imgs, start) {
   let i = start;
   const turns = new Map(); // picture -> degrees; a turned picture stays turned while the window is open
+  let z = 1; let px = 0; let py = 0;   // zoom and shift of the picture (two fingers zoom, one finger moves a zoomed picture, a double tap toggles)
   const pic = h('img', { class: 'alb-img', alt: '' });
   const cap = h('div', { class: 'alb-cap' });
   const paintTurn = () => {
     const deg = turns.get(i) || 0;
     const side = deg % 180 !== 0;
-    pic.style.transform = deg ? `rotate(${deg}deg)` : '';
+    pic.style.transform = deg || z !== 1 ? `translate(${px}px, ${py}px) scale(${z}) rotate(${deg}deg)` : '';
     // a picture lying on its side must still fit the screen
     pic.style.maxWidth = side ? '86vh' : '';
     pic.style.maxHeight = side ? '92vw' : '';
   };
   const turn = (d) => { turns.set(i, (((turns.get(i) || 0) + d) % 360 + 360) % 360); paintTurn(); };
-  const show = () => { pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; paintTurn(); };
+  const show = () => { z = 1; px = 0; py = 0; pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; paintTurn(); };
   const close = () => { root.remove(); document.removeEventListener('keydown', key, true); };
   const go = (d) => { i = (i + d + imgs.length) % imgs.length; show(); };
   const key = (e) => {
@@ -1055,6 +1056,46 @@ function openLightbox(imgs, start) {
     h('a', { class: 'alb-btn alb-open', href: '#', target: '_blank', rel: 'noopener', onclick: (e) => { e.currentTarget.href = imgs[i].src; } }, 'Открыть отдельно'),
     h('button', { class: 'alb-btn alb-close', type: 'button', 'aria-label': 'Закрыть', onclick: close }, '✕'),
     cap);
+  // the fingers: two zoom (like in Telegram), one moves a zoomed picture or, when it is not zoomed, a swipe goes to the next or the previous one
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  let pinch = null; let drag = null; let swipeFrom = null;
+  root.addEventListener('touchstart', (e) => {
+    pic.style.transition = 'none';
+    if (e.touches.length === 2) { pinch = { d: dist(e.touches), z }; drag = null; swipeFrom = null; }
+    else if (e.touches.length === 1) {
+      if (z > 1) drag = { x: e.touches[0].clientX - px, y: e.touches[0].clientY - py };
+      else swipeFrom = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+    }
+  }, { passive: true });
+  root.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && pinch) {
+      e.preventDefault();
+      z = Math.min(6, Math.max(1, pinch.z * (dist(e.touches) / pinch.d)));
+      if (z === 1) { px = 0; py = 0; }
+      paintTurn();
+    } else if (e.touches.length === 1 && drag && z > 1) {
+      e.preventDefault();
+      px = e.touches[0].clientX - drag.x;
+      py = e.touches[0].clientY - drag.y;
+      paintTurn();
+    }
+  }, { passive: false });
+  root.addEventListener('touchend', (e) => {
+    pic.style.transition = '';
+    if (e.touches.length < 2) pinch = null;
+    if (e.touches.length === 0) {
+      drag = null;
+      if (z < 1.05) { z = 1; px = 0; py = 0; paintTurn(); }
+      if (swipeFrom && z === 1) {
+        const p = e.changedTouches[0];
+        const dx = p.clientX - swipeFrom.x;
+        if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(p.clientY - swipeFrom.y) * 1.8 && Date.now() - swipeFrom.t < 700) go(dx < 0 ? 1 : -1);
+      }
+      swipeFrom = null;
+    }
+  }, { passive: true });
+  pic.addEventListener('dblclick', () => { if (z > 1) { z = 1; px = 0; py = 0; } else z = 2.5; paintTurn(); });
+  root.addEventListener('wheel', (e) => { e.preventDefault(); z = Math.min(6, Math.max(1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); if (z === 1) { px = 0; py = 0; } paintTurn(); }, { passive: false });
   document.addEventListener('keydown', key, true);
   document.body.append(root);
   show();
@@ -1135,6 +1176,23 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
     paintPlayer();
   };
+  // the gallery (photos, videos, GIF): two fingers spread - bigger pictures, two fingers together - smaller and more of them, like in Telegram
+  {
+    let cols = 3;
+    try { cols = Math.min(6, Math.max(1, Number(localStorage.getItem('suhbat.agal.cols')) || 3)); } catch { /* the storage is closed */ }
+    const setCols = (n) => { cols = Math.min(6, Math.max(1, n)); list.style.setProperty('--cols', String(cols)); list.dataset.cols = String(cols); try { localStorage.setItem('suhbat.agal.cols', String(cols)); } catch { /* closed */ } };
+    setCols(cols);
+    const gap = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    let g0 = 0;
+    list.addEventListener('touchstart', (e) => { if (list.classList.contains('agal') && e.touches.length === 2) g0 = gap(e.touches); }, { passive: true });
+    list.addEventListener('touchmove', (e) => {
+      if (!g0 || e.touches.length !== 2 || !list.classList.contains('agal')) return;
+      e.preventDefault();
+      const r = gap(e.touches) / g0;
+      if (r > 1.3) { setCols(cols - 1); g0 = gap(e.touches); } else if (r < 0.77) { setCols(cols + 1); g0 = gap(e.touches); }
+    }, { passive: false });
+    list.addEventListener('touchend', (e) => { if (e.touches.length < 2) g0 = 0; }, { passive: true });
+  }
   const heading = h('h2');
   const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${f.q || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
@@ -1387,8 +1445,8 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
-    h('button', { class: 'chip', type: 'button', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, '🖼 Медиа и файлы'),
-    h('button', { class: 'chip', type: 'button', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, '📊 Сводка'));
+    h('button', { class: 'chip tbtn', type: 'button', title: 'Медиа и файлы', 'aria-label': 'Медиа и файлы', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, icon('image', 20), h('span', { class: 'tbtn-t' }, 'Медиа и файлы')),
+    h('button', { class: 'chip tbtn', type: 'button', title: 'Сводка', 'aria-label': 'Сводка', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, icon('trend', 20), h('span', { class: 'tbtn-t' }, 'Сводка')));
   // on a phone the menu of the console stays on top: the bar goes right under it
   const placeBar = () => {
     if (!whoBar.isConnected) { window.removeEventListener('resize', placeBar); return; }

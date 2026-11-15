@@ -3,6 +3,17 @@
   "short_name": "Suhbat-dosh",
   "start_url": "/",
   "display": "standalone",
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [{ "name": "files", "accept": ["image/*", "video/*", "audio/*", "application/pdf", "text/*", ".doc", ".docx", ".xls", ".xlsx", ".zip"] }]
+    }
+  },
   "background_color": "#fbc700",
   "theme_color": "#fbc700",
   "icons": [

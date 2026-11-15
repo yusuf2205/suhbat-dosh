@@ -499,3 +499,25 @@ table.t.health td { overflow-wrap: anywhere; }
 .tb-bar { height: 6px; border-radius: 4px; background: var(--surface-2, #f1ead0); overflow: hidden; max-width: 360px; }
 .tb-bar i { display: block; height: 100%; background: linear-gradient(90deg, #fbc700, #ffe433); transition: width .6s; }
 .tb-done { color: #1c8a4a; }
+
+/* a phone: the grid of the console does not spread its rows over a tall screen (the page used to start far below the menu when it was short) */
+@media (max-width: 900px) { .adm-app { align-content: start; } }
+
+/* the buttons of a conversation (media and files, summary): an icon on a phone */
+.tbtn { display: inline-flex; align-items: center; gap: 8px; }
+.tbtn svg { flex: none; color: var(--yel, #fbc700); }
+@media (max-width: 640px) {
+  .tbtn { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 14px; background: var(--ink-2, #26262b); border-color: transparent; }
+  .tbtn-t { display: none; }
+  .achat-who { gap: 8px; }
+  .tbtn svg { width: 22px; height: 22px; }
+}
+
+/* the gallery like in Telegram: square pictures, the number in a row follows the fingers */
+.aconv.agal { grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); gap: 3px; touch-action: pan-y; }
+.agal-item.abub { padding: 0; border: 0; border-radius: 6px; overflow: hidden; position: relative; background: var(--surface-2, #f1ead0); }
+.aconv.agal .agal-item .abub-img, .aconv.agal .agal-item .abub-vid { height: auto; aspect-ratio: 1; display: block; width: 100%; object-fit: cover; border-radius: 0; }
+.aconv.agal[data-cols='1'] .agal-item .abub-img, .aconv.agal[data-cols='1'] .agal-item .abub-vid { aspect-ratio: auto; max-height: 80vh; object-fit: contain; }
+.agal-item .abub-time { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 8px 4px; color: #fff; font-size: .72rem; background: linear-gradient(transparent, rgba(0, 0, 0, .55)); text-shadow: 0 1px 2px rgba(0, 0, 0, .5); pointer-events: none; }
+.agal-item .abub-time .abub-more { pointer-events: auto; color: #fff; }
+.aconv.agal:not([data-cols='1']):not([data-cols='2']) .agal-item .abub-time { display: none; }

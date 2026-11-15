@@ -151,6 +151,9 @@ test('admin: every person is a category with personal chats, groups and channels
     await page.click('.achat:has-text("Мадина")');
     await page.waitForSelector('.chips .chip');
     assert.deepEqual(await page.$$eval('.chips .chip', (bs) => bs.map((b) => b.textContent.trim())), ['Личные 2', 'Группы 1', 'Каналы 1']);
+    const headTop = await page.$eval('.adm-head', (e) => Math.round(e.getBoundingClientRect().top));
+    const sideH = await page.$eval('.adm-side', (e) => Math.round(e.getBoundingClientRect().height));
+    assert.ok(headTop - sideH < 40, `a short page starts right under the menu, not far below it (gap ${headTop - sideH})`);
     await page.click('.chips .chip:has-text("Группы")');
     assert.match(await page.textContent('.achats'), /Семья/);
     await page.click('.chips .chip:has-text("Личные")');
@@ -186,6 +189,35 @@ test('admin: voice messages look like Telegram, the player shows who and when, g
     assert.equal(await page.$eval('.apl', (e) => e.hidden), false, 'the bar is still there');
     assert.match(await page.textContent('.apl-who'), /Мадина|Любимый/);
     assert.ok(await page.$eval('.apl', (e) => e.isConnected && e.getBoundingClientRect().height > 0), 'and visible');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('admin: the gallery of a conversation on a phone: icon buttons, square pictures, two fingers change their size', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.tbtn');
+    const w = await page.$$eval('.tbtn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().width)));
+    assert.deepEqual(w, [44, 44], 'two icon buttons, no text, on a phone');
+    await page.click('.tbtn[aria-label="Медиа и файлы"]');
+    await page.click('.amedia-row:has-text("фотографий")');
+    await page.waitForSelector('.agal .agal-item img');
+    assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '3');
+    const box = await page.$eval('.agal-item img', (i) => { const r = i.getBoundingClientRect(); return Math.abs(r.width - r.height) < 2; });
+    assert.equal(box, true, 'square pictures');
+    const pinch = (d0, d1) => page.evaluate(([a, b]) => {
+      const el = document.querySelector('.aconv.agal');
+      const t = (id, x) => new Touch({ identifier: id, target: el, clientX: x, clientY: 400 });
+      const ev = (type, xs) => el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: xs.map((x, i) => t(i, x)), targetTouches: xs.map((x, i) => t(i, x)), changedTouches: xs.map((x, i) => t(i, x)) }));
+      ev('touchstart', [195 - a / 2, 195 + a / 2]);
+      ev('touchmove', [195 - b / 2, 195 + b / 2]);
+      ev('touchend', []);
+    }, [d0, d1]);
+    await pinch(100, 160);   // fingers apart: bigger pictures, fewer in a row
+    assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '2');
+    await pinch(160, 90);    // fingers together: smaller
+    assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '3');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -231,6 +263,32 @@ async function watchedPage(cookieStr, [, viewport, touch]) {
   page.on('response', (r) => { if (r.status() >= 500 && r.url().includes('/api/')) problems.push(`server error ${r.status()} on ${new URL(r.url()).pathname}`); });
   return { ctx, page, problems };
 }
+
+test('messenger: the app is in the share list of other apps (web share target): the shared file waits, the person picks the chat and it is sent', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.madina);
+  try {
+    const manifest = await (await fetch(`${BASE}/manifest.webmanifest`)).json();
+    assert.equal(manifest.share_target.action, '/share-target');
+    assert.equal(manifest.share_target.method, 'POST');
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.evaluate(async () => { await navigator.serviceWorker.ready; await new Promise((r) => (navigator.serviceWorker.controller ? r() : navigator.serviceWorker.addEventListener('controllerchange', r))); });
+    // what another app does: a POST with the file (the service worker answers it)
+    await page.evaluate(async () => {
+      const fd = new FormData();
+      fd.append('title', 'Подпись');
+      fd.append('files', new File([new Uint8Array([137, 80, 78, 71])], 'shared-from-another-app.png', { type: 'image/png' }));
+      await fetch('/share-target', { method: 'POST', body: fd, redirect: 'manual' });
+    });
+    await page.goto(`${BASE}/?shared=1`);
+    await page.waitForSelector('.ws-list .cal-row', { timeout: 15000 });
+    assert.match(await page.textContent('.modal-body'), /shared-from-another-app\.png/);
+    assert.equal(await page.evaluate(() => location.search), '', 'the address is clean again');
+    await page.click(`.ws-list .cal-row:has-text("Любимый")`);
+    await page.waitForFunction(async ([id]) => { const r = await fetch(`/api/chats/${id}/messages?limit=5`); const j = await r.json(); return j.messages.some((m) => m.file?.name?.includes('shared-from-another-app') || m.kind === 'image' && m.created_at > Date.now() - 60000 && m.text === 'Подпись'); }, [seed.chat], { timeout: 15000 }).catch(() => {});
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
 
 test('messenger: voice messages have a waveform and a round button, the player goes to the next by itself and keeps going in another chat', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.madina);

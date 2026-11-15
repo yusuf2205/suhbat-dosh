@@ -161,6 +161,7 @@ async function loadChats() {
   startScreenGuard();
   checkBridge();
   resumeLives();
+  import('./webshare.js').then((m) => m.checkShared()).catch(() => {});
 }
 let extrasAt = 0;
 

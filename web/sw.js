@@ -1,5 +1,5 @@
 // Offline app shell. API and WebSocket traffic is never cached (private data).
-const CACHE = 'suhbat-shell-v171';
+const CACHE = 'suhbat-shell-v172';
 const SHELL = ['/', '/styles.css?v=30', '/splash.css?v=3', '/design2.css?v=15', '/js/main.js?v=9', '/icon.svg?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -22,8 +22,28 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// "Share" from another app (the manifest names /share-target): the files and the text are kept for the page, which asks where to send them
+async function takeShare(req) {
+  try {
+    const fd = await req.formData();
+    const c = await caches.open(CACHE);
+    for (const k of await c.keys()) if (new URL(k.url).pathname.startsWith('/__share/')) await c.delete(k);
+    const meta = { text: [fd.get('title'), fd.get('text'), fd.get('url')].filter((x) => typeof x === 'string' && x).join('\n'), files: [] };
+    let i = 0;
+    for (const f of fd.getAll('files')) {
+      if (!f || typeof f === 'string') continue;
+      await c.put(`/__share/${i}`, new Response(f, { headers: { 'content-type': f.type || 'application/octet-stream' } }));
+      meta.files.push({ i, name: f.name, type: f.type, size: f.size });
+      i += 1;
+    }
+    await c.put('/__share/meta', new Response(JSON.stringify(meta), { headers: { 'content-type': 'application/json' } }));
+  } catch { /* the page then simply finds nothing */ }
+  return Response.redirect('/?shared=1', 303);
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+  if (e.request.method === 'POST' && url.origin === location.origin && url.pathname === '/share-target') { e.respondWith(takeShare(e.request)); return; }
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws') || url.pathname.startsWith('/__nb/')) return; // /__nb/: files on this phone, served by the Android app
   // network-first so updates ship immediately; cache is the offline fallback
