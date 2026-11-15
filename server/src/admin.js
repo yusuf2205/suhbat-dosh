@@ -305,7 +305,7 @@ admin.get('/chats/:id', (req, res) => {
 });
 
 // Filters of the admin's conversation view: text, kind, author, dates. Shared by the page and the export.
-const KIND_SQL = { marked: 'm.id IN (SELECT message_id FROM admin_marks)', edited: 'm.edited_at IS NOT NULL', media: "m.kind IN ('image','video')", image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
+const KIND_SQL = { marked: 'm.id IN (SELECT message_id FROM admin_marks)', edited: 'm.edited_at IS NOT NULL', media: "m.kind IN ('image','video')", image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", photo: "m.kind = 'image' AND m.file_id NOT IN (SELECT id FROM files WHERE mime = 'image/gif' OR lower(name) LIKE '%.gif')", gif: "m.kind IN ('image','video','file') AND m.file_id IN (SELECT id FROM files WHERE mime = 'image/gif' OR lower(name) LIKE '%.gif')", audio: "m.kind = 'audio'", voicemsg: "m.kind = 'voice'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
 function chatFilter(id, query) {
   const where = ['m.chat_id = ?'];
   const params = [id];
@@ -418,6 +418,8 @@ admin.get('/chats/:id/stats', (req, res) => {
     last_at: one('SELECT MAX(created_at) AS n FROM messages WHERE chat_id = ?'),
     by_author: q.all(`SELECT COALESCE(m.import_author, u.name, '—') AS name, MIN(u.id) AS user_id, COUNT(*) AS n, MIN(m.created_at) AS first_at, MAX(m.created_at) AS last_at
       FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? GROUP BY 1 ORDER BY n DESC LIMIT 50`, id),
+    // like the "shared media" of Telegram: how many of each, and the same names open the list (?kind=)
+    media: Object.fromEntries(['photo', 'video', 'file', 'audio', 'link', 'voicemsg', 'gif'].map((k) => [k, one(`SELECT COUNT(*) AS n FROM messages m WHERE m.chat_id = ? AND ${KIND_SQL[k]}`)])),
     by_kind: q.all('SELECT kind, COUNT(*) AS n FROM messages WHERE chat_id = ? GROUP BY kind ORDER BY n DESC', id),
   });
 });

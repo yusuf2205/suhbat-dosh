@@ -894,7 +894,7 @@ function locationLine(text) {
     h('a', { href: `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, `${g[1]}, ${g[2]}`), ' ', h('small', { class: 'muted' }, 'Яндекс Карты'));
 }
 
-const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['image', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['voice', 'Голос и аудио'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
+const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['photo', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['audio', 'Аудио'], ['voicemsg', 'Голосовые'], ['gif', 'GIF'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
 
 /** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
 function openLightbox(imgs, start) {
@@ -929,6 +929,23 @@ function openLightbox(imgs, start) {
   document.addEventListener('keydown', key, true);
   document.body.append(root);
   show();
+}
+
+/** What a conversation holds, the way Telegram lists it: the number of each kind; a tap opens that kind. */
+const MEDIA_ROWS = [['photo', '🖼', 'фотографий'], ['video', '🎬', 'видео'], ['file', '📄', 'файлов'], ['audio', '🎧', 'аудиофайлов'], ['link', '🔗', 'ссылок'], ['voicemsg', '🎙', 'голосовых сообщений'], ['gif', '🎞', 'GIF']];
+async function openMediaList(id, title, pick) {
+  let s;
+  try { s = await get(`/api/admin/chats/${id}/stats`); } catch (e) { notify(errMsg(e)); return; }
+  const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const box = h('div', { class: 'adlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Медиа и файлы', onclick: (e) => { if (e.target === box) close(); } },
+    h('div', { class: 'adlg-card asum' },
+      h('h2', null, `Медиа и файлы: ${title}`),
+      h('div', { class: 'amedia' }, MEDIA_ROWS.map(([k, ico, word]) => h('button', { class: 'amedia-row', type: 'button', disabled: !s.media?.[k], onclick: () => { close(); pick(k); } },
+        h('span', { class: 'amedia-ico', 'aria-hidden': 'true' }, ico), h('span', { class: 'amedia-n' }, `${s.media?.[k] || 0} ${word}`)))),
+      h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '10px' } }, h('button', { class: 'btn', type: 'button', onclick: close }, 'Закрыть'))));
+  document.addEventListener('keydown', key, true);
+  document.body.append(box);
 }
 
 const SUMMARY_KINDS = { text: 'Текст', image: 'Фото', video: 'Видео', voice: 'Голосовые', audio: 'Аудио', file: 'Файлы', location: 'Геопозиции', call: 'Звонки', sticker: 'Стикеры', poll: 'Опросы' };
@@ -975,11 +992,12 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   };
   const draw = () => {
     clear(list);
-    list.classList.toggle('agal', f.kind === 'media');
+    const gallery = ['media', 'photo', 'video', 'gif'].includes(f.kind);
+    list.classList.toggle('agal', gallery);
     if (!all.length) list.append(h('p', { class: 'muted' }, f.kind === 'marked' ? 'Помеченных сообщений нет. Откройте меню ⋯ у сообщения и выберите «Пометить».' : 'Ничего не найдено'));
-    if (f.kind === 'media') {
+    if (gallery) {
       list.append(...all.filter((m) => m.file).map((m) => h('div', { class: 'agal-item abub', dataset: { id: String(m.id) } },
-        m.kind === 'image' ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })),
+        m.kind === 'image' || /\.gif$/i.test(m.file.name || '') ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })),
         h('div', { class: 'abub-time' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`, h('button', { class: 'abub-more', type: 'button', 'aria-label': 'Действия с сообщением' }, '⋯')))));
       return;
     }
@@ -1229,6 +1247,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
+    h('button', { class: 'chip', type: 'button', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, '🖼 Медиа и файлы'),
     h('button', { class: 'chip', type: 'button', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, '📊 Сводка'));
   // on a phone the menu of the console stays on top: the bar goes right under it
   const placeBar = () => {

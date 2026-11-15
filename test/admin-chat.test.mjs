@@ -78,6 +78,10 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
   assert.deepEqual(s.by_author.map((x) => [x.name, x.n]).sort(), [['Азиз', 2], ['Мадина', 2]]);
   assert.equal(s.by_kind.find((k) => k.kind === 'text').n, 4);
   assert.ok(s.first_at <= s.last_at);
+  // the list of what the conversation holds (photos, videos, files, audio, links, voice, GIF), each kind opens by its name
+  assert.deepEqual(s.media, { photo: 0, video: 0, file: 0, audio: 0, link: 1, voicemsg: 0, gif: 0 });
+  for (const k of Object.keys(s.media)) assert.equal((await call(admin.cookie, 'GET', `${url}/messages?kind=${k}`)).status, 200, k);
+  assert.equal((await call(admin.cookie, 'GET', `${url}/messages?kind=link`)).data.messages.length, 1);
 
   // going somewhere
   assert.equal((await call(admin.cookie, 'GET', `${url}/find?id=${m3.id}`)).data.id, m3.id);
