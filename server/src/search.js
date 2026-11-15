@@ -1,7 +1,7 @@
 // Search over the messages a person can see: text, the speech-to-text of voice messages and the names of files.
 // Words of three letters or more go through the FTS5 trigram index (any part of a word, any letter case, Cyrillic too);
 // shorter words are matched with LIKE on the rows the index already narrowed down.
-import { q } from './db.js';
+import { q, place } from './db.js';
 import { escapeLike } from './util.js';
 
 const phrase = (w) => `"${w.replace(/"/g, '""')}"`;
@@ -24,7 +24,7 @@ export function searchMessages(userId, o = {}) {
   if (o.since !== undefined) { where.push('m.created_at >= ?'); params.push(o.since); }
   if (o.until !== undefined) { where.push('m.created_at <= ?'); params.push(o.until); }
   if (o.chatType) { where.push('c.type = ?'); params.push(o.chatType); }
-  if (o.before) { where.push('m.id < ?'); params.push(o.before); }
+  if (o.before) { const at = place(o.before, '<', 'm'); where.push(at.sql); params.push(...at.args); }   // by the time written, like the chats show them
   if (o.type === 'link') where.push("m.kind = 'text' AND (m.text LIKE '%http://%' OR m.text LIKE '%https://%')");
   else if (o.type === 'text') where.push("m.kind = 'text'");
   else if (o.type) { where.push('m.kind = ?'); params.push(o.type); }
@@ -33,7 +33,7 @@ export function searchMessages(userId, o = {}) {
     `SELECT m.*, c.type AS chat_type, c.title AS chat_title FROM messages m
      JOIN members mb ON mb.chat_id = m.chat_id AND mb.user_id = ? AND mb.banned = 0
      JOIN chats c ON c.id = m.chat_id
-     WHERE ${where.join(' AND ')} ORDER BY m.id DESC LIMIT ?`,
+     WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC, m.id DESC LIMIT ?`,
     ...params,
   );
 }

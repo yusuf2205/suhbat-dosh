@@ -508,9 +508,15 @@ admin.get('/search', async (req, res) => {
     rows = ranked.map((r) => q.get('SELECT * FROM messages WHERE id = ?', r.id)).filter(Boolean);
     scores = new Map(ranked.map((r) => [r.id, r.score]));
   } else {
-    const like = `%${escapeLike(term.toLowerCase())}%`;
+    // the whole history at once: words of three letters or more go through the full-text index (text, speech of voice messages, file names), shorter ones are matched on what it left
+    const words = term.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+    const long = words.filter((w) => [...w].length >= 3);
+    const conds = [];
+    const args = [];
+    if (long.length) { conds.push('id IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)'); args.push(long.map((w) => `"${w.replace(/"/g, '""')}"`).join(' AND ')); }
+    for (const w of words.filter((x) => [...x].length < 3)) { conds.push("lc(text) LIKE ? ESCAPE '\\'"); args.push(`%${escapeLike(w)}%`); }
     const hidden = hiddenChatSql(req.user);
-    rows = q.all(`SELECT * FROM messages WHERE kind = 'text' AND lc(text) LIKE ? ESCAPE '\\' ${chatId !== undefined ? 'AND chat_id = ?' : ''} AND chat_id NOT IN (SELECT c.id FROM chats c WHERE ${hidden.sql}) ORDER BY id DESC LIMIT 30`, like, ...(chatId !== undefined ? [chatId] : []), ...hidden.params);
+    rows = q.all(`SELECT * FROM messages WHERE ${conds.join(' AND ')} ${chatId !== undefined ? 'AND chat_id = ?' : ''} AND chat_id NOT IN (SELECT c.id FROM chats c WHERE ${hidden.sql}) ORDER BY created_at DESC, id DESC LIMIT 30`, ...args, ...(chatId !== undefined ? [chatId] : []), ...hidden.params);
   }
   rows = rows.filter((m) => !chatHiddenFrom(m.chat_id, req.user));
   res.json({ results: rows.map((m) => ({ ...adminMessage(m), score: scores.get(m.id) ?? null })), mode: meaning ? 'meaning' : 'text' });
@@ -524,7 +530,7 @@ admin.get('/chats/:id/export', (req, res) => {
   if (!chat) throw new HttpError(404, 'not_found');
   const format = req.query.format === 'html' ? 'html' : 'txt';
   const f = chatFilter(id, req.query);
-  const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} ORDER BY m.id LIMIT 100000`, ...f.params);
+  const rows = q.all(`SELECT m.* FROM messages m WHERE ${f.where.join(' AND ')} ORDER BY m.created_at, m.id LIMIT 100000`, ...f.params);
   audit(req.user.id, 'admin.export_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip, details: { format, messages: rows.length } });
   const stamp = (t) => new Date(t).toISOString().replace('T', ' ').slice(0, 19);
   const items = rows.map((m) => {
