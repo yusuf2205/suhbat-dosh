@@ -1939,6 +1939,7 @@ async function viewAdmins() {
     } catch (e) { notify(errMsg(e)); paint(a, box); }
   };
   function paint(a, box) {
+    if (a.count) a.count.textContent = a.perms.length ? `прав: ${a.perms.length} из ${catalog.length}` : 'без прав';
     const reading = h('div', { class: 'aread' });
     if (a.perms.includes('chats_read')) paintRead(a, reading);
     clear(box).append(
@@ -1952,17 +1953,26 @@ async function viewAdmins() {
   }
   const card = (a) => {
     const rights = h('div', { class: 'aperm-box' });
+    a.count = a.owner ? null : h('span', { class: 'aperm-count' });
     if (!a.owner) paint(a, rights);
-    return h('section', { class: 'panel' },
-      h('div', { class: 'at-row aperm-head' },
+    // on a phone the administrators are a list of names: a tap opens the rights of one, the others fold, so there is no endless scrolling
+    const phone = matchMedia('(max-width: 860px)').matches;
+    const card = h('details', { class: 'panel aperm-card', open: !phone },
+      h('summary', { class: 'at-row aperm-head' },
         h('h2', null, a.name), a.username ? h('span', { class: 'muted' }, `@${a.username}`) : null,
         a.owner ? h('span', { class: 'pill ok' }, 'главный админ') : a.online ? h('span', { class: 'pill ok' }, 'в сети') : null,
-        h('span', { class: 'ud-sp' }),
-        a.owner ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
-          if (!await askConfirm(`Снять права администратора у ${a.name}?`)) return;
-          try { await send('POST', `/api/admin/users/${a.id}/admin`, { is_admin: false }); viewAdmins(); } catch (e) { notify(errMsg(e)); }
-        } }, 'Снять админа')),
-      a.owner ? h('p', { class: 'muted' }, 'Может всё и один выдаёт права. Только главный админ меняет вход в админку, назначает админов, восстанавливает и удаляет резервные копии. Его личную переписку другие админы не видят.') : rights);
+        h('span', { class: 'ud-sp' }), a.count, h('span', { class: 'aperm-arrow', 'aria-hidden': 'true' }, '▾')),
+      a.owner ? h('p', { class: 'muted' }, 'Может всё и один выдаёт права. Только главный админ меняет вход в админку, назначает админов, восстанавливает и удаляет резервные копии. Его личную переписку другие админы не видят.') : rights,
+      a.owner ? null : h('div', { class: 'aperm-foot' }, h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
+        if (!await askConfirm(`Снять права администратора у ${a.name}?`)) return;
+        try { await send('POST', `/api/admin/users/${a.id}/admin`, { is_admin: false }); viewAdmins(); } catch (e) { notify(errMsg(e)); }
+      } }, 'Снять админа')));
+    if (phone) card.addEventListener('toggle', () => {
+      if (!card.open) return;
+      for (const other of card.parentElement.querySelectorAll('.aperm-card[open]')) if (other !== card) other.open = false;
+      card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+    return card;
   };
   const results = h('div', { class: 'ud-chats' });
   const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Имя, @username или телефон', 'aria-label': 'Кого назначить администратором', oninput: (e) => {

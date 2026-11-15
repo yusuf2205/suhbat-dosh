@@ -247,6 +247,24 @@ for (const vp of VIEWPORTS) {
         const filled = await page.$eval('.adm-view', (v) => v.innerText.trim().length);
         assert.ok(filled > 20, `${tab}: is not empty`);
       }
+      // the layout: the two cards of the overview are of one height; the menu of a computer reaches its last button on a low screen
+      await page.goto(`${BASE}/admin.html#/overview`);
+      await page.waitForSelector('.row-2 > .panel');
+      const heights = await page.$$eval('.row-2 > .panel', (p) => p.map((x) => Math.round(x.getBoundingClientRect().height)));
+      if (!vp[2]) {
+        assert.equal(heights[0], heights[1], `overview cards: ${heights}`);
+        await page.setViewportSize({ width: 1280, height: 600 });
+        await page.waitForTimeout(300);
+        await page.$eval('.adm-side', (e) => { e.scrollTop = e.scrollHeight; });
+        const back = await page.$eval('.adm-back', (e) => { const r = e.getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.top >= 0; });
+        assert.equal(back, true, 'the way back to the messenger is in view on a low screen');
+        await page.setViewportSize({ width: 1280, height: 800 });
+      }
+      // the administrators: on a phone a folded list, one card opens at a time; on a computer every card is open
+      await page.goto(`${BASE}/admin.html#/admins`);
+      await page.waitForSelector('.aperm-card');
+      const open = await page.$$eval('.aperm-card', (c) => c.map((x) => x.open));
+      if (vp[2]) assert.ok(open.every((x) => !x), 'folded on a phone'); else assert.ok(open.every((x) => x), 'open on a computer');
       // a person, a chat, and a person's page
       await page.goto(`${BASE}/admin.html#/chats`);
       await page.waitForSelector('.achat');

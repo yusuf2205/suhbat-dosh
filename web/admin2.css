@@ -210,7 +210,8 @@
 .panel h2, .panel-head h2 { font-size: .98rem; margin-bottom: 8px; }
 .panel-head { margin-bottom: 8px; }
 .panel, .kpi, .tablewrap { border-radius: 18px; }
-.row-2, .row-3 { gap: 12px; margin-bottom: 12px; align-items: start; }
+.row-2, .row-3 { gap: 12px; margin-bottom: 12px; align-items: stretch; }
+.row-2 > .panel, .row-3 > .panel { margin-bottom: 0; }   /* the cards of a row are of one height */
 .grid2 { gap: 12px; align-items: start; }
 .kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .kpi { padding: 10px 12px; gap: 10px; border-radius: 16px; }
@@ -476,3 +477,18 @@ table.t.health td { overflow-wrap: anywhere; }
 .apl-float { position: fixed; top: 10px; right: 10px; z-index: 70; width: min(540px, calc(100vw - 20px)); }
 .apl-float .apl { margin: 0; }
 @media (max-width: 860px) { .apl-float { left: 10px; width: auto; } }
+
+/* the menu on a computer: when the screen is low, it scrolls instead of cutting off the way back to the messenger */
+@media (min-width: 901px) {
+  .adm-side { overflow-y: auto; scrollbar-width: none; }
+  .adm-side::-webkit-scrollbar { display: none; }
+}
+@media (min-width: 901px) and (max-height: 860px) { .adm-side-card { display: none; } }
+
+/* administrators: a folded card shows the name and how many rights; a tap opens it */
+.aperm-card > summary { list-style: none; cursor: pointer; }
+.aperm-card > summary::-webkit-details-marker { display: none; }
+.aperm-count { color: var(--muted, #8a8a93); font-size: .85rem; }
+.aperm-arrow { transition: transform .15s; color: var(--muted, #8a8a93); }
+.aperm-card[open] > summary .aperm-arrow { transform: rotate(180deg); }
+.aperm-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
