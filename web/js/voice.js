@@ -132,7 +132,7 @@ function ensureAudio() {
 
 function playlist(m) {
   return bucket(m.chat_id).list.filter((x) => (x.kind === 'voice' || x.kind === 'audio') && x.file && typeof x.id === 'number')
-    .sort((a, b) => a.id - b.id);
+    .sort((a, b) => (a.created_at - b.created_at) || (a.id - b.id));   // by the time written, like the chat shows them
 }
 function neighbour(m, dir) {
   if (!m) return null;

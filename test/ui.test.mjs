@@ -232,6 +232,28 @@ async function watchedPage(cookieStr, [, viewport, touch]) {
   return { ctx, page, problems };
 }
 
+test('messenger: voice messages have a waveform and a round button, the player goes to the next by itself and keeps going in another chat', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.madina);
+  try {
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.click(`.ci[data-chat-id="${seed.chat}"]`);
+    await page.waitForSelector('.voice');
+    assert.equal(await page.$$eval('.voice .voice-wave i', (b) => b.length > 20), true, 'a waveform');
+    await page.locator('.voice .voice-play').first().click();
+    await page.waitForSelector('.gplayer');
+    if (process.env.UI_SHOT2) await page.screenshot({ path: process.env.UI_SHOT2 });
+    const box = await page.locator('.voice .voice-wave').first().boundingBox();
+    await page.mouse.click(box.x + box.width * 0.98, box.y + box.height / 2);
+    await page.waitForFunction(() => { const v = document.querySelectorAll('.voice'); return !v[0].classList.contains('playing') && v[1]?.classList.contains('playing'); }, null, { timeout: 8000 });
+    // another chat: the player stays and goes on
+    await page.goBack().catch(() => {});
+    await page.waitForSelector('.chatlist .ci', { state: 'attached' });
+    assert.ok(await page.$('.gplayer'), 'the player is still there after leaving the chat');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 for (const vp of VIEWPORTS) {
   test(`admin, ${vp[0]}: every section opens, shows its content and makes no errors`, { skip: !canRun }, async () => {
     const { ctx, page, problems } = await watchedPage(seed.admin, vp);
