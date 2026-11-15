@@ -236,7 +236,7 @@ admin.get('/chats', (req, res) => {
         title = people.map((p) => p.name).join(' ↔ ');
       }
       // the last line, so the list reads like a messenger: who wrote what last
-      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT 1', c.id);
+      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.created_at DESC, m.id DESC LIMIT 1', c.id);
       const label = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', call: 'Звонок', location: 'Геопозиция' }[lm?.kind];
       const last = lm ? { author: lm.import_author || lm.author || '', text: String(lm.text || label || '').slice(0, 120) } : null;
       return {
@@ -251,9 +251,11 @@ admin.get('/chats', (req, res) => {
 admin.get('/chats/people', (req, res) => {
   const hidden = hiddenChatSql(req.user);
   const rows = q.all(
-    `SELECT u.id, u.name, u.username, c.type, COUNT(*) AS n, MAX(c.last_message_at) AS last_at
-     FROM members mb JOIN users u ON u.id = mb.user_id JOIN chats c ON c.id = mb.chat_id
-     WHERE mb.banned = 0 AND u.is_bot = 0 AND NOT ${hidden.sql} GROUP BY u.id, c.type`, ...hidden.params,
+    // a copy of a Telegram chat is a "group" here, but it is counted as what it is in Telegram: a personal chat, a group or a channel
+    `SELECT u.id, u.name, u.username, CASE WHEN c.imported_from = 'tgbridge' AND t.kind = 'user' THEN 'direct' WHEN c.imported_from = 'tgbridge' AND t.kind IN ('group', 'channel') THEN t.kind ELSE c.type END AS type,
+            COUNT(*) AS n, MAX(c.last_message_at) AS last_at
+     FROM members mb JOIN users u ON u.id = mb.user_id JOIN chats c ON c.id = mb.chat_id LEFT JOIN tg_chats t ON t.chat_id = c.id AND t.user_id = mb.user_id
+     WHERE mb.banned = 0 AND u.is_bot = 0 AND NOT ${hidden.sql} GROUP BY u.id, 4`, ...hidden.params,
   );
   const by = new Map();
   for (const r of rows) {
@@ -273,20 +275,22 @@ admin.get('/chats/of/:uid', (req, res) => {
   const hidden = hiddenChatSql(req.user);
   const rows = q.all(
     `SELECT c.*, (SELECT COUNT(*) FROM members WHERE chat_id = c.id AND banned = 0) AS members,
-       (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages
-     FROM members mb JOIN chats c ON c.id = mb.chat_id WHERE mb.user_id = ? AND NOT ${hidden.sql} ORDER BY c.last_message_at DESC LIMIT 1000`, uid, ...hidden.params,
+       (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages,
+       (SELECT kind FROM tg_chats WHERE chat_id = c.id AND user_id = ?) AS tg_kind
+     FROM members mb JOIN chats c ON c.id = mb.chat_id WHERE mb.user_id = ? AND NOT ${hidden.sql} ORDER BY c.last_message_at DESC LIMIT 1000`, uid, uid, ...hidden.params,
   );
   res.json({
     chats: rows.map((c) => {
       let title = c.title;
+      const type = c.imported_from === 'tgbridge' && c.tg_kind ? (c.tg_kind === 'user' ? 'direct' : c.tg_kind) : c.type;   // what it is in Telegram
       if (c.type === 'direct') {
         const peers = q.all('SELECT u.name FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? AND m.user_id != ?', c.id, uid);
         title = peers.length ? peers.map((p) => p.name).join(' ↔ ') : 'Избранное';
       }
-      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT 1', c.id);
+      const lm = q.get('SELECT m.text, m.kind, m.import_author, u.name AS author FROM messages m LEFT JOIN users u ON u.id = m.sender_id WHERE m.chat_id = ? ORDER BY m.created_at DESC, m.id DESC LIMIT 1', c.id);
       const label = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', call: 'Звонок', location: 'Геопозиция' }[lm?.kind];
       return {
-        id: c.id, type: c.type, title, members: c.members, messages: c.messages, last_message_at: c.last_message_at,
+        id: c.id, type, title, members: c.members, messages: c.messages, last_message_at: c.last_message_at,
         last: lm ? { author: lm.import_author || lm.author || '', text: String(lm.text || label || '').slice(0, 120) } : null,
       };
     }),

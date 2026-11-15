@@ -197,7 +197,7 @@ function createMirror(uid, meName, tgChat, title, kind, twoWay, saved = false) {
   }
   const r = q.run(
     "INSERT INTO chats (type, title, description, owner_id, imported_from, import_me, last_message_at, created_at) VALUES ('group', ?, ?, ?, 'tgbridge', ?, ?, ?)",
-    `✈ ${title}`, `tgb:${tgChat}`, uid, meName || 'Я', now(), now(),
+    `✈ ${title}`, `tgb:${tgChat}`, uid, meName || 'Я', 0, now(),   // no time of the last message yet: the first message that arrives sets the real one (not the moment of copying)
   );
   const cid = Number(r.lastInsertRowid);
   q.run("INSERT INTO members (chat_id, user_id, role, joined_at, muted) VALUES (?, ?, 'owner', ?, 1)", cid, uid, now());
@@ -583,7 +583,7 @@ function deliver(b, file = null) {
   }
   // the one shown as the last message is the newest by time (history that is copied later has higher ids but older times)
   q.run('UPDATE chats SET last_shown_id = CASE WHEN ? >= COALESCE((SELECT created_at FROM messages WHERE id = COALESCE(last_shown_id, last_message_id)), 0) THEN ? ELSE COALESCE(last_shown_id, last_message_id) END WHERE id = ?', ts, id, row.chat_id);
-  q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?) WHERE id = ?', id, ts, row.chat_id);
+  q.run('UPDATE chats SET last_message_id = MAX(COALESCE(last_message_id, 0), ?), last_message_at = MAX(last_message_at, ?), created_at = MIN(created_at, ?) WHERE id = ?', id, ts, ts, row.chat_id);   // a copy "starts" with its first message, and its last message is the real last one
   q.run('UPDATE members SET hidden = 0 WHERE chat_id = ?', row.chat_id);
   if (b.out || b.backfill) q.run('UPDATE members SET last_read_id = MAX(last_read_id, ?), last_delivered_id = MAX(last_delivered_id, ?) WHERE chat_id = ? AND user_id = ?', id, id, row.chat_id, uid);
   if (b.backfill) {
@@ -854,8 +854,21 @@ export async function bridgeDeleteChat(chatId, user) {
 }
 
 /** After a restart (and every half hour) tell the bridge the rules again, so both sides never drift apart. */
+/**
+ * The copies of Telegram chats stand in the lists by the time of their real last message. Copies made before had the moment of copying as the
+ * time of the last message (so they all stood at the top, in the order of copying); this puts the real time in and keeps it right.
+ */
+export function repairMirrorTimes() {
+  const last = '(SELECT MAX(created_at) FROM messages WHERE chat_id = chats.id)';
+  const first = '(SELECT MIN(created_at) FROM messages WHERE chat_id = chats.id)';
+  const a = q.run(`UPDATE chats SET last_message_at = COALESCE(${last}, 0) WHERE imported_from = 'tgbridge' AND last_message_at != COALESCE(${last}, 0)`).changes;
+  const b = q.run(`UPDATE chats SET created_at = ${first} WHERE imported_from = 'tgbridge' AND ${first} IS NOT NULL AND created_at > ${first}`).changes;
+  return { last: Number(a), first: Number(b) };
+}
+
 export function startBridge() {
   try { mergeSavedMirrors(); } catch (e) { log('warn', 'saved merge failed', { err: e.message }); }
+  try { const r = repairMirrorTimes(); if (r.last || r.first) log('info', 'copies of Telegram chats: times corrected', r); } catch (e) { log('warn', 'time repair failed', { err: e.message }); }
   const run = async () => {
     if (!bridgeConfigured()) return;
     for (const o of q.all('SELECT user_id FROM tg_bridge')) { try { await pushRules(o.user_id); } catch { /* the bridge is not up yet */ } }

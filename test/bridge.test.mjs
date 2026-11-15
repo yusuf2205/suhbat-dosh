@@ -596,3 +596,23 @@ test('a personal chat deleted for good goes from Telegram too, for its owner onl
   assert.deepEqual(kept.map((x) => x.text), ['привет', 'как дела']);
   assert.ok(kept.every((x) => x.tg_deleted), 'and marked as deleted in Telegram');
 });
+
+test('a copy stands in the lists by the time of its real last message (not by the moment of copying), and the console counts it as what it is in Telegram', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002800', 'Порядок списка');
+  await link(u);
+  const post = (chat, title, body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', tg_chat: chat, title, author: title, backfill: true, ...body }) }).then((r) => r.json());
+  const day = 86400000;
+  const old = Date.now() - 60 * day;
+  const recent = Date.now() - 2 * day;
+  // the copy of the old chat is made later than the one of the recent chat, as happens when history is copied in the background
+  assert.ok((await post('8002', 'Свежий друг', { tg_msg: 1, text: 'недавно', ts: recent })).id);
+  assert.ok((await post('8001', 'Давний друг', { tg_msg: 1, text: 'давно', ts: old })).id);
+  const people = (await call(admin.cookie, 'GET', '/api/admin/chats/people')).data.people.find((p) => p.id === u.user.id);
+  assert.ok(people.direct >= 2, `personal chats of Telegram are counted as personal: ${JSON.stringify(people)}`);
+  const chats = (await call(admin.cookie, 'GET', `/api/admin/chats/of/${u.user.id}`)).data.chats.filter((c) => /друг/.test(c.title));
+  assert.deepEqual(chats.map((c) => c.title), ['✈ Свежий друг', '✈ Давний друг'], 'the recent one first');
+  assert.deepEqual(chats.map((c) => c.last_message_at), [recent, old], 'the time is the real one');
+  assert.ok(chats.every((c) => c.type === 'direct'));
+  const mine = (await call(u.cookie, 'GET', '/api/chats')).data.chats.filter((c) => /друг/.test(c.title));
+  assert.deepEqual(mine.map((c) => c.title), ['✈ Свежий друг', '✈ Давний друг'], 'and so in the list of the person');
+});
