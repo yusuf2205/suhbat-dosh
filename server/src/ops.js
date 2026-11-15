@@ -267,9 +267,18 @@ export function verifyBackup(name) {
     for (const tb of ['users', 'messages']) if (out.live[tb] > 50 && out.counts[tb] < out.live[tb] * 0.5) out.problems.push(`в копии мало записей: ${tb}`);
     const dest = offsite().files || path.join(config.backupDir, 'files');
     try {
-      const have = new Set(fs.readdirSync(dest));
-      out.files_missing = t.prepare('SELECT id FROM files').all().filter((r) => fs.existsSync(path.join(config.filesDir, r.id)) && !have.has(r.id)).length;
-      if (out.files_missing > 0) out.problems.push(`файлов нет в копии: ${out.files_missing}`);
+      // only the files that were already there when the last pass of the second copy began count: a file that arrived after it (Telegram history
+      // is being copied in all the time) is not lost, it is simply next in line. Without a finished pass nothing can be said yet.
+      const pass = filesMirror.last;
+      if (pass && !pass.error && pass.started) {
+        const have = new Set(fs.readdirSync(dest));
+        const limit = pass.started - 60_000;
+        out.files_missing = t.prepare('SELECT id FROM files').all().filter((r) => {
+          if (have.has(r.id)) return false;
+          try { return fs.statSync(path.join(config.filesDir, r.id)).mtimeMs < limit; } catch { return false; }
+        }).length;
+        if (out.files_missing > 0) out.problems.push(`файлов нет в копии: ${out.files_missing}`);
+      }
     } catch { out.files_missing = null; }
   } catch (e) {
     out.problems.push(String(e.message).slice(0, 120));
@@ -347,6 +356,7 @@ async function mirrorFiles() {
   const dest = o.files || path.join(config.backupDir, 'files');
   let copied = 0;
   let bytes = 0;
+  const started = now();
   try {
     if (o.configured && !o.found) throw new Error('внешний диск не подключён');
     await fs.promises.mkdir(dest, { recursive: true });
@@ -362,7 +372,7 @@ async function mirrorFiles() {
       copied += 1;
       bytes += st.size;
     }
-    filesMirror.last = { at: now(), copied, bytes, error: null };
+    filesMirror.last = { at: now(), started, copied, bytes, error: null };
     if (copied) log('info', 'files mirrored', { copied, bytes });
   } catch (e) {
     filesMirror.last = { at: now(), copied, bytes, error: String(e.message).slice(0, 120) };
