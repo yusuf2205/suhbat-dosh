@@ -1703,6 +1703,17 @@ async function clearHistory(c) {
   } catch (e) { toast(errText(e.code)); }
 }
 
+async function deleteInTelegram(c) {
+  if (!(await confirmDialog(t('chat.tg_delete_confirm'), { okLabel: t('chat.tg_delete'), danger: true }))) return;
+  try {
+    await api('POST', `/api/chats/${c.id}/telegram-delete`, { confirm: true });
+    S.chats.delete(c.id);
+    S.msgs.delete(c.id);
+    fire('chat-removed', c.id);
+    toast(t('chat.tg_deleted'));
+  } catch (e) { toast(errText(e.code)); }
+}
+
 async function deleteChat(c) {
   if (!(await confirmDialog(t('chat.delete_confirm'), { okLabel: t('chat.delete'), danger: true }))) return;
   try {
@@ -1857,6 +1868,8 @@ function chatMoreMenu(anchor) {
   if (isSecret(c)) items.unshift({ icon: 'lock', label: t('secret.title'), onClick: () => showSecretInfo(c) });
   else if (c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot) items.splice(1, 0, { icon: 'lock', label: t('secret.start'), onClick: () => startSecretChat(c.peer.id) });
   if (c.type === 'direct' && !c.saved && !lockedChat(c)) items.push({ icon: 'trash', label: t('chat.delete'), danger: true, onClick: () => deleteChat(c) });
+  // a copy of a personal Telegram chat: delete it in Telegram too, for both sides (the person asked for it and confirmed)
+  if (c.imported === 'tgbridge' && c.tg_kind === 'user' && c.type !== 'direct') items.push({ icon: 'trash', label: t('chat.tg_delete'), danger: true, onClick: () => deleteInTelegram(c) });
   popMenu(anchor, items);
 }
 

@@ -572,3 +572,27 @@ test('the console shows how far the copy of the history is: chats, messages, fin
   assert.equal(done.live.progress.done, done.live.progress.total);
   assert.equal(typeof done.files_waiting, 'number');
 });
+
+test('a personal chat deleted for good goes from Telegram too, for its owner only; the administrator keeps the messages, marked as deleted', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002700', 'Стираю чат');
+  await link(u);
+  const other = await phoneUser('+998900002701', 'Чужой');
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', ...body }) }).then((r) => r.json());
+  const events = () => fetch(`http://127.0.0.1:${BPORT}/mock/event?u=${u.user.id}`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'deletes' }) }).then((r) => r.json());
+  const m = await tgPost({ tg_chat: '7001', title: 'Старый друг', author: 'Друг', tg_msg: 1, text: 'привет' });
+  await tgPost({ tg_chat: '7001', title: 'Старый друг', author: 'Друг', tg_msg: 2, text: 'как дела' });
+  const chatId = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => /Старый друг/.test(c.title)).id;
+  assert.ok(m.id);
+  // not without the confirmation, not by a stranger, 
+  assert.equal((await call(u.cookie, 'POST', `/api/chats/${chatId}/telegram-delete`, {})).status, 400);
+  assert.equal((await call(other.cookie, 'POST', `/api/chats/${chatId}/telegram-delete`, { confirm: true })).status, 404, 'a stranger does not even see the chat');
+  assert.equal((await events()).deleted_chats?.length ?? 0, 0);
+  // the owner: the chat goes from Telegram and from their list, the messages stay for the administrator
+  assert.equal((await call(u.cookie, 'POST', `/api/chats/${chatId}/telegram-delete`, { confirm: true })).status, 200);
+  const got = await until(async () => { const e = await events(); return e.deleted_chats?.length ? e : null; });
+  assert.deepEqual(got.deleted_chats, ['7001']);
+  assert.equal((await call(u.cookie, 'GET', '/api/chats')).data.chats.some((c) => c.id === chatId), false, 'the chat is gone from the list of the person');
+  const kept = (await call(admin.cookie, 'GET', `/api/admin/chats/${chatId}/messages`)).data.messages;
+  assert.deepEqual(kept.map((x) => x.text), ['привет', 'как дела']);
+  assert.ok(kept.every((x) => x.tg_deleted), 'and marked as deleted in Telegram');
+});

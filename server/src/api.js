@@ -42,7 +42,7 @@ import { translate, translatorReady } from './translate.js';
 import { accountsRouter } from './accounts.js';
 import { extras, wireExtras } from './chatextras.js';
 import { personal } from './personal.js';
-import { bridge, bridgeConfigured, bridgeDelete, bridgeEdit, bridgeIn, bridgeLocked, bridgeMayDelete, bridgeOut, bridgeTwoWay } from './bridge.js';
+import { bridge, bridgeConfigured, bridgeDelete, bridgeDeleteChat, bridgeEdit, bridgeIn, bridgeLocked, bridgeMayDelete, bridgeOut, bridgeTwoWay } from './bridge.js';
 import { forum, wireForum } from './forum.js';
 import { sets, setItemFor } from './stickersets.js';
 import { semantic, embedderReady } from './semantic.js';
@@ -993,6 +993,16 @@ api.post('/chats/:id/hide', (req, res) => {
   q.run('UPDATE members SET cleared_before = ?, last_read_id = MAX(last_read_id, ?), hidden = 1 WHERE chat_id = ? AND user_id = ?', last, last, id, req.user.id);
   aud(req, 'chat.delete_for_me', { chat_id: id });
   emit([req.user.id], { type: EVENTS.CHAT_REMOVE, chat_id: id });
+  res.json({ ok: true });
+});
+
+// "Delete in Telegram too": the whole personal chat, for both sides. Only the person whose Telegram it is, and only after they confirmed it.
+api.post('/chats/:id/telegram-delete', async (req, res) => {
+  const id = int(req.params.id, 'id');
+  requireMember(id, req.user.id);
+  if (req.body?.confirm !== true) throw new HttpError(400, 'invalid_input');
+  if (!rateLimit(`tgdelchat:${req.user.id}`, 10, 3600_000)) throw new HttpError(429, 'too_many_requests');
+  await bridgeDeleteChat(id, req.user);
   res.json({ ok: true });
 });
 

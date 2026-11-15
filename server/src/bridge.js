@@ -838,6 +838,21 @@ export function bridgeDelete(m) {
   call('POST', '/delete', row.user_id, { chat: row.tg_chat, ids: [tgId] }).catch((e) => log('warn', 'bridge delete failed', { err: e.code || e.message }));
 }
 
+/**
+ * A personal chat deleted for good: its whole history is deleted in Telegram too, for both sides. Only the person whose Telegram it is, only personal chats
+ * (a group or a channel would only be left). Here the messages stay for the administrator, marked as deleted in Telegram; the person no longer sees the chat.
+ */
+export async function bridgeDeleteChat(chatId, user) {
+  const row = q.get('SELECT t.*, c.type AS ctype FROM tg_chats t JOIN chats c ON c.id = t.chat_id WHERE t.chat_id = ? AND t.user_id = ?', chatId, user.id);
+  if (!row || row.kind !== 'user' || row.ctype === 'direct') throw new HttpError(400, 'invalid_input');
+  await call('POST', '/delete-chat', user.id, { chat: row.tg_chat });   // if Telegram refuses, nothing here changes
+  const last = q.get('SELECT last_message_id AS n FROM chats WHERE id = ?', chatId)?.n || 0;
+  q.run('UPDATE messages SET tg_deleted = 1 WHERE chat_id = ? AND tg_deleted = 0', chatId);
+  q.run('UPDATE members SET cleared_before = ?, last_read_id = MAX(last_read_id, ?), hidden = 1 WHERE chat_id = ? AND user_id = ?', last, last, chatId, user.id);
+  audit(user.id, 'bridge.delete_chat', { chat_id: chatId, target_type: 'chat', target_id: String(chatId), details: { tg_chat: row.tg_chat } });
+  emit([user.id], { type: EVENTS.CHAT_REMOVE, chat_id: chatId });
+}
+
 /** After a restart (and every half hour) tell the bridge the rules again, so both sides never drift apart. */
 export function startBridge() {
   try { mergeSavedMirrors(); } catch (e) { log('warn', 'saved merge failed', { err: e.message }); }

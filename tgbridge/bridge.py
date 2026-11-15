@@ -165,6 +165,9 @@ class MockClient:
     async def edit(self, chat_id, msg_id, text):
         self.edited = getattr(self, "edited", []) + [[str(chat_id), int(msg_id), text]]
 
+    async def delete_chat(self, chat_id):
+        self.deleted_chats = getattr(self, "deleted_chats", []) + [str(chat_id)]
+
     async def delete(self, chat_id, ids):
         self.deleted = getattr(self, "deleted", []) + [[str(chat_id), list(ids)]]
 
@@ -1348,6 +1351,26 @@ async def delete_back(r):
     return web.json_response({"ok": True})
 
 
+async def delete_chat_back(r):
+    """A personal chat deleted here is deleted in Telegram too: the whole history, for both sides (the person confirmed it; the server keeps its own record)."""
+    a = who(r)
+    if not a.me:
+        return web.json_response({"error": "not_linked"}, status=409)
+    body = await r.json()
+    chat = str(body.get("chat"))
+    if not re.fullmatch(r"\d{1,20}", chat):   # personal chats only (their ids are positive): a group or a channel would only be left, not deleted
+        return web.json_response({"error": "invalid"}, status=400)
+    try:
+        if MOCK:
+            await a.client.delete_chat(int(chat))
+        else:
+            await a.client.delete_dialog(await a.client.get_input_entity(int(chat)), revoke=True)
+    except Exception as e:
+        log("delete chat:", type(e).__name__)
+        return web.json_response({"error": "telegram_refused"}, status=502)
+    return web.json_response({"ok": True})
+
+
 async def read_back(r):
     """The chat was read here: mark it read in Telegram too (only for chats that may be answered from here)."""
     a = who(r)
@@ -1375,7 +1398,7 @@ async def mock_event(r):
     if b.get("type") == "edits":
         return web.json_response({"edited": getattr(a.client, "edited", [])})
     if b.get("type") == "deletes":
-        return web.json_response({"deleted": getattr(a.client, "deleted", [])})
+        return web.json_response({"deleted": getattr(a.client, "deleted", []), "deleted_chats": getattr(a.client, "deleted_chats", [])})
     if not a.me:
         return web.json_response({"forwarded": False})
     key = str(b.get("chat", ""))
@@ -1470,7 +1493,7 @@ def app():
         web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
-        web.post("/read", read_back), web.post("/delete", delete_back), web.post("/edit", edit_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
+        web.post("/read", read_back), web.post("/delete", delete_back), web.post("/delete-chat", delete_chat_back), web.post("/edit", edit_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),
     ])
     return a
 

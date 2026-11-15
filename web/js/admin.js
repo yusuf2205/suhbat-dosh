@@ -118,7 +118,7 @@ const LABELS = {
   'admin.settings': 'изменил настройки сервера', 'admin.invite_create': 'создал приглашение', 'admin.broadcast': 'сделал рассылку',
   'admin.backup_create': 'создал резервную копию', 'admin.backup_restore': 'восстановил из резервной копии', 'admin.backup_delete': 'удалил резервную копию',
   'admin.backup_download': 'скачал резервную копию', 'admin.backup_verify': 'проверил резервную копию',
-  'bridge.chat': 'изменил чат моста (админ)', 'bridge.restore': 'вернул исключённые чаты в мост (админ)',
+  'bridge.chat': 'изменил чат моста (админ)', 'bridge.delete_chat': 'удалил чат и в Телеграме', 'bridge.restore': 'вернул исключённые чаты в мост (админ)',
   'admin.view_file': 'открыл файл (админ)', 'admin.grant': 'выдано право администратора', 'admin.revoke': 'отозвано право администратора',
 };
 const FIELD = { name: 'имя', bio: 'о себе', status: 'статус', username: 'username', privacy_photo: 'приватность фото', privacy_status: 'приватность статуса', privacy_last_seen: 'приватность «был(а)»' };
