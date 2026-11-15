@@ -613,6 +613,14 @@ test('a copy stands in the lists by the time of its real last message (not by th
   assert.deepEqual(chats.map((c) => c.title), ['✈ Свежий друг', '✈ Давний друг'], 'the recent one first');
   assert.deepEqual(chats.map((c) => c.last_message_at), [recent, old], 'the time is the real one');
   assert.ok(chats.every((c) => c.type === 'direct'));
+  // everywhere in the console: the page of the person, the list of all chats, one chat, the counts of the overview
+  const page = (await call(admin.cookie, 'GET', `/api/admin/users/${u.user.id}`)).data.chats.filter((c) => /друг/.test(c.title));
+  assert.ok(page.length >= 2 && page.every((c) => c.type === 'direct'), 'the page of the person');
+  const all = (await call(admin.cookie, 'GET', `/api/admin/chats?q=${encodeURIComponent('друг')}`)).data.chats;
+  assert.ok(all.length >= 2 && all.every((c) => c.type === 'direct'), 'the list of all chats');
+  assert.equal((await call(admin.cookie, 'GET', `/api/admin/chats/${chats[0].id}`)).data.chat.type, 'direct', 'one chat');
+  const st = (await call(admin.cookie, 'GET', '/api/admin/stats?tz=300&days=7')).data;
+  assert.ok(st.chat_types.direct >= 2, 'the counts of the overview');
   const mine = (await call(u.cookie, 'GET', '/api/chats')).data.chats.filter((c) => /друг/.test(c.title));
   assert.deepEqual(mine.map((c) => c.title), ['✈ Свежий друг', '✈ Давний друг'], 'and so in the list of the person');
 });

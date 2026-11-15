@@ -155,7 +155,7 @@ admin.get('/stats', (req, res) => {
   const calls = bucket("SELECT CAST((ts + ?) / ? AS INTEGER) d, COUNT(*) n FROM audit_log WHERE ts >= ? AND action = 'call.start' GROUP BY d", first);
   const week = now - 7 * DAY;
   const kinds = Object.fromEntries(q.all('SELECT kind, COUNT(*) n FROM messages WHERE created_at >= ? GROUP BY kind', week).map((r) => [r.kind, r.n]));
-  const chatTypes = Object.fromEntries(q.all('SELECT type, COUNT(*) n FROM chats GROUP BY type').map((r) => [r.type, r.n]));
+  const chatTypes = Object.fromEntries(q.all(`SELECT ${TG_TYPE} AS type, COUNT(*) n FROM chats c LEFT JOIN tg_chats tgk ON tgk.chat_id = c.id GROUP BY 1`).map((r) => [r.type, r.n]));
   const top = q.all(
     `SELECT u.id, u.name, u.username, u.avatar_file, COUNT(*) n FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.created_at >= ? GROUP BY u.id ORDER BY n DESC LIMIT 5`, week).map((r) => ({ id: r.id, name: r.name, username: r.username, avatar: r.avatar_file ? `/api/admin/files/${r.avatar_file}` : null, n: r.n }));
@@ -193,17 +193,18 @@ admin.get('/users/:id', (req, res) => {
   if (!u) throw new HttpError(404, 'not_found');
   audit(req.user.id, 'admin.view_user', { target_type: 'user', target_id: String(u.id), ip: req.ip });
   const chats = q.all(
-    `SELECT c.id, c.type, c.title, c.direct_key, mb.role, mb.banned, mb.joined_at,
-       (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.sender_id = ?) AS sent
+    `SELECT c.id, c.type, c.title, c.direct_key, c.imported_from, mb.role, mb.banned, mb.joined_at,
+       (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.sender_id = ?) AS sent,
+       (SELECT kind FROM tg_chats WHERE chat_id = c.id AND user_id = ?) AS tg_kind
      FROM members mb JOIN chats c ON c.id = mb.chat_id WHERE mb.user_id = ? ORDER BY c.last_message_at DESC`,
-    u.id, u.id,
+    u.id, u.id, u.id,
   ).filter((c) => !chatHiddenFrom(c.id, req.user)).map((c) => {
     let title = c.title;
     if (c.type === 'direct') {
       const peer = q.get('SELECT u.* FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? AND m.user_id != ?', c.id, u.id);
       title = peer ? `${peer.name}${peer.username ? ` (@${peer.username})` : ''}` : '—';
     }
-    return { id: c.id, type: c.type, title, role: c.role, banned: !!c.banned, joined_at: c.joined_at, sent: c.sent };
+    return { id: c.id, type: kindOfCopy(c), title, role: c.role, banned: !!c.banned, joined_at: c.joined_at, sent: c.sent };
   });
   const sessions = q.all('SELECT id, device, ip, created_at, last_active, revoked FROM sessions WHERE user_id = ? ORDER BY last_active DESC LIMIT 50', u.id);
   const blocks = q.all('SELECT u.id, u.name, u.username FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.user_id = ?', u.id);
@@ -223,7 +224,8 @@ admin.get('/chats', (req, res) => {
   const hidden = hiddenChatSql(req.user); // in the query, so closed chats do not use up the 500
   const rows = q.all(
     `SELECT c.*, (SELECT COUNT(*) FROM members WHERE chat_id = c.id AND banned = 0) AS members,
-       (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages
+       (SELECT COUNT(*) FROM messages WHERE chat_id = c.id) AS messages,
+       (SELECT kind FROM tg_chats WHERE chat_id = c.id LIMIT 1) AS tg_kind
      FROM chats c WHERE (? = '' OR c.title LIKE ? ESCAPE '\\') AND NOT ${hidden.sql} ORDER BY c.last_message_at DESC LIMIT 500`,
     term, like, ...hidden.params,
   );
@@ -240,7 +242,7 @@ admin.get('/chats', (req, res) => {
       const label = { image: 'Фото', video: 'Видео', voice: 'Голосовое', audio: 'Аудио', file: 'Файл', call: 'Звонок', location: 'Геопозиция' }[lm?.kind];
       const last = lm ? { author: lm.import_author || lm.author || '', text: String(lm.text || label || '').slice(0, 120) } : null;
       return {
-        last, id: c.id, type: c.type, title, description: c.description, members: c.members, messages: c.messages,
+        last, id: c.id, type: kindOfCopy(c), title, description: c.description, members: c.members, messages: c.messages,
         owner: userRef(c.owner_id ? getUser(c.owner_id) : null), people, last_message_at: c.last_message_at, created_at: c.created_at,
       };
     }),
@@ -305,10 +307,15 @@ admin.get('/chats/:id', (req, res) => {
     `SELECT u.id, u.name, u.username, u.phone, m.role, m.banned, m.can_send, m.joined_at
      FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? ORDER BY m.joined_at`, id,
   );
-  res.json({ chat: { id: c.id, type: c.type, title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '' }, members });
+  const tgk = c.imported_from === 'tgbridge' ? q.get('SELECT kind FROM tg_chats WHERE chat_id = ? LIMIT 1', id)?.kind : null;
+  res.json({ chat: { id: c.id, type: kindOfCopy({ ...c, tg_kind: tgk }), title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '' }, members });
 });
 
 // Filters of the admin's conversation view: text, kind, author, dates. Shared by the page and the export.
+// A copy of a Telegram chat is stored as a group, but the console says what it is in Telegram: a personal chat, a group or a channel
+const kindOfCopy = (c) => (c.imported_from === 'tgbridge' && c.tg_kind ? (c.tg_kind === 'user' ? 'direct' : c.tg_kind) : c.type);
+const TG_TYPE = "CASE WHEN c.imported_from = 'tgbridge' AND tgk.kind = 'user' THEN 'direct' WHEN c.imported_from = 'tgbridge' AND tgk.kind IN ('group', 'channel') THEN tgk.kind ELSE c.type END";
+
 const KIND_SQL = { marked: 'm.id IN (SELECT message_id FROM admin_marks)', edited: 'm.edited_at IS NOT NULL', media: "m.kind IN ('image','video')", image: "m.kind = 'image'", video: "m.kind = 'video'", file: "m.kind = 'file'", voice: "m.kind IN ('voice','audio')", link: "m.text LIKE '%http%'", photo: "m.kind = 'image' AND m.file_id NOT IN (SELECT id FROM files WHERE mime = 'image/gif' OR lower(name) LIKE '%.gif')", gif: "m.kind IN ('image','video','file') AND m.file_id IN (SELECT id FROM files WHERE mime = 'image/gif' OR lower(name) LIKE '%.gif')", audio: "m.kind = 'audio'", voicemsg: "m.kind = 'voice'", call: "m.kind = 'call'", location: "m.kind = 'location'" };
 function chatFilter(id, query) {
   const where = ['m.chat_id = ?'];
