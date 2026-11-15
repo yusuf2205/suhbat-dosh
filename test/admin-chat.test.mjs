@@ -28,6 +28,8 @@ async function call(cookie, method, url, body) {
   const r = await fetch(BASE + url, { method, headers: { ...(cookie ? { cookie } : {}), ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
   return { status: r.status, data: await r.json().catch(() => ({})), cookie: (r.headers.get('set-cookie') || '').split(';')[0] };
 }
+let adminSession;
+async function adminLogin() { return (adminSession ||= await login('+998900000001', 'Админ')); }
 async function login(phone, name) {
   const a = await call('', 'POST', '/api/auth/request', { phone });
   return call('', 'POST', '/api/auth/verify', { phone, code: a.data.dev_code, name });
@@ -94,7 +96,7 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
 });
 
 test('freeing the disk: the files of a person go, the messages stay; only who may delete accounts can do it', async () => {
-  const admin = await login('+998900000001', 'Админ');
+  const admin = await adminLogin();
   const a = await login('+998901110011', 'Лола');
   const b = await login('+998901110012', 'Бахром');
   const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
@@ -121,7 +123,7 @@ test('freeing the disk: the files of a person go, the messages stay; only who ma
 });
 
 test('search in the whole history with filters: kind, person, period, type of chat; words may be left out', async () => {
-  const admin = await login('+998900000001', 'Админ');
+  const admin = await adminLogin();
   const a = await login('+998901110021', 'Зарина');
   const b = await login('+998901110022', 'Тимур');
   const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
@@ -138,4 +140,27 @@ test('search in the whole history with filters: kind, person, period, type of ch
   assert.equal((await find('author=Зарина')).data.results.length, 1, 'no words: all of one person');
   assert.equal((await find('q=')).status, 400, 'neither words nor filters');
   assert.equal((await find('q=встреча&chat_type=bad')).status, 400);
+});
+
+test('freeing the disk by kind of chat: personal, groups, channels', async () => {
+  const admin = await adminLogin();
+  const a = await login('+998901110031', 'Нодира');
+  const b = await login('+998901110032', 'Шухрат');
+  const direct = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  const group = (await call(a.cookie, 'POST', '/api/chats', { type: 'group', title: 'Семья', member_ids: [b.data.user.id] })).data.chat;
+  const up = async (chat, n) => {
+    const init = await call(a.cookie, 'POST', `/api/chats/${chat.id}/uploads`, { name: 'x.bin', size: 1000, client_id: `client-t-${n}-${chat.id}` });
+    await fetch(`${BASE}/api/uploads/${init.data.upload_id}?offset=0`, { method: 'PUT', headers: { cookie: a.cookie, 'content-type': 'application/octet-stream' }, body: crypto.randomBytes(1000) });
+    assert.equal((await call(a.cookie, 'POST', `/api/uploads/${init.data.upload_id}/complete`)).status, 201);
+  };
+  await up(direct, 1); await up(group, 2);
+  const base = `/api/admin/users/${a.data.user.id}/purge`;
+  const preR = await call(admin.cookie, 'GET', base); const pre = preR.data;
+  assert.equal(pre.types.direct.files, 1);
+  assert.equal(pre.types.group.files, 1);
+  assert.equal((await call(admin.cookie, 'GET', `${base}?chat_types=group`)).data.files, 1);
+  assert.equal((await call(admin.cookie, 'GET', `${base}?chat_types=channel`)).data.files, 0);
+  assert.equal((await call(admin.cookie, 'POST', base, { confirm: true, chat_types: 'none' })).data.files, 0, 'an empty choice deletes nothing');
+  assert.equal((await call(admin.cookie, 'POST', base, { confirm: true, chat_types: 'group' })).data.files, 1);
+  assert.equal((await call(admin.cookie, 'GET', base)).data.files, 1, 'the personal chat file stays');
 });

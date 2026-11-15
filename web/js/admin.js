@@ -626,21 +626,28 @@ async function showUser(id) {
   const picks = new Map(PK.map(([k]) => [k, h('input', { type: 'checkbox', checked: k !== 'image' })]));
   const olderSel = h('select', { class: 'input', 'aria-label': 'Возраст файлов' }, [['', 'любые по возрасту'], ['30', 'старше 30 дней'], ['90', 'старше 90 дней'], ['365', 'старше года']].map(([v, t]) => h('option', { value: v }, t)));
   const purgeInfo = h('p', { class: 'muted' }, '…');
-  const purgeQs = () => new URLSearchParams({ kinds: PK.filter(([k]) => picks.get(k).checked).map(([k]) => k).join(','), ...(olderSel.value ? { older_days: olderSel.value } : {}) });
+  const TK = [['direct', 'Личные'], ['group', 'Группы'], ['channel', 'Каналы']];
+  const tpicks = new Map(TK.map(([k]) => [k, h('input', { type: 'checkbox', checked: true })]));
+  const tcount = new Map(TK.map(([k]) => [k, h('small', { class: 'muted' }, '')]));
+  const purgeQs = () => new URLSearchParams({ kinds: PK.filter(([k]) => picks.get(k).checked).map(([k]) => k).join(','), chat_types: TK.filter(([k]) => tpicks.get(k).checked).map(([k]) => k).join(',') || 'none', ...(olderSel.value ? { older_days: olderSel.value } : {}) });
   const recount = async () => {
     try {
       const r = await get(`/api/admin/users/${id}/purge?${purgeQs()}`);
       purgeInfo.textContent = r.files ? `Будет удалено: ${r.files} файлов, ${fmtBytes(r.bytes)}. Сообщения останутся.` : 'Под выбранное ничего не подходит';
       purgeBtn.disabled = !r.files;
+      for (const [k] of TK) tcount.get(k).textContent = r.types?.[k]?.files ? ` ${r.types[k].files} · ${fmtBytes(r.types[k].bytes)}` : '';
     } catch (e) { purgeInfo.textContent = errMsg(e); }
   };
   const purgeBtn = h('button', { class: 'btn danger', type: 'button', onclick: async () => {
     if (!(await askConfirm('Удалить файлы этого пользователя с диска? Это нельзя отменить. Сами сообщения останутся, но без вложений.'))) return;
-    try { const r = await send('POST', `/api/admin/users/${id}/purge`, { confirm: true, kinds: purgeQs().get('kinds'), older_days: olderSel.value || undefined }); notify(`Удалено ${r.files} файлов, освобождено ${fmtBytes(r.bytes)}`); await openUser(id); } catch (e) { notify(errMsg(e)); }
+    try { const r = await send('POST', `/api/admin/users/${id}/purge`, { confirm: true, kinds: purgeQs().get('kinds'), chat_types: purgeQs().get('chat_types'), older_days: olderSel.value || undefined }); notify(`Удалено ${r.files} файлов, освобождено ${fmtBytes(r.bytes)}`); await openUser(id); } catch (e) { notify(errMsg(e)); }
   } }, 'Удалить файлы');
-  for (const el of [...picks.values(), olderSel]) el.addEventListener('change', recount);
+  for (const el of [...picks.values(), ...tpicks.values(), olderSel]) el.addEventListener('change', recount);
   const purge = !may('users_delete') ? null : h('div', { class: 'ud-purge' },
     h('h3', null, 'Освободить место'),
+    h('p', { class: 'muted' }, 'Где удалять:'),
+    h('div', { class: 'ud-purge-kinds' }, TK.map(([k, t]) => h('label', { class: 'chk' }, tpicks.get(k), ` ${t}`, tcount.get(k)))),
+    h('p', { class: 'muted' }, 'Что удалять:'),
     h('div', { class: 'ud-purge-kinds' }, PK.map(([k, t]) => h('label', { class: 'chk' }, picks.get(k), ` ${t}`))),
     olderSel, purgeInfo, purgeBtn);
   const storage = fold('Хранилище', fmtBytes(dir.storage || 0),

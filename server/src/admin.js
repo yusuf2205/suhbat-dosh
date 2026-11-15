@@ -721,6 +721,13 @@ function purgeFilter(req) {
   const where = ['(f.owner_id = ? OR f.chat_id IN (SELECT chat_id FROM tg_chats WHERE user_id = ?))', 'f.chat_id IS NOT NULL'];
   const args = [u.id, u.id];
   if (kinds.length) where.push(`(${kinds.map((k) => PURGE_KINDS[k]).join(' OR ')})`);
+  // personal chats, groups, channels (a copy of a Telegram chat counts as what it is in Telegram)
+  const types = String(b.chat_types || '').split(',').filter((t) => ['direct', 'group', 'channel'].includes(t));
+  if (b.chat_types && !types.length) where.push('0');   // a choice was made, and nothing valid is in it: nothing is deleted
+  if (types.length && types.length < 3) {
+    where.push(`f.chat_id IN (SELECT c.id FROM chats c LEFT JOIN tg_chats tgk ON tgk.chat_id = c.id WHERE ${TG_TYPE} IN (${types.map(() => '?').join(',')}))`);
+    args.push(...types);
+  }
   if (b.chat_id) { where.push('f.chat_id = ?'); args.push(int(b.chat_id, 'chat_id')); }
   if (b.older_days) { where.push('f.created_at < ?'); args.push(now() - int(b.older_days, 'older_days', { min: 1, max: 3650 }) * 86400_000); }
   // a profile photo, a sticker or a story is not "data in chats": only files that a message or a chat holds
@@ -733,7 +740,9 @@ admin.get('/users/:id/purge', (req, res) => {
   const total = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f WHERE ${sql}`, ...args);
   const by = {};
   for (const [k, cond] of Object.entries(PURGE_KINDS)) by[k] = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f WHERE ${sql} AND ${cond}`, ...args);
-  res.json({ ...total, by });
+  const types = {};
+  for (const t of ['direct', 'group', 'channel']) types[t] = q.get(`SELECT COUNT(*) files, COALESCE(SUM(f.size),0) bytes FROM files f WHERE ${sql} AND f.chat_id IN (SELECT c.id FROM chats c LEFT JOIN tg_chats tgk ON tgk.chat_id = c.id WHERE ${TG_TYPE} = ?)`, ...args, t);
+  res.json({ ...total, by, types });
 });
 
 admin.post('/users/:id/purge', (req, res) => {
@@ -749,7 +758,7 @@ admin.post('/users/:id/purge', (req, res) => {
   });
   for (const f of ids) removeFile(f.id);
   const bytes = ids.reduce((a, f) => a + f.size, 0);
-  audit(req.user.id, 'admin.purge_files', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { files: ids.length, bytes, kinds: req.body?.kinds || '', chat_id: req.body?.chat_id || null, older_days: req.body?.older_days || null } });
+  audit(req.user.id, 'admin.purge_files', { target_type: 'user', target_id: String(u.id), ip: req.ip, details: { files: ids.length, bytes, kinds: req.body?.kinds || '', chat_types: req.body?.chat_types || '', chat_id: req.body?.chat_id || null, older_days: req.body?.older_days || null } });
   res.json({ ok: true, files: ids.length, bytes });
 });
 
