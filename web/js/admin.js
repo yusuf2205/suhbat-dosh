@@ -341,6 +341,7 @@ function attentionPanels(o) {
   else if (Date.now() - a.last_backup_at > 2 * 86400_000) add('warn', 'disk', 'Давно не было резервной копии', ago(a.last_backup_at), () => setTab('server'));
   if (a.last_backup_at && !a.offsite) add('warn', 'disk', 'Копии лежат на том же диске', 'Если диск выйдет из строя, пропадёт всё. Задайте внешнюю папку или облако', () => setTab('server'));
   else if (a.offsite_ok === false) add('bad', 'disk', 'Копия не дошла до внешнего хранилища', 'Подробности на вкладке «Сервер»', () => setTab('server'));
+  if (a.files_mirror_error) add('warn', 'disk', 'Вторая копия файлов не пишется', a.files_mirror_error, () => setTab('server'));
   if (a.backup_verify && !a.backup_verify.ok) add('bad', 'disk', 'Проверка резервной копии не прошла', (a.backup_verify.problems || []).join('; '), () => setTab('server'));
   if (a.integrity && !a.integrity.ok) add('bad', 'shield', 'Проверка записи данных нашла проблемы', (a.integrity.problems || []).join('; ').slice(0, 140), () => setTab('server'));
   if (a.failed_logins_24h >= 10) add('warn', 'lock', `Неудачных входов за сутки: ${a.failed_logins_24h}`, 'Возможен подбор пароля', () => { state.preset = { action: 'auth.login_failed' }; setTab('journal'); });

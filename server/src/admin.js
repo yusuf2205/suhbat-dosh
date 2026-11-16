@@ -123,6 +123,7 @@ admin.get('/overview', (_req, res) => {
         failed_logins_24h: q.get("SELECT COUNT(*) n FROM audit_log WHERE action = 'auth.login_failed' AND ts > ?", day).n,
         disk_free: sys.disk_free, disk_total: sys.disk_total, db_bytes: sys.db_bytes,
         last_backup_at: last ? last.created_at : null,
+        files_mirror_error: filesMirror.last?.error || null,
         offsite: mirrorConfig().configured, offsite_ok: mirrorConfig().configured && mirrorStatus.last ? (!mirrorStatus.last.dir || mirrorStatus.last.dir === 'ok') && (!mirrorStatus.last.webdav || mirrorStatus.last.webdav === 'ok') : null,
         integrity: (() => { const r = lastRuns(1)[0]; return r ? { ok: r.ok, bad: r.bad, warn: r.warn, at: r.ts, problems: r.checks.filter((c) => c.status === 'bad').map((c) => `${c.name}: ${c.text}`) } : null; })(),
         backup_verify: verifyStatus.last ? { ok: verifyStatus.last.ok, at: verifyStatus.last.at, problems: verifyStatus.last.problems } : null,
