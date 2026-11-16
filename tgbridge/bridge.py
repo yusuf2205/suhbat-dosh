@@ -129,6 +129,7 @@ class MockClient:
         self.authorized = False
         self.n = 1000
         self.tg = {}   # (chat, message id) -> FakeMsg: messages whose file can still be fetched
+        self.hidden = set()   # chats this account cannot open by their id (an old chat that is not among its dialogs)
 
     async def connect(self):
         pass
@@ -152,6 +153,10 @@ class MockClient:
         return [{"tg_msg": 1 + i, "author": "Дилшод (мок)", "out": i % 2 == 1, "text": f"старое сообщение {i + 1}", "ts": base + i * 60_000} for i in range(3)]
 
     async def get_messages(self, chat, ids=None):
+        if chat is None:   # by the numbers of the messages only, like Telegram does for private chats
+            return [next((v for (_c, i2), v in self.tg.items() if i2 == i), None) for i in ids]
+        if int(chat) in self.hidden:
+            raise ValueError("Could not find the input entity")
         return [self.tg.get((int(chat), i)) for i in ids]
 
     async def get_dialogs(self, limit=None):
@@ -552,6 +557,41 @@ async def skip_media(a: Acct, ids, reason: str):
         pass
 
 
+def peer_key(m):
+    """The number of the chat a message belongs to, in the form the bridge keeps it."""
+    if MOCK:
+        return getattr(m, "mock_peer", None)
+    from telethon import utils
+    return utils.get_peer_id(m.peer_id)
+
+
+async def peerless_messages(a: Acct, chat: str, ids):
+    """A private chat or a small group that is not among the known dialogs cannot be opened by its id, but its messages can still be read by
+    their numbers (they are numbered for the whole account, not per chat), as long as they really come from that chat. None: this cannot be done
+    (a channel or a big group needs its own key, and what does not match is not touched)."""
+    if str(chat).startswith("-100"):
+        return None
+    try:
+        got = await a.client.get_messages(None, ids=ids)
+    except Exception as e:
+        log("media upgrade: by number failed:", type(e).__name__)
+        return None
+    want = int(chat)
+    out = []
+    for m in got:
+        if m is None:
+            out.append(None)
+            continue
+        try:
+            same = peer_key(m) == want
+        except Exception:
+            same = False
+        if not same:
+            return None
+        out.append(m)
+    return out if any(m is not None for m in out) else None
+
+
 async def upgrade_round(a: Acct) -> str:
     """One batch. "ok": there may be more; "idle": nothing is waiting; "down": the server cannot be reached; "full": its disk is nearly full."""
     p = await pending_media(a)
@@ -568,9 +608,12 @@ async def upgrade_round(a: Acct) -> str:
     for chat, its in by_chat.items():
         try:
             msgs = await a.client.get_messages(int(chat), ids=[i["tg_msg"] for i in its])
-        except ValueError:   # a chat this account cannot read right now (left it, not among the known dialogs): not asked about again until the next start
-            a.up_nochat.add(chat)
-            continue
+        except ValueError:   # a chat this account cannot open by its id (an old chat that is not among its dialogs)
+            msgs = await peerless_messages(a, chat, [i["tg_msg"] for i in its])
+            if msgs is None:   # really out of reach: not asked about again until the next start
+                a.up_nochat.add(chat)
+                log("media upgrade: chat", chat, "cannot be read by account", a.uid)
+                continue
         except Exception as e:
             log("media upgrade: a chat could not be read:", type(e).__name__)
             await asyncio.sleep(5)
@@ -1643,6 +1686,9 @@ async def mock_media(r):
     if b.get("placeholder"):
         # the message was copied as a mark; its file can still be fetched (what the upgrade pass is for)
         a.client.tg[(int(key), b["msg"])] = fake = FakeMsg(kind, int(b.get("size", 40)), b.get("name", "file.zip"), b.get("caption", ""))
+        fake.mock_peer = int(key)
+        if b.get("hidden"):
+            a.client.hidden.add(int(key))
         if b.get("album"):
             fake.grouped_id = int(b["album"])   # an album of Telegram: the upgrade pass puts the placeholder into it
         label = {"image": "[Фото]", "voice": "[Голосовое сообщение]", "video": "[Видео]", "audio": "[Аудио]", "file": "[Файл]", "sticker": "[Стикер] 😎", "gif": "[GIF]"}[kind]

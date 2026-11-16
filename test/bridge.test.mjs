@@ -417,6 +417,21 @@ test('pictures Telegram sent as one album share a key, also when they were copie
   assert.equal(pics.find((m) => !m.album).text, '', 'the fourth stands alone');
 });
 
+test('an old chat the account cannot open by its id is still filled in with its files, by the numbers of the messages', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002106', 'Старые чаты');
+  await link(u);
+  const base = { chat: 9393, kind: 'image', title: 'Старый чат', author: 'Он' };
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 1, placeholder: true, hidden: true })).forwarded, true);
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 2, placeholder: true })).forwarded, true);
+  const chat = await until(async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Старый чат'));
+  assert.ok(chat);
+  const pics = await until(async () => {
+    const m = (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?limit=20`)).data.messages.filter((x) => x.kind === 'image' && x.file);
+    return m.length === 2 ? m : null;
+  });
+  assert.ok(pics, 'both pictures were fetched although the chat cannot be opened by its id');
+});
+
 test('the copy of a Telegram chat shows when the other side is online in Telegram, and when they were last there', { skip: !havePy }, async () => {
   const u = await phoneUser('+998900002090', 'Присутствие');
   await link(u);
