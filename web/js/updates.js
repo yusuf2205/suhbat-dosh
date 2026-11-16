@@ -171,16 +171,30 @@ export function updatesSection() {
     try {
       // desktop shell: ask electron-updater first
       if (bridge?.checkUpdate) {
-        const r = await bridge.checkUpdate();
+        // the shell may never answer (a hung network request inside the updater): after 30 s go on with the ordinary check and offer the installer
+        const r = await Promise.race([bridge.checkUpdate().catch(() => null), new Promise((ok) => setTimeout(() => ok({ state: 'timeout' }), 30_000))]);
         if (r?.state === 'available' || r?.state === 'downloaded') {
           // one click: download, then install and restart by itself (like Telegram Desktop)
           const install = () => { status.textContent = t('update.starting'); bridge.installUpdate(); };
           if (r.state === 'downloaded') { install(); return; }
           status.textContent = t('update.downloading', { v: r.version, p: 0 });
+          // no sign of progress for a minute: do not hang on "0%", hand over the installer instead
+          let lastSign = Date.now();
+          let finished = false;
+          const stuck = () => {
+            finished = true;
+            status.textContent = `${t('update.failed')}: ${t('update.app_available', { v: r.version })}`;
+            clear(actions);
+            actions.append(h('a', { class: 'btn', href: '/download' }, t('update.download')));
+            btn.disabled = false;
+          };
+          const watch = setInterval(() => { if (finished) clearInterval(watch); else if (Date.now() - lastSign > 60_000) { clearInterval(watch); stuck(); } }, 5000);
           bridge.onUpdate?.((e) => {
-            if (e?.state === 'downloaded') install();
+            if (finished) return;
+            lastSign = Date.now();
+            if (e?.state === 'downloaded') { finished = true; clearInterval(watch); install(); }
             else if (e?.state === 'available' && typeof e.percent === 'number') status.textContent = t('update.downloading', { v: r.version, p: e.percent });
-            else if (e?.state === 'error') { status.textContent = `${t('update.failed')}: ${e.message || ''}`; btn.disabled = false; }
+            else if (e?.state === 'error') { finished = true; clearInterval(watch); status.textContent = `${t('update.failed')}: ${e.message || ''}`; clear(actions); actions.append(h('a', { class: 'btn', href: '/download' }, t('update.download'))); btn.disabled = false; }
           });
           return;
         }
