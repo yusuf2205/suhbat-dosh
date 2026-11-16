@@ -689,6 +689,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
 // Messages that are still only a mark ("[Фото]", "[Файл]" ...) although the bridge can fetch the file now: the history copied before files were
 // supported, uploads that failed while the server was down. The bridge asks for them, newest first, and puts the files in.
 const PLACEHOLDERS = { geo: ['[Геопозиция]'], photo: ['[Фото]'], voice: ['[Голосовое сообщение]'], file: ['[Файл]'], video: ['[Видео]', '[Видеосообщение]'], audio: ['[Аудио]'], sticker: ['[Стикер]'], gif: ['[GIF]'] };
+const LEFT_CACHE = new Map();
 bridgeIn.get('/bridge/pending', (req, res) => {
   secret(req);
   const uid = Number(req.query.owner);
@@ -699,10 +700,16 @@ bridgeIn.get('/bridge/pending', (req, res) => {
   const where = `c.user_id = ? ${unreachable.length ? `AND c.tg_chat NOT IN (${unreachable.map(() => '?').join(',')})` : ''} AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')})
     AND m.id NOT IN (SELECT message_id FROM tg_media_skip)`;
   const args = [uid, ...unreachable, ...marks.map((m) => `${m}%`)];
-  // personal chats and groups first (what people read), channels after them; newest first within each
-  const items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where} ORDER BY (c.kind = 'channel'), m.id DESC LIMIT ?`, ...args, limit)
+  // newest first (an ordering by anything else makes the database look at every waiting message on each call)
+  const items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where} ORDER BY m.id DESC LIMIT ?`, ...args, limit)
     .map((r) => ({ id: r.id, tg_chat: r.tg_chat, tg_msg: Number(String(r.import_key).split(':').pop()) })).filter((r) => Number.isInteger(r.tg_msg));
-  const left = q.get(`SELECT COUNT(*) AS n FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where}`, ...args)?.n ?? 0;
+  // how many are left only tells the log how far it is: counting them all is slow with hundreds of thousands waiting, so once in a minute is enough
+  const ck = JSON.stringify(args);
+  const hit = LEFT_CACHE.get(ck);
+  let left;
+  if (!items.length) { left = 0; LEFT_CACHE.delete(ck); }
+  else if (hit && Date.now() - hit.at < 60_000) left = Math.max(items.length, hit.n);
+  else { left = q.get(`SELECT COUNT(*) AS n FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where}`, ...args)?.n ?? 0; LEFT_CACHE.set(ck, { n: left, at: Date.now() }); }
   res.json({ items, left });
 });
 
