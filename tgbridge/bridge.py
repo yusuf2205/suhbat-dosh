@@ -94,7 +94,7 @@ class FakeMsg:
         self.reply_to = None
         self.date = datetime.now(timezone.utc)
         self.file = SimpleNamespace(size=size, name=name, width=None, height=None, duration=None)
-        for attr in ("sticker", "voice", "video_note", "gif", "photo", "video", "audio", "poll", "geo", "contact", "document"):
+        for attr in ("sticker", "voice", "video_note", "gif", "photo", "video", "audio", "poll", "geo", "contact", "document", "grouped_id"):
             setattr(self, attr, None)
         if kind == "image":
             self.photo = True
@@ -585,7 +585,7 @@ async def upgrade_round(a: Acct) -> str:
             g = geo_of(m)
             if g:   # a place: it becomes a location message in the same spot
                 ok = await post_in({"owner": a.uid, "tg_chat": chat, "kind": "user", "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                                    "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000)})
+                                    "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000), **album_fields(m)})
                 return it, "geo", ok
             mk = media_kind(m)
             if not mk:
@@ -593,7 +593,7 @@ async def upgrade_round(a: Acct) -> str:
             async with par:
                 res = await upload_media_r(a, m, mk, {
                     "tg_chat": chat, "chat_kind": "user", "backfill": True, "upgrade": True, "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                    "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+                    "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **album_fields(m),
                 })
             return it, "media", res
 
@@ -840,7 +840,18 @@ def topic_of(msg):
     return None
 
 
+def album_fields(msg) -> dict:
+    """The pictures and videos Telegram sent as one album share a number (grouped_id): Suhbat-dosh draws them as one block."""
+    g = getattr(msg, "grouped_id", None)
+    return {"tg_album": str(g)} if g else {}
+
+
 async def topic_fields(a: Acct, key: str, msg) -> dict:
+    """tg_topic / topic_title / topic_color (and the album) for the payload of a message."""
+    return {**await topic_only(a, key, msg), **album_fields(msg)}
+
+
+async def topic_only(a: Acct, key: str, msg) -> dict:
     """tg_topic / topic_title / topic_color for the payload of a message that belongs to a topic (the titles are fetched once and kept)."""
     t = topic_of(msg)
     if not t or MOCK:
@@ -1631,14 +1642,16 @@ async def mock_media(r):
         return web.json_response({"forwarded": False})
     if b.get("placeholder"):
         # the message was copied as a mark; its file can still be fetched (what the upgrade pass is for)
-        a.client.tg[(int(key), b["msg"])] = FakeMsg(kind, int(b.get("size", 40)), b.get("name", "file.zip"), b.get("caption", ""))
+        a.client.tg[(int(key), b["msg"])] = fake = FakeMsg(kind, int(b.get("size", 40)), b.get("name", "file.zip"), b.get("caption", ""))
+        if b.get("album"):
+            fake.grouped_id = int(b["album"])   # an album of Telegram: the upgrade pass puts the placeholder into it
         label = {"image": "[Фото]", "voice": "[Голосовое сообщение]", "video": "[Видео]", "audio": "[Аудио]", "file": "[Файл]", "sticker": "[Стикер] 😎", "gif": "[GIF]"}[kind]
         await to_server({"owner": a.uid, "tg_chat": key, "kind": "user", "title": b.get("title", ""), "tg_msg": b["msg"], "author": b.get("author", "Кто-то"),
                          "out": False, "text": f"{label} {b.get('caption', '')}".strip(), "ts": int(time.time() * 1000), "reply_to": None})
         return web.json_response({"forwarded": True})
     ok = await post_media(a, kind, TINY[kind], {"tg_chat": key, "chat_kind": b.get("chat_kind", "user"), "title": b.get("title", ""), "tg_msg": b["msg"], "name": b.get("name", ""),
                                                "author": b.get("author", "Кто-то"), "out": bool(b.get("out")), "caption": b.get("caption", ""), "ts": int(time.time() * 1000),
-                                               "duration": b.get("duration", ""), "w": b.get("w", ""), "h": b.get("h", "")})
+                                               "duration": b.get("duration", ""), "w": b.get("w", ""), "h": b.get("h", ""), **({"tg_album": str(b["album"])} if b.get("album") else {})})
     return web.json_response({"forwarded": ok})
 
 

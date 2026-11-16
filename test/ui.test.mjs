@@ -538,6 +538,42 @@ test('messenger: the search opens like in Telegram (frequent contacts, tabs), re
   } finally { await ctx.close(); }
 });
 
+test('messenger: pictures sent together are one album block; several chosen files go as one album', { skip: !canRun }, async () => {
+  const me = await login('+998900021041', 'Альбомщик');
+  const mate = await login('+998900021042', 'Приёмщик');
+  const chat = (await call(me.cookie, 'POST', '/api/chats/direct', { user_id: mate.data.user.id })).data.chat;
+  const JPEG = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
+  for (let i = 0; i < 3; i++) {
+    const r = await fetch(`${BASE}/api/chats/${chat.id}/files?name=a${i}.jpg&album=album-ui-key-1`, { method: 'POST', headers: { cookie: me.cookie, 'content-type': 'image/jpeg' }, body: JPEG });
+    assert.equal(r.status, 201);
+  }
+  const { ctx, page, errors, open } = await phonePage(me.cookie);
+  try {
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.click('.chatlist .ci:has-text("Приёмщик")');
+    await page.waitForSelector('.malb .malb-t');
+    assert.equal((await page.$$('.malb')).length, 1, 'one album block');
+    assert.equal((await page.$$('.malb .malb-t')).length, 3, 'three pictures in it');
+    assert.equal((await page.$$('.bubble .media-btn')).length, 0, 'no separate picture bubbles');
+    // choosing several files at once: one window, they go as one album
+    await page.setInputFiles('input[type=file]', [1, 2, 3, 4].map((n) => ({ name: `pick${n}.png`, mimeType: 'image/png', buffer: png(40 + n, 60) })));
+    await page.waitForSelector('.malb-prev .malb-prev-t');
+    assert.equal((await page.$$('.malb-prev .malb-prev-t')).length, 4, 'all four are in the window');
+    await page.click('.modal .btn:has-text("Отправить альбом")');
+    const ok = await page.waitForFunction(async (id) => {
+      const j = await (await fetch(`/api/chats/${id}/messages?limit=30`)).json();
+      const keys = {};
+      for (const m of j.messages) if (m.album && m.album !== 'album-ui-key-1') keys[m.album] = (keys[m.album] || 0) + 1;
+      return Object.values(keys).some((n) => n === 4);
+    }, chat.id, { timeout: 30000 }).then(() => true).catch(() => false);
+    assert.ok(ok, 'the four pictures went with one album key');
+    await page.waitForFunction(() => document.querySelectorAll('.malb').length === 2, null, { timeout: 15000 });
+    assert.equal((await page.$$('.malb-n4')).length, 1, 'the new album is a 2x2 block');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('messenger: passing a message on to a group with topics asks which topic, like Telegram', { skip: !canRun }, async () => {
   const lola = await login('+998900021031', 'Нигора');
   const mate = await login('+998900021032', 'Рустам');

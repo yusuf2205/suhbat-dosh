@@ -396,6 +396,27 @@ test('a place sent in Telegram is a location message, also for a message that wa
   assert.equal((await msgs()).find((m) => m.text === 'почти').kind, 'text');
 });
 
+test('pictures Telegram sent as one album share a key, also when they were copied as marks first', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002105', 'Альбомы');
+  await link(u);
+  const base = { chat: 9191, kind: 'image', title: 'Семья', author: 'Мама' };
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 1, album: 555, caption: 'три фото' })).forwarded, true);
+  // two more came as marks (history copied before files were); the bridge fetches their files and puts them into the same album
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 2, album: 555, placeholder: true })).forwarded, true);
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 3, album: 555, placeholder: true })).forwarded, true);
+  assert.equal((await mockMedia(u.user.id, { ...base, msg: 4 })).forwarded, true, 'one more picture, no album');
+  const chat = await until(async () => (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Семья'));
+  assert.ok(chat);
+  const pics = await until(async () => {
+    const m = (await call(u.cookie, 'GET', `/api/chats/${chat.id}/messages?limit=20`)).data.messages.filter((x) => x.kind === 'image' && x.file);
+    return m.length === 4 ? m : null;
+  });
+  assert.ok(pics, 'all four pictures arrived with their files');
+  const inAlbum = pics.filter((m) => m.album === 'tg555');
+  assert.equal(inAlbum.length, 3, 'three share the key of the Telegram album');
+  assert.equal(pics.find((m) => !m.album).text, '', 'the fourth stands alone');
+});
+
 test('the copy of a Telegram chat shows when the other side is online in Telegram, and when they were last there', { skip: !havePy }, async () => {
   const u = await phoneUser('+998900002090', 'Присутствие');
   await link(u);

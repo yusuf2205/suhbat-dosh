@@ -1182,7 +1182,10 @@ function maybeAutoReply(chat, sender, kind) {
   postMessage({ chat, user: peer, text: `🤖 ${text}`, auto: true, silent: false });
 }
 
-export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, forwardNote = null, forwardHops = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null, topicId = null, threadOf = null }) {
+/** The key that ties the pictures of one album together: made by the sender (or by the copy from Telegram), only letters, digits, : _ - */
+export const albumOf = (v) => (typeof v === 'string' && /^[A-Za-z0-9:_-]{6,64}$/.test(v) ? v : null);
+
+export function postMessage({ chat, user, text = '', kind = 'text', fileId = null, duration = null, replyTo = null, forwardFrom = null, forwardNote = null, forwardHops = null, clientId = null, waveform = null, markup = null, silent = false, auto = false, urgent = false, once = false, liveUntil = null, topicId = null, threadOf = null, albumId = null }) {
   if (clientId) {
     const dup = q.get('SELECT * FROM messages WHERE chat_id = ? AND sender_id = ? AND client_id = ?', chat.id, user.id, clientId);
     if (dup) return { message: messageOut(dup), duplicate: true };
@@ -1195,9 +1198,9 @@ export function postMessage({ chat, user, text = '', kind = 'text', fileId = nul
   }
   const t = now();
   const r = q.run(
-    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, forward_note, forward_hops, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, forwardNote, forwardHops, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, t,
+    `INSERT INTO messages (chat_id, sender_id, client_id, kind, text, reply_to, forward_from, forward_note, forward_hops, file_id, duration, waveform, markup, urgent, once, live_until, topic_id, thread_of, album_id, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    chat.id, user.id, clientId, kind, text, replyTo, forwardFrom, forwardNote, forwardHops, fileId, duration, waveform, markup, urgent ? 1 : 0, once ? 1 : 0, liveUntil, topicId, threadOf, albumId, t,
   );
   const id = Number(r.lastInsertRowid);
   if (chat.imported_from === 'tgbridge') {
@@ -1326,7 +1329,7 @@ api.post('/chats/:id/messages', (req, res) => {
       kind = 'contact';
     }
   }
-  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, forwardNote, forwardHops, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil, topicId: topicFor(req, chat, me, replyTo) });
+  const out = postMessage({ chat, user: req.user, text, kind, fileId, duration, replyTo, forwardFrom, forwardNote, forwardHops, clientId, silent: b.silent === true, urgent: b.urgent === true && chat.type !== 'channel', liveUntil, topicId: topicFor(req, chat, me, replyTo), albumId: albumOf(b.album) });
   res.status(out.duplicate ? 200 : 201).json({ message: out.message, duplicate: out.duplicate });
 });
 
@@ -1549,6 +1552,7 @@ api.post('/chats/:id/uploads', (req, res) => {
     uid, req.user.id, id, clientId, name, size, str(String(b.caption ?? ''), 'caption', { max: LIMITS.TEXT_MAX }), b.voice ? 1 : 0,
     seconds(b.duration) ?? null, int(b.reply_to, 'reply_to', { optional: true }) ?? null, wf, b.once === true ? 1 : 0, now(), now(),
   );
+  if (albumOf(b.album)) q.run('UPDATE uploads SET album_id = ? WHERE id = ?', albumOf(b.album), uid);
   q.run('UPDATE uploads SET topic_id = ? WHERE id = ?', topicFor(req, chat, requireMember(id, req.user.id), int(b.reply_to, 'reply_to', { optional: true }) ?? null), uid);
   fs.writeFileSync(partPath(uid), '');
   res.status(201).json({ ...uploadOut(q.get('SELECT * FROM uploads WHERE id = ?', uid)), chunk: 1024 * 1024 });
@@ -1618,6 +1622,7 @@ api.post('/uploads/:id/complete', (req, res) => {
     duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? u.duration : null,
     replyTo: u.reply_to, clientId: u.client_id, waveform: kind === 'voice' ? u.waveform : null,
     once: !!u.once && !secretChat && (kind === 'image' || kind === 'video'), topicId: u.topic_id || null,
+    albumId: secretChat || (kind !== 'image' && kind !== 'video') ? null : u.album_id || null,
   });
   q.run('DELETE FROM uploads WHERE id = ?', u.id);
   res.status(201).json(out);
@@ -1671,6 +1676,7 @@ api.post('/chats/:id/files', async (req, res) => {
     chat, user: req.user, text: capt, kind, fileId: fid, duration: kind === 'voice' || kind === 'audio' || kind === 'video' ? duration : null,
     replyTo, clientId, waveform: kind === 'voice' ? wf : null,
     once: req.query.once === '1' && !secretChat && (kind === 'image' || kind === 'video'), topicId: topicFor(req, chat, me, replyTo),
+    albumId: !secretChat && (kind === 'image' || kind === 'video') ? albumOf(String(req.query.album ?? '')) : null,
   });
   res.status(201).json(out);
 });

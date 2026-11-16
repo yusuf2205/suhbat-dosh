@@ -374,11 +374,13 @@ export function openForward(msgOrList) {
     send.disabled = true;
     const text = note.value.trim();
     let failed = 0;
+    // pictures of one album stay one album where they are passed on
+    const album = list.length > 1 && list[0].album && list.every((x) => x.album === list[0].album) ? `f${uuid()}` : null;
     for (const c of picked.values()) {
       try {
         // the note goes with the first message of each chat
         const opts = c.forum ? { headers: { 'x-topic': String(topicPick.get(c.id) || 0) } } : {};
-        for (const [i, msg] of list.entries()) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid(), ...(i === 0 && text ? { note: text } : {}) }, opts);
+        for (const [i, msg] of list.entries()) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid(), ...(album ? { album } : {}), ...(i === 0 && text ? { note: text } : {}) }, opts);
       } catch (e) { failed += 1; fail(e); }
     }
     if (failed < picked.size) toast(t('msg.forwarded'));

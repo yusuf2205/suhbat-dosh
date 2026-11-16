@@ -280,7 +280,7 @@ export async function jumpTo(chatId, msgId) {
   }
   highlightId = msgId;
   renderMessages();
-  const n = nodeCache.get(`m:${msgId}`)?.el;
+  const n = (nodeCache.get(`m:${msgId}`) || nodeCache.get(`m:${withAlbum(msgId)[0]}`))?.el;   // a picture inside an album: its block
   n?.scrollIntoView({ block: 'center' });
   setTimeout(() => { highlightId = null; renderMessages(); }, 1800);
 }
@@ -837,7 +837,7 @@ function pendingUploadMessage(task) {
   return {
     id: `c:${task.id}`, client_id: task.id, chat_id: task.chatId, sender_id: S.me.id, kind, text: task.opts.caption || '', pending: true,
     upload: { state: task.state, loaded: task.loaded || 0 }, file: { id: `u:${task.id}`, name: task.opts.label || task.name, size: task.size, mime: task.mime, url: '', local: true },
-    reactions: {}, reply_to: null, created_at: task.createdAt,
+    reactions: {}, reply_to: null, created_at: task.createdAt, ...(task.opts.album ? { album: task.opts.album } : {}),
   };
 }
 
@@ -853,12 +853,12 @@ export async function restorePendingUploads() {
   } catch { /* storage unavailable: nothing to restore */ }
 }
 
-async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null, once = false } = {}) {
+async function uploadFile(chatId, blob, name, { voice = false, duration = null, caption = '', waveform = null, once = false, album = null } = {}) {
   const c = S.chats.get(chatId);
   if (blob.size > cfg.max_upload_bytes) {
     return toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) }));
   }
-  const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null, once: !!once, topic: c.forum ? currentTopic(c.id) || 0 : 0 };
+  const opts = { voice, duration, caption, waveform, replyTo: replyTo?.id ?? null, once: !!once, topic: c.forum ? currentTopic(c.id) || 0 : 0, ...(album ? { album } : {}) };
   const secret = isSecret(c);
   let sendBlob = blob;
   let sendName = name;
@@ -952,7 +952,58 @@ export async function attachFiles(chatId, files) {
   const list = [...files];
   if (!list.length) return;
   if (S.active !== chatId) await openChat(chatId);
+  const c = S.chats.get(chatId);
+  // two or more pictures / videos together go as an album (up to ten in one); the rest, and encrypted chats, one by one as before
+  const media = c && c.can_post && !isSecret(c) && c.type !== 'channel' ? list.filter(albumable) : [];
+  if (media.length >= 2) {
+    const rest = list.filter((f) => !media.includes(f));
+    for (let i = 0; i < media.length; i += 10) {
+      const part = media.slice(i, i + 10);
+      if (part.length >= 2) await new Promise((done) => attachAlbum(chatId, part, done));
+      else await new Promise((done) => attachFile(part[0], done));
+    }
+    for (const f of rest) await new Promise((done) => attachFile(f, done));
+    return;
+  }
   for (const f of list) await new Promise((done) => attachFile(f, done));
+}
+
+const albumable = (f) => /^image\/(png|jpe?g|webp)$/.test(f.type) || /^video\/(mp4|webm|quicktime)$/.test(f.type);
+
+/** Several pictures / videos at once: one window with all of them, one caption, and they go as one album. */
+function attachAlbum(chatId, files, onDone) {
+  const c = S.chats.get(chatId);
+  const urls = files.map((f) => (/^image\//.test(f.type) ? URL.createObjectURL(f) : null));
+  const total = files.reduce((n, f) => n + f.size, 0);
+  const big = files.find((f) => f.size > cfg.max_upload_bytes);
+  if (big) { toast(t('upload.too_large', { mb: Math.round(cfg.max_upload_bytes / 1048576) })); onDone?.(); return; }
+  const cap = h('input', { class: 'input', placeholder: t('chat.placeholder'), maxLength: 1000, 'aria-label': t('chat.placeholder') });
+  const anyImage = files.some((f) => canCompress(f));
+  const squeeze = anyImage ? h('input', { type: 'checkbox', checked: S.prefs.compress !== false }) : null;
+  const grid = h('div', { class: 'malb-prev' }, files.map((f, i) => h('div', { class: 'malb-prev-t' },
+    urls[i] ? h('img', { src: urls[i], alt: '', draggable: false }) : h('div', { class: 'malb-prev-v' }, icon('video', 28), h('small', null, f.name)))));
+  const send = h('button', { class: 'btn', type: 'button' }, t('album.send', { n: files.length }));
+  const m = modal({
+    title: t('album.title', { n: files.length }),
+    onClose: () => { urls.forEach((u) => u && URL.revokeObjectURL(u)); onDone?.(); },
+    body: h('div', null, grid,
+      h('div', { class: 'field', style: { marginTop: '12px' } }, cap),
+      squeeze ? h('label', { class: 'row compress-opt' }, squeeze, h('span', null, t('upload.compress', { size: formatBytes(total) }))) : null,
+      h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } }, send)),
+  });
+  send.onclick = async () => {
+    send.disabled = true;
+    const caption = cap.value.trim();
+    const want = squeeze?.checked;
+    if (squeeze && S.prefs.compress !== want) { S.prefs.compress = want; savePrefs(); }
+    const album = `a${uuid()}`;
+    m.close();
+    for (const [i, f] of files.entries()) {
+      const out = want && canCompress(f) ? await compressImage(f) : f;
+      await uploadFile(c.id, out, out.name, { caption: i === 0 ? caption : '', album });
+    }
+  };
+  setTimeout(() => cap.focus(), 50);
 }
 
 // ---------------------------------------------------------------- voice recording
@@ -1195,11 +1246,36 @@ function statusOf(m, c) {
   return { text: '✓', cls: '', label: m.id <= c.others_delivered_id ? t('msg.delivered') : t('msg.sent') };
 }
 
+/** The key of the album a message belongs to (a picture or a video with its file, or still uploading). */
+const albumKey = (m) => (m.album && (m.kind === 'image' || m.kind === 'video') && m.file && !isVideoNote(m) && !m.once ? m.album : null);
+/** album key -> its messages in the order they stand in the chat (an album of one is not an album). */
+function albumGroups(list) {
+  const g = new Map();
+  for (const m of list) {
+    const k = albumKey(m);
+    if (!k) continue;
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(m);
+  }
+  for (const [k, v] of g) if (v.length < 2) g.delete(k);
+  return g;
+}
+/** The first message of an album stands for all of them: its bubble holds every picture and the caption. */
+const albumHost = (members) => ({ ...members[0], text: members.map((x) => x.text).find((x) => x && !/^\[[^\]]+\]/.test(x)) || '', album_members: members });
+/** The ids of every message that goes with this one (itself, or the whole album it is in). */
+function withAlbum(id) {
+  const b = S.active ? bucket(S.active) : null;
+  const m = b?.list.find((x) => x.id === id);
+  const k = m && albumKey(m);
+  return k ? b.list.filter((x) => albumKey(x) === k).map((x) => x.id) : [id];
+}
+
 function renderMessages() {
   if (!view) return;
   const c = activeChat();
   const b = bucket(c.id);
   suggestTranslate(c, b.list);
+  const groups = albumGroups(b.list);
   const want = [];
   if (!b.list.length && !b.loading) {
     want.push(keyed('empty', () => (c.peer?.is_bot
@@ -1208,7 +1284,10 @@ function renderMessages() {
   }
   let prevDay = null;
   let dividerDone = !unreadFrom;
-  for (const m of b.list) {
+  for (const m0 of b.list) {
+    const grp = albumKey(m0) ? groups.get(albumKey(m0)) : null;
+    if (grp && grp[0] !== m0) continue;   // the others of an album are drawn inside the first one
+    const m = grp ? albumHost(grp) : m0;
     const dk = dayKey(m.created_at);
     if (dk !== prevDay) {
       prevDay = dk;
@@ -1219,7 +1298,7 @@ function renderMessages() {
       dividerDone = true;
     }
     const sig = JSON.stringify([m.text, m.edited_at, m.tg_deleted, m.tg_prev?.length, m.deal && JSON.stringify(m.deal), m.forward_note, m.forward_path?.length, m.reactions, m.pending, m.upload?.state, m.failed, m.reply_to?.text, m.forward_from,
-      m.file?.id, m.file?.thumb, m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
+      m.file?.id, m.file?.thumb, grp && grp.map((x) => [x.id, x.file?.id, x.file?.thumb, x.pending, x.upload?.state, Math.round(((x.upload?.loaded || 0) / (x.file?.size || 1)) * 20), selected.has(x.id)]), m.markup, m.poll, m.event, m.mini, m.task, m.note, m.urgent, autoOn(c.id), m.once, m.live_until, m.comments, c.comments, m.topic_id, m.import_author, m.transcript, m.replies, cfg.transcribe, m.access_until, S.users.get(m.sender_id)?.name, aliasSig(c, m.sender_id), c.type, highlightId === m.id, S.me.id, selectMode, selected.has(m.id)]);
     const entry = cached(`m:${m.id}`, sig, () => buildMessage(m, c));
     entry.status && updateStatus(entry, m, c);
     want.push(entry);
@@ -1304,6 +1383,7 @@ function buildMessage(m, c) {
   if (m.kind === 'sticker') bubble.append(stickerNode(m));
   else if (m.kind === 'secret' && !m.upload) bubble.append(secretNode(m, c));
   else if (m.once && typeof m.id === 'number') bubble.append(onceNode(m));
+  else if (m.album_members) { bubble.classList.add('album-bubble'); bubble.append(albumNode(m)); }
   else if (m.file) bubble.append(buildFile(m));
   if (m.kind === 'poll' && m.poll) bubble.append(pollNode(m));
   if (m.kind === 'event' && m.event) bubble.append(eventNode(m));
@@ -1517,6 +1597,31 @@ function dragOut(node, m) {
 }
 
 /** A file whose access was limited: after the end its recipients see only a note (the sender still has it). */
+/** Pictures and videos sent together: one block, like in Telegram (up to five tiles, the last one says how many more). */
+function albumNode(host) {
+  const all = host.album_members;
+  const shown = all.slice(0, 5);
+  const more = all.length - shown.length;
+  const tiles = shown.map((x, i) => {
+    const f = x.file;
+    const real = typeof x.id === 'number' && !x.upload;
+    let body;
+    if (!real) {
+      const pct = x.upload && f.size ? Math.min(99, Math.round(((x.upload.loaded || 0) / f.size) * 100)) : 0;
+      body = h('span', { class: 'malb-pend' }, x.failed ? '!' : `${pct}%`);
+    } else if (x.kind === 'video') {
+      body = [f.thumb ? h('img', { src: f.thumb, alt: f.name, loading: 'lazy', draggable: false }) : h('span', { class: 'poster-empty' }), h('span', { class: 'play-badge' }, icon('send', 22))];
+    } else {
+      const img = h('img', { src: f.thumb || f.url, alt: f.name, loading: 'lazy', draggable: false });
+      blurUnder(img, f);
+      body = img;
+    }
+    return h('button', { class: `malb-t${real ? '' : ' pend'}`, type: 'button', 'aria-label': f.name, disabled: !real, onclick: () => openViewer(x.chat_id, x.id) },
+      body, i === shown.length - 1 && more > 0 ? h('span', { class: 'malb-more' }, `+${more}`) : null);
+  });
+  return h('div', { class: `malb malb-n${shown.length}`, role: 'group', 'aria-label': t('album.title', { n: all.length }) }, tiles);
+}
+
 function buildFile(m) {
   const mine = m.sender_id === S.me.id;
   if (m.access_until && m.access_until <= Date.now() && !mine) {
@@ -1621,7 +1726,7 @@ function messageMenu(anchor, m) {
     items.push({ icon: 'copy', label: t('msg.copy_link'), onClick: () => navigator.clipboard?.writeText(new URL(m.file.url, location.origin).href).then(() => toast(t('msg.copied'))).catch(() => toast(t('err.generic'))) });
   }
   if (m.text && m.kind === 'text') more.push({ icon: 'globe', label: t('msg.translate'), onClick: () => translateMessage(m) });
-  items.push({ icon: 'forward', label: t('msg.forward'), onClick: () => openForward(m) });
+  items.push({ icon: 'forward', label: t('msg.forward'), onClick: () => openForward(m.album_members || m) });
   if (!isSecret(c) && typeof m.id === 'number' && !c.saved && m.kind !== 'call') {
     // bookmark = a copy in "Saved messages"
     more.push({ icon: 'bookmark', label: t('msg.bookmark'), onClick: async () => {
@@ -1673,7 +1778,7 @@ function messageMenu(anchor, m) {
     items.push({
       icon: 'trash', label: t('msg.delete'), danger: true, onClick: async () => {
         if (await confirmDialog(t(c.tg_kind ? 'msg.delete_confirm_tg' : 'msg.delete_confirm'), { okLabel: t('msg.delete'), danger: true })) {
-          api('DELETE', `/api/messages/${m.id}`).catch((e) => toast(errText(e.code)));
+          for (const x of m.album_members || [m]) api('DELETE', `/api/messages/${x.id}`).catch((e) => toast(errText(e.code)));
         }
       },
     });
@@ -1787,7 +1892,7 @@ async function copyImage(m) {
 function enterSelect(firstId) {
   selectMode = true;
   selected.clear();
-  if (firstId !== null && firstId !== undefined) selected.add(firstId);
+  if (firstId !== null && firstId !== undefined) for (const id of withAlbum(firstId)) selected.add(id);
   renderSelBar();
   renderMessages();
 }
@@ -1798,7 +1903,8 @@ function exitSelect() {
   renderMessages();
 }
 function toggleSel(id) {
-  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  const ids = withAlbum(id);
+  if (selected.has(id)) ids.forEach((x) => selected.delete(x)); else ids.forEach((x) => selected.add(x));
   renderSelBar();
   renderMessages();
 }
