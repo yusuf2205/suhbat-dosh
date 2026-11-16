@@ -156,6 +156,11 @@ async function mirrorBackup(src, name) {
   else if (dir) {
     try {
       fs.mkdirSync(dir, { recursive: true });
+      // leftovers of copies cut short (a full disk, a restart) take room and are never completed
+      for (const n of fs.readdirSync(dir)) {
+        if (!n.endsWith('.part')) continue;
+        try { if (Date.now() - fs.statSync(path.join(dir, n)).mtimeMs > 3600_000) fs.rmSync(path.join(dir, n), { force: true }); } catch { /* busy or gone */ }
+      }
       // the new snapshot and every older one the second place does not have yet (the first run after it was set up)
       for (const b of listBackups()) {
         const to = path.join(dir, b.name);
