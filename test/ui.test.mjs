@@ -490,6 +490,27 @@ test('admin: the chats of a person can be searched by name and by kind (personal
   } finally { await ctx.close(); }
 });
 
+test('admin: the bar of a conversation has a search over the whole chat that stays on top', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.achat-who .acw-find');
+    await page.waitForSelector('.abub');
+    const all = (await page.$$('.abub')).length;
+    assert.ok(all >= 10, `the whole conversation is shown first (${all})`);
+    assert.ok(!(await page.isVisible('.achat-find')), 'the field is closed at first');
+    await page.click('.achat-who .acw-find');
+    await page.waitForSelector('.achat-find input', { state: 'visible' });
+    await page.fill('.achat-find input', 'сообщение 1');
+    await page.waitForFunction(() => document.querySelectorAll('.abub').length === 1, null, { timeout: 10000 });
+    assert.match(await page.textContent('.messages-list, .achat-list, .abub'), /сообщение 1/);
+    await page.click('.achat-find-x');
+    await page.waitForFunction((n) => document.querySelectorAll('.abub').length >= n, all, { timeout: 10000 });
+    assert.ok(!(await page.isVisible('.achat-find')), 'closed again, everything is back');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('admin: the bar of a conversation has a Back button, and going back returns to the same place of the list, not to its top', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.admin);
   try {

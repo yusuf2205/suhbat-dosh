@@ -1378,7 +1378,8 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   };
   let timer = null;
   const later = () => { clearTimeout(timer); timer = setTimeout(reload, 350); };
-  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); paintTools(); later(); } });
+  let barFind = null;   // the search field in the bar that stays on top while the conversation is read
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); paintTools(); later(); if (barFind) barFind.value = e.target.value; } });
   const chips = CHAT_KINDS.map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(v === ''), onclick: () => { f.kind = v; reload(); } }, l));
   const authorSel = h('select', { class: 'as-select', 'aria-label': 'Автор', onchange: (e) => { f.author = e.target.value; reload(); } },
     h('option', { value: '' }, 'Все авторы'), (hist.authors || []).map((a) => h('option', { value: a }, a)));
@@ -1392,7 +1393,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const toNumber = h('input', { class: 'as-date as-num', type: 'number', min: 1, placeholder: '№ сообщения', 'aria-label': 'Перейти к сообщению по номеру', onkeydown: (e) => { if (e.key === 'Enter' && e.target.value) goTo(`id=${Number(e.target.value)}`); } });
   const clearBtn = h('button', { class: 'chip reset', type: 'button', hidden: true, onclick: () => {
     Object.assign(f, { q: '', kind: '', author: '', since: '', until: '', meaning: false });
-    search.value = ''; authorSel.value = ''; since.value = ''; until.value = '';
+    search.value = ''; authorSel.value = ''; since.value = ''; until.value = ''; if (barFind) barFind.value = '';
     reload();
   } }, '✕ Сбросить');
   function paintTools() {
@@ -1533,11 +1534,24 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const other = info.members.find((x) => x.id !== ctx.me);
     return { right: person(ctx.me, info.members.find((x) => x.id === ctx.me)?.name), left: person(other?.id, other?.name || '—') };
   };
+  barFind = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по всему чату', 'aria-label': 'Поиск по всему чату', autocomplete: 'off',
+    oninput: (e) => { search.value = e.target.value; f.q = e.target.value.trim(); paintTools(); later(); },
+    onkeydown: (e) => { if (e.key === 'Escape') { e.target.blur(); } } });
+  const findRow = h('div', { class: 'achat-find', hidden: true }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), barFind,
+    h('button', { class: 'achat-find-x', type: 'button', 'aria-label': 'Очистить и закрыть поиск', title: 'Очистить и закрыть', onclick: () => {
+      barFind.value = ''; search.value = ''; f.q = ''; findRow.hidden = true; findBtn.setAttribute('aria-pressed', 'false'); paintTools(); reload();
+    } }, '✕'));
+  const findBtn = h('button', { class: 'chip acw-find', type: 'button', title: 'Поиск по всему чату', 'aria-label': 'Поиск по всему чату', 'aria-pressed': 'false', onclick: () => {
+    findRow.hidden = !findRow.hidden;
+    findBtn.setAttribute('aria-pressed', String(!findRow.hidden));
+    if (!findRow.hidden) { barFind.value = search.value; barFind.focus(); } else if (f.q) { /* the words stay as they are */ }
+  } }, icon('search', 20));
   const whoBar = h('div', { class: 'achat-who' },
     h('button', { class: 'chip acw-back', type: 'button', title: 'Назад', 'aria-label': 'Назад', onclick: () => { if (depth() > 0) history.back(); else go('#/chats'); } }, '←'),
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
+    findBtn,
     h('button', { class: 'chip tbtn', type: 'button', title: 'Медиа и файлы', 'aria-label': 'Медиа и файлы', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, icon('image', 20), h('span', { class: 'tbtn-t' }, 'Медиа и файлы')),
     h('button', { class: 'chip tbtn', type: 'button', title: 'Сводка', 'aria-label': 'Сводка', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, icon('trend', 20), h('span', { class: 'tbtn-t' }, 'Сводка')));
   // on a phone the menu of the console stays on top: the bar goes right under it
@@ -1560,7 +1574,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, h('div', { class: 'achat-stick' }, whoBar, playerBar), heading, tools, moreBtn, list),
+    h('div', { class: 'panel' }, h('div', { class: 'achat-stick' }, whoBar, findRow, playerBar), heading, tools, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),

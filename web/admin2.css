@@ -437,6 +437,14 @@ table.t.health td { overflow-wrap: anywhere; }
 /* the player of voice, audio and video messages */
 .achat-stick { position: sticky; top: var(--adm-top, 0px); z-index: 12; margin-bottom: 10px; }
 .achat-stick .achat-who { position: static; margin-bottom: 0; }
+.acw-find { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 14px; background: var(--ink-2, #26262b); border-color: transparent; color: var(--yel, #fbc700); cursor: pointer; }
+.acw-find[aria-pressed=true] { background: var(--yel, #fbc700); color: #1b1b1f; }
+.achat-find { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 12px; border-radius: 14px; background: var(--ink, #17171a); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.achat-find[hidden] { display: none; }
+.achat-find .as-ico { color: var(--yel, #fbc700); font-size: 1.2rem; }
+.achat-find .as-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #fff; font: inherit; }
+.achat-find .as-input::placeholder { color: rgba(255, 255, 255, .55); }
+.achat-find-x { border: 0; background: rgba(255, 255, 255, .12); color: #fff; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; }
 .acw-back { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 14px; background: var(--ink-2, #26262b); border-color: transparent; color: var(--yel, #fbc700); font-size: 1.3rem; font-weight: 700; }
 .apl { margin-top: 6px; display: flex; align-items: center; gap: 10px; margin-left: -6px; margin-right: -6px; padding: 6px 12px; border-radius: 14px; background: var(--ink-2, #26262b); color: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
 .apl[hidden] { display: none; }
