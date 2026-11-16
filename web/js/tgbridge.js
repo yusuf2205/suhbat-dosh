@@ -10,9 +10,21 @@ import { confirmDialog, modal, toast } from './ui.js';
 import { icon } from './icons.js';
 
 /** Remember on the page whether this person may use the bridge (the settings row appears only then). */
+let bridgeTries = 0;
+let bridgeWatch = false;
 export async function checkBridge() {
   if (!S.cfg?.bridge || !S.me) return;
-  try { S.bridgeOk = !!(await api('GET', '/api/bridge')).available; } catch { S.bridgeOk = false; }
+  try {
+    S.bridgeOk = !!(await api('GET', '/api/bridge')).available;
+    bridgeTries = 0;
+  } catch (e) {
+    // the server was restarting or the network blinked: the row must not stay hidden until the next start of the app. Ask again soon, and when the app comes back to the screen
+    if (bridgeTries < 6) setTimeout(checkBridge, 4000 * (2 ** bridgeTries++));
+  }
+  if (!bridgeWatch) {
+    bridgeWatch = true;
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.bridgeOk !== true) { bridgeTries = 0; checkBridge(); } });
+  }
 }
 
 export function openBridge() {

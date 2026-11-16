@@ -703,7 +703,7 @@ export function openSettings() {
             row('wifi', t('auto.title'), { onclick: () => go(pages.autodl) }),
             row('download', t('bk.title'), { hint: t('bk.hint'), onclick: () => { m.close(); openBackup(); } }),
             row('telegram', t('imp.title'), { hint: t('imp.hint'), onclick: () => { m.close(); openImport(); } }),
-            S.bridgeOk ? row('telegram', t('br.title'), { hint: t('br.hint'), onclick: () => { m.close(); openBridge(); } }) : null),
+            S.cfg?.bridge && S.bridgeOk !== false ? row('telegram', t('br.title'), { hint: t('br.hint'), onclick: () => { m.close(); openBridge(); } }) : null),
           heading(t('st.av')),
           group(row('speaker', t('st.av'), { onclick: () => go(pages.av) })),
           heading(t('st.motion')),
