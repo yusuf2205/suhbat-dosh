@@ -364,13 +364,19 @@ async function mirrorFiles() {
       if (!ent.isFile()) continue;
       const src = path.join(config.filesDir, ent.name);
       const to = path.join(dest, ent.name);
-      const st = await fs.promises.stat(src);
-      if (Date.now() - st.mtimeMs < 60_000) continue; // still being written
-      try { if ((await fs.promises.stat(to)).size === st.size) continue; } catch { /* not mirrored yet */ }
-      await copyPlain(src, to + '.part');
-      await fs.promises.rename(to + '.part', to);
-      copied += 1;
-      bytes += st.size;
+      // a file can be deleted while the pass is running (a message removed, the disk freed): that is not a failure of the copy, the file is just skipped
+      try {
+        const st = await fs.promises.stat(src);
+        if (Date.now() - st.mtimeMs < 60_000) continue; // still being written
+        try { if ((await fs.promises.stat(to)).size === st.size) continue; } catch { /* not mirrored yet */ }
+        await copyPlain(src, to + '.part');
+        await fs.promises.rename(to + '.part', to);
+        copied += 1;
+        bytes += st.size;
+      } catch (e) {
+        if (e.code === 'ENOENT' && !fs.existsSync(src)) { fs.promises.rm(to + '.part', { force: true }).catch(() => {}); continue; }
+        throw e;
+      }
     }
     filesMirror.last = { at: now(), started, copied, bytes, error: null };
     if (copied) log('info', 'files mirrored', { copied, bytes });
