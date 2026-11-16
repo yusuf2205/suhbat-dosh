@@ -1534,6 +1534,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     return { right: person(ctx.me, info.members.find((x) => x.id === ctx.me)?.name), left: person(other?.id, other?.name || '—') };
   };
   const whoBar = h('div', { class: 'achat-who' },
+    h('button', { class: 'chip tbtn acw-back', type: 'button', title: 'Назад', 'aria-label': 'Назад', onclick: () => { if (depth() > 0) history.back(); else go('#/chats'); } }, '←'),
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
@@ -2243,7 +2244,8 @@ function showTab(tab, render = true) {
   navEl.fillSubs?.(tab);
   titleEl.textContent = TABS[tab][0];
   subEl.textContent = TABS[tab][2];
-  if (render) VIEWS[tab]().then(applyDynamicStyles).catch((e) => setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)));
+  if (render) return VIEWS[tab]().then(applyDynamicStyles).catch((e) => setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`)));
+  return undefined;
 }
 
 // ---------------------------------------------------------------- navigation: every screen has an address, so "Back" (the browser, the phone) steps out of it
@@ -2253,8 +2255,23 @@ function showNoRights() {
   setView(h('div', { class: 'panel' }, h('h2', null, 'Нет доступа'), h('p', { class: 'muted' }, 'На это у вас нет прав. Их выдаёт главный администратор.')));
 }
 
+// where the page was left (and its lists with their own scroll), so that "Back" returns to the same place and not to the top
+const scrollMemo = new Map();
+const SCROLL_LISTS = '.ud-chats, .achats, .tablewrap';
+function rememberScroll() {
+  try { scrollMemo.set(location.hash || '#/overview', { y: window.scrollY, lists: [...document.querySelectorAll(SCROLL_LISTS)].map((e) => e.scrollTop) }); } catch { /* nothing to keep */ }
+}
+function restoreScroll() {
+  const at = scrollMemo.get(location.hash || '#/overview');
+  if (!at || /^#\/chat\//.test(location.hash)) return;
+  const put = () => { window.scrollTo(0, at.y); document.querySelectorAll(SCROLL_LISTS).forEach((e, i) => { if (at.lists[i]) e.scrollTop = at.lists[i]; }); };
+  put();
+  setTimeout(put, 250);   // what is drawn late (pictures, lists that load more) may have moved things
+  setTimeout(put, 900);
+}
 function go(hash) {
   if (location.hash === hash) return route();
+  rememberScroll();
   history.pushState({ d: depth() + 1 }, '', hash);
   return route();
 }
@@ -2271,13 +2288,13 @@ async function route() {
     else {
       const first = Object.keys(TABS).find(tabAllowed);
       if (!first) { showNoRights(); return; }
-      showTab(t && TABS[t[1]] && tabAllowed(t[1]) ? t[1] : first);
+      await showTab(t && TABS[t[1]] && tabAllowed(t[1]) ? t[1] : first);
     }
   } catch (e) {
     if (String(e.message) === '403') showNoRights(); else setView(h('div', { class: 'panel err' }, `Ошибка загрузки: ${e.message}`));
   }
 }
-window.addEventListener('popstate', route);
+window.addEventListener('popstate', () => { route().then(restoreScroll); });
 const setTab = (tab) => go(`#/${tab}`);
 const openUser = (id) => go(`#/user/${id}`);
 const openChat = (id, focus) => go(`#/chat/${id}${focus ? `/${focus}` : ''}`);

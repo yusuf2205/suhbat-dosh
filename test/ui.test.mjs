@@ -490,6 +490,26 @@ test('admin: the chats of a person can be searched by name and by kind (personal
   } finally { await ctx.close(); }
 });
 
+test('admin: the bar of a conversation has a Back button, and going back returns to the same place of the list, not to its top', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/user/${seed.madinaId}`);
+    await page.waitForSelector('.ud-chats .ud-chat');
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const before = await page.evaluate(() => Math.round(window.scrollY));
+    assert.ok(before >= 200, `the page of a person is long enough and was scrolled (${before})`);
+    await page.evaluate(() => document.querySelector('.ud-chats .ud-chat').click());
+    await page.waitForSelector('.achat-who .acw-back');
+    assert.ok(await page.isVisible('.achat-who .acw-back'), 'the Back button is in the bar');
+    await page.click('.achat-who .acw-back');
+    await page.waitForSelector('.ud-chats .ud-chat');
+    await page.waitForTimeout(1200);
+    const after = await page.evaluate(() => ({ y: Math.round(window.scrollY), max: document.documentElement.scrollHeight - innerHeight }));
+    assert.ok(Math.abs(after.y - before) <= 2, `returned to the same place (${after.y} instead of ${before}, page allows ${after.max})`);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('messenger: the search opens like in Telegram (frequent contacts, tabs), remembers what was opened, and a picture opens whole', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.madina);
   try {
