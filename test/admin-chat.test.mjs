@@ -164,3 +164,33 @@ test('freeing the disk by kind of chat: personal, groups, channels', async () =>
   assert.equal((await call(admin.cookie, 'POST', base, { confirm: true, chat_types: 'group' })).data.files, 1);
   assert.equal((await call(admin.cookie, 'GET', base)).data.files, 1, 'the personal chat file stays');
 });
+
+test('documents in the admin chat: PDF and text open in the browser, Word and Excel come with their real type', async () => {
+  const admin = await adminLogin();
+  const a = await login('+998901110021', 'Зафар');
+  const b = await login('+998901110022', 'Умида');
+  const chat = (await call(a.cookie, 'POST', '/api/chats/direct', { user_id: b.data.user.id })).data.chat;
+  const send = async (name, bytes, id) => {
+    const init = await call(a.cookie, 'POST', `/api/chats/${chat.id}/uploads`, { name, size: bytes.length, client_id: id });
+    assert.equal(init.status, 201, JSON.stringify(init.data));
+    await fetch(`${BASE}/api/uploads/${init.data.upload_id}?offset=0`, { method: 'PUT', headers: { cookie: a.cookie, 'content-type': 'application/octet-stream' }, body: bytes });
+    const done = await call(a.cookie, 'POST', `/api/uploads/${init.data.upload_id}/complete`);
+    assert.equal(done.status, 201, name);
+    return done.data.message.file.id;
+  };
+  const get = (id, qs = '') => fetch(`${BASE}/api/admin/files/${id}${qs}`, { headers: { cookie: admin.cookie } });
+  const pdf = await get(await send('отчёт.pdf', Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF'), 'client-doc-pdf'));
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.match(pdf.headers.get('content-disposition'), /^inline/);
+  assert.doesNotMatch(pdf.headers.get('content-security-policy'), /sandbox/);
+  const txt = await get(await send('заметки.txt', Buffer.from('привет'), 'client-doc-txt'));
+  assert.match(txt.headers.get('content-type'), /^text\/plain/);
+  assert.match(txt.headers.get('content-disposition'), /^inline/);
+  const docx = await get(await send('договор.docx', crypto.randomBytes(300), 'client-doc-docx'));
+  assert.equal(docx.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.match(docx.headers.get('content-disposition'), /^attachment/);
+  const xlsx = await get(await send('цены.xlsx', crypto.randomBytes(300), 'client-doc-xlsx'));
+  assert.equal(xlsx.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  const pdfId = pdf.url.split('/').pop();
+  assert.match((await get(pdfId, '?download=1')).headers.get('content-disposition'), /^attachment/);
+});

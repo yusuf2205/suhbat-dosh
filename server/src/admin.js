@@ -635,11 +635,23 @@ admin.get('/files/:id', (req, res) => {
   if (f.chat_id) hiddenChat(req, f.chat_id);
   for (const m of q.all('SELECT DISTINCT chat_id FROM messages WHERE file_id = ?', f.id)) hiddenChat(req, m.chat_id);
   audit(req.user.id, 'admin.view_file', { target_type: 'file', target_id: f.id, ip: req.ip, details: { name: f.name } });
-  const inline = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
-  res.setHeader('Content-Type', inline ? f.mime : 'application/octet-stream');
-  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+  const ext = (String(f.name).split('.').pop() || '').toLowerCase();
+  const inlineMedia = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
+  const pdf = f.mime === 'application/pdf' || ext === 'pdf';
+  const text = !inlineMedia && !pdf && ['txt', 'csv', 'log', 'json', 'md'].includes(ext);
+  const OFFICE = {
+    doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    odt: 'application/vnd.oasis.opendocument.text', ods: 'application/vnd.oasis.opendocument.spreadsheet', rtf: 'application/rtf',
+  };
+  const inline = inlineMedia || pdf || text;
+  // a document is shown where the browser can show it (PDF, text) and is handed over with its real type otherwise (Word, Excel...), so the system opens it in the right program
+  res.setHeader('Content-Type', inlineMedia ? f.mime : pdf ? 'application/pdf' : text ? 'text/plain; charset=utf-8' : OFFICE[ext] || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${inline && req.query.download !== '1' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  // the PDF viewer of a browser does not work inside a sandboxed document, so a PDF gets a CSP without the sandbox (it has no scripts of ours to run)
+  res.setHeader('Content-Security-Policy', pdf ? "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'; img-src data:" : "default-src 'none'; sandbox");
   res.sendFile(filePath(f.id), { dotfiles: 'allow', cacheControl: false });
 });
 

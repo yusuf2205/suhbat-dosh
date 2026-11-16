@@ -1056,7 +1056,7 @@ function messageNode(m, ctx, prev) {
     m.file && (m.kind === 'voice' || m.kind === 'audio') ? voiceBubble(m) : '',
     m.file && m.kind === 'video' && isMotion(m.file) ? h('video', { class: 'abub-vid abub-motion', autoplay: true, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` }) : '',
     m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
-    m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)})`) : '',
+    m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, m.file.name), ` (${fmtBytes(m.file.size)}) `, h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}?download=1`, download: m.file.name, title: 'Скачать файл' }, '⬇ скачать')) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
     m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме') : '',
