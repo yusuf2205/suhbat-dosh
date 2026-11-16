@@ -7,6 +7,7 @@ import { icon } from './icons.js';
 import { api } from './net.js';
 import { avatar, confirmDialog, fmtLastSeen, lightbox, matchLine, modal, popMenu, previewText, toast } from './ui.js';
 import { openFolders, quietSettings } from './extras.js';
+import { refreshTopics, topicsOf } from './topics.js';
 import { updatesSection } from './updates.js';
 import { openMediaPanel, storageSection } from './viewer.js';
 import { callSettingsSection, startCall } from './call.js';
@@ -322,6 +323,7 @@ export function openChatSearch(chatId) {
 export function openForward(msgOrList) {
   const list = Array.isArray(msgOrList) ? msgOrList : [msgOrList];
   const picked = new Map();   // chat id -> chat
+  const topicPick = new Map(); // chat id (a group with topics) -> the topic the message goes to (0 = General)
   const all = [...S.chats.values()].filter((c) => c.can_post).sort((a, b) => b.last_message_at - a.last_message_at);
   const first = list[0];
   const preview = h('div', { class: 'fwd-preview' },
@@ -337,10 +339,28 @@ export function openForward(msgOrList) {
   const face = (c) => avatar(c.type === 'direct' ? c.peer : { id: c.id, name: c.title, avatar: c.avatar }, 'sm');
   function paint() {
     const term = find.value.trim().toLowerCase();
-    clear(rows).append(...all.filter((c) => !term || nameOf(c).toLowerCase().includes(term)).map((c) => h('button', {
+    // a group with topics: once it is picked, its topics are shown under it and one of them is chosen (like in Telegram)
+    const topicStrip = (c) => {
+      const mine = c.my_role === 'owner' || c.my_role === 'admin';
+      const list = topicsOf(c.id).filter((tp) => !tp.closed || mine);
+      if (!list.length) return null;
+      const cur = topicPick.get(c.id) ?? 0;
+      return h('div', { class: 'fwd-topics', role: 'radiogroup', 'aria-label': t('fwd.topic') },
+        ...list.map((tp) => h('button', { class: `fwd-topic${tp.id === cur ? ' on' : ''}`, type: 'button', role: 'radio', 'aria-checked': String(tp.id === cur), onclick: () => { topicPick.set(c.id, tp.id); paint(); } },
+          tp.id === 0 ? t('topic.general') : `${tp.emoji ? `${tp.emoji} ` : '\u{1F4AC} '}${tp.title}`)));
+    };
+    clear(rows).append(...all.filter((c) => !term || nameOf(c).toLowerCase().includes(term)).flatMap((c) => [h('button', {
       class: `fwd-row${picked.has(c.id) ? ' on' : ''}`, type: 'button', 'aria-pressed': picked.has(c.id) ? 'true' : 'false',
-      onclick: () => { if (picked.has(c.id)) picked.delete(c.id); else picked.set(c.id, c); paint(); },
-    }, face(c), h('span', { class: 'grow' }, nameOf(c)), h('span', { class: 'fwd-check', 'aria-hidden': 'true' }, picked.has(c.id) ? '\u2713' : ''))));
+      onclick: () => {
+        if (picked.has(c.id)) picked.delete(c.id);
+        else {
+          picked.set(c.id, c);
+          if (c.forum) { if (!topicPick.has(c.id)) topicPick.set(c.id, S.topic.get(c.id) || 0); refreshTopics(c.id, true).then(() => paint()); }
+        }
+        paint();
+      },
+    }, face(c), h('span', { class: 'grow' }, nameOf(c)), h('span', { class: 'fwd-check', 'aria-hidden': 'true' }, picked.has(c.id) ? '\u2713' : '')),
+    c.forum && picked.has(c.id) ? topicStrip(c) : null].filter(Boolean)));
     clear(chips).append(...[...picked.values()].map((c) => h('button', { class: 'fwd-chip', type: 'button', 'aria-label': `${nameOf(c)} \u2715`, onclick: () => { picked.delete(c.id); paint(); } }, nameOf(c), h('span', { 'aria-hidden': 'true' }, ' \u2715'))));
     send.disabled = picked.size === 0;
     send.textContent = picked.size ? `${t('fwd.send')} \u00B7 ${picked.size}` : t('fwd.send');
@@ -354,7 +374,8 @@ export function openForward(msgOrList) {
     for (const c of picked.values()) {
       try {
         // the note goes with the first message of each chat
-        for (const [i, msg] of list.entries()) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid(), ...(i === 0 && text ? { note: text } : {}) });
+        const opts = c.forum ? { headers: { 'x-topic': String(topicPick.get(c.id) || 0) } } : {};
+        for (const [i, msg] of list.entries()) await api('POST', `/api/chats/${c.id}/messages`, { forward_of: msg.id, client_id: uuid(), ...(i === 0 && text ? { note: text } : {}) }, opts);
       } catch (e) { failed += 1; fail(e); }
     }
     if (failed < picked.size) toast(t('msg.forwarded'));

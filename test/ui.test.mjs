@@ -470,3 +470,34 @@ test('messenger on a phone: the bottom menu opens every screen, and the settings
     assert.deepEqual(problems, []);
   } finally { await ctx.close(); }
 });
+
+test('messenger: passing a message on to a group with topics asks which topic, like Telegram', { skip: !canRun }, async () => {
+  const lola = await login('+998900021031', 'Нигора');
+  const mate = await login('+998900021032', 'Рустам');
+  const grp = (await call(lola.cookie, 'POST', '/api/chats', { type: 'group', title: 'Снабжение', member_ids: [mate.data.user.id] })).data.chat;
+  assert.equal((await call(lola.cookie, 'POST', `/api/chats/${grp.id}/forum`, { on: true })).status, 200);
+  await call(lola.cookie, 'POST', `/api/chats/${grp.id}/topics`, { title: 'Дефицит', emoji: '' });
+  const second = (await call(lola.cookie, 'POST', `/api/chats/${grp.id}/topics`, { title: 'Склад приход', emoji: '' })).data.topic;
+  const direct = (await call(lola.cookie, 'POST', '/api/chats/direct', { user_id: mate.data.user.id })).data.chat;
+  await call(lola.cookie, 'POST', `/api/chats/${direct.id}/messages`, { text: 'накладная для пересылки' });
+  const { ctx, page, errors, open } = await phonePage(lola.cookie);
+  try {
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.click('.chatlist .ci:has-text("Рустам")');
+    await page.click('.bubble:has-text("накладная для пересылки")', { button: 'right' });
+    await page.click('text=Переслать');
+    await page.waitForSelector('.fwd-row');
+    await page.click('.fwd-row:has-text("Снабжение")');
+    await page.waitForSelector('.fwd-topics .fwd-topic:has-text("Склад приход")');
+    assert.ok((await page.$$('.fwd-topics .fwd-topic')).length >= 3, 'General and both topics are offered');
+    await page.click('.fwd-topic:has-text("Склад приход")');
+    await page.click('.fwd-modal .btn:has-text("Передать")');
+    const ok = await page.waitForFunction(async ([id, tid]) => {
+      const j = await (await fetch(`/api/chats/${id}/messages?limit=10&topic=${tid}`)).json();
+      return j.messages.some((m) => m.text === 'накладная для пересылки');
+    }, [grp.id, second.id], { timeout: 15000 }).then(() => true).catch(() => false);
+    assert.ok(ok, 'the message landed in the chosen topic');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});

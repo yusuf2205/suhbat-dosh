@@ -193,6 +193,9 @@ textarea.input { resize: vertical; min-height: 80px; }
 .fwd-list { display: grid; gap: 2px; max-height: 42vh; overflow-y: auto; }
 .fwd-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 12px; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .fwd-row:hover { background: var(--brand-soft); }
+.fwd-topics { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 10px 8px 52px; }
+.fwd-topic { border: 1px solid rgba(0, 0, 0, .18); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: .85rem; background: none; color: inherit; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fwd-topic.on { background: var(--brand); border-color: var(--brand); color: #2b2b2e; font-weight: 600; }
 .fwd-row.on { background: var(--brand-soft); }
 .fwd-check { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: .8rem; font-weight: 800; flex: none; }
 .fwd-row.on .fwd-check { background: var(--brand); border-color: var(--brand); color: #2b2b2e; }
