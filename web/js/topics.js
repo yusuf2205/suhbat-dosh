@@ -7,9 +7,10 @@ import { modal, popMenu, toast } from './ui.js';
 
 S.topics ||= new Map(); // chatId -> [{ id, title, emoji, closed, unread }]
 S.topic ||= new Map(); // chatId -> topic being viewed (0 = General)
+S.flat ||= new Set();  // groups with topics shown as one single chat (all topics together), like "Single chat" in Telegram
 
 export const topicsOf = (chatId) => S.topics.get(chatId) || [];
-export const currentTopic = (chatId) => (S.chats.get(chatId)?.forum ? S.topic.get(chatId) || 0 : null);
+export const currentTopic = (chatId) => (S.chats.get(chatId)?.forum && !S.flat.has(chatId) ? S.topic.get(chatId) || 0 : null);
 /** "&topic=N" for the message list requests of a group with topics, nothing for other chats. */
 export const topicQuery = (chatId) => { const x = currentTopic(chatId); return x === null ? '' : `&topic=${x}`; };
 
@@ -29,7 +30,7 @@ export function refreshTopics(chatId, now = false) {
 }
 
 export function renderTopicBar(el, chat, switchTopic) {
-  if (!chat.forum) { el.hidden = true; return; }
+  if (!chat.forum || S.flat.has(chat.id)) { el.hidden = true; return; }
   el.hidden = false;
   const admin = chat.my_role === 'owner' || chat.my_role === 'admin';
   const cur = S.topic.get(chat.id) || 0;

@@ -32,6 +32,20 @@ let recentEl;
 let wired = false;
 let remote = { users: [], messages: [], loading: false, term: '' };
 
+// ---- search like in Telegram: frequent contacts, recent, and tabs of what is found (chats, channels, photos, videos, files, links)
+let searchOn = false;                 // the search field is in use (focused or has words)
+let stab = 'chats';
+const STAB_KIND = { photo: 'image', video: 'video', files: 'file', links: 'link' };
+const STABS = ['chats', 'channels', 'photo', 'video', 'files', 'links'];
+const recentKey = () => `suhbat.recentsearch.${S.me?.id}`;
+function recentSearches() { try { return JSON.parse(localStorage.getItem(recentKey()) || '[]'); } catch { return []; } }
+function saveRecents(list) { try { localStorage.setItem(recentKey(), JSON.stringify(list.slice(0, 12))); } catch { /* storage blocked */ } }
+/** What was opened from the search is remembered (a chat by its id, a person by what is needed to show and open them). */
+function rememberSearch(entry) {
+  const key = entry.chat ? `c${entry.chat}` : `u${entry.user}`;
+  saveRecents([{ ...entry, key }, ...recentSearches().filter((x) => x.key !== key)]);
+}
+
 const TABS = ['all', 'inbox', 'direct', 'group', 'channel'];
 
 /** "Inbox": what wants an answer from you: unread chats that are not muted, chats where you were mentioned, chats with your open tasks. */
@@ -85,9 +99,13 @@ export function mount(sidebar) {
   // phone layout: the search field is hidden until the magnifier is tapped (more room for chats, like Telegram)
   const scanBtn = h('button', { class: 'icon-btn scan-head', type: 'button', 'aria-label': t('scan.title'), title: t('scan.title'), onclick: () => openScanner() }, icon('qr', 24));
   const searchBtn = h('button', { class: 'icon-btn only-mobile', type: 'button', 'aria-label': t('search.chats'), onclick: () => { el.dataset.search = 'open'; setCompact(false); listEl.scrollTo({ top: 0 }); searchInput.focus(); } }, icon('search', 24));
-  searchInput.addEventListener('focus', () => setCompact(false));
-  searchInput.addEventListener('blur', () => { if (!searchInput.value && el) delete el.dataset.search; });
-  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchInput.value = ''; S.query = ''; searchInput.blur(); render(); } });
+  searchInput.addEventListener('focus', () => { setCompact(false); if (!searchOn) { searchOn = true; if (STAB_KIND[stab]) runRemote(); render(); } });
+  searchInput.addEventListener('blur', () => {
+    if (!searchInput.value && el) delete el.dataset.search;
+    // a moment later: a tap on a row of the search panel must reach its row before the panel goes
+    setTimeout(() => { if (!searchInput.value && document.activeElement !== searchInput && searchOn) { searchOn = false; stab = 'chats'; render(); } }, 250);
+  });
+  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchInput.value = ''; S.query = ''; searchOn = false; stab = 'chats'; searchInput.blur(); render(); } });
 
   recentEl = h('div', { class: 'recent', hidden: true, 'aria-label': t('nav.messages') });
   tabsEl = h('div', { class: 'tabs', role: 'tablist' });
@@ -154,7 +172,8 @@ export function renderNet() {
 
 const runRemote = debounce(async () => {
   const term = S.query;
-  if (term.length < 2) {
+  const kind = searchOn && S.view === 'chats' ? STAB_KIND[stab] : undefined;
+  if (term.length < 2 && !kind) {
     remote = { users: [], messages: [], loading: false, term };
     return render();
   }
@@ -162,8 +181,8 @@ const runRemote = debounce(async () => {
   remote.term = term;
   render();
   try {
-    const calls = [api('GET', `/api/users/search?q=${encodeURIComponent(term)}`)];
-    if (S.view !== 'contacts') calls.push(api('GET', `/api/search/messages?q=${encodeURIComponent(term)}`));
+    const calls = [kind || term.length < 2 ? Promise.resolve({ users: [] }) : api('GET', `/api/users/search?q=${encodeURIComponent(term)}`)];
+    if (S.view !== 'contacts') calls.push(api('GET', `/api/search/messages?q=${encodeURIComponent(term)}${kind ? `&type=${kind}` : ''}`));
     const [u, m] = await Promise.all(calls);
     if (S.query !== term) return;
     remote = { users: u.users, messages: m?.messages ?? [], loading: false, term };
@@ -306,7 +325,7 @@ function item(c) {
   const badge = c.unread > 0 ? h('span', { class: `badge ${isMuted(c) ? 'muted' : ''}`, 'aria-label': `${c.unread}` }, c.unread > 99 ? '99+' : c.unread) : null;
   const btn = h('button', {
     class: 'ci', type: 'button', role: 'listitem', 'aria-current': String(S.active === c.id), dataset: { chatId: c.id },
-    onclick: () => { if (!justSwiped()) fire('open-chat', c.id); },
+    onclick: () => { if (!justSwiped()) { if (searchOn || S.query) rememberSearch({ chat: c.id }); fire('open-chat', c.id); } },
     oncontextmenu: (e) => { e.preventDefault(); chatMenu(e.currentTarget, c); },
   },
   avatar(entityOf(c)),
@@ -410,6 +429,8 @@ export function render() {
     return;
   }
 
+  if (view === 'chats' && (searchOn || q) && renderSearch(q)) return;
+
   const wantArchived = view === 'archive';
   const chats = [...S.chats.values()].filter((c) => !c.saved && !!c.archived === wantArchived).filter((c) => passesFilter(c))
     .filter((c) => !q || chatTitle(c).toLowerCase().includes(q))
@@ -423,7 +444,7 @@ export function render() {
     if (remote.loading) listEl.append(h('div', { class: 'empty' }, t('list.loading')));
     if (remote.users.length) {
       listEl.append(h('div', { class: 'section-title' }, t('list.people')));
-      for (const u of remote.users) listEl.append(personRow(u, () => openPerson(u)));
+      for (const u of remote.users) listEl.append(personRow(u, () => { rememberSearch({ user: u.id, name: u.name, username: u.username || '', avatar: u.avatar || null }); openPerson(u); }));
     }
     if (remote.messages.length) {
       listEl.append(h('div', { class: 'section-title' }, t('list.messages')));
@@ -443,6 +464,60 @@ export function render() {
     else if ([...S.chats.values()].some((c) => !c.saved && !c.archived)) listEl.append(h('div', { class: 'empty' }, t('list.nothing')));
     else listEl.append(empty('👋', t('list.empty'), t('list.empty_hint'), h('button', { class: 'btn', type: 'button', onclick: openNewChat }, t('menu.find'))));
   }
+}
+
+/** The tabs of the search; true when the panel drew everything itself, false when the ordinary results of the chats tab go on below the tabs. */
+function renderSearch(q) {
+  const bar = h('div', { class: 'stabs', role: 'tablist' }, ...STABS.map((k) => h('button', {
+    class: 'stab', type: 'button', role: 'tab', 'aria-selected': String(stab === k),
+    onmousedown: (e) => e.preventDefault(),   // the field keeps the focus, the panel stays
+    onclick: () => { stab = k; if (STAB_KIND[k]) { remote = { users: [], messages: [], loading: true, term: S.query }; runRemote(); } render(); },
+  }, t(`stab.${k}`))));
+  hscroll(bar);
+  listEl.append(bar);
+  listEl.onmousedown = (e) => { if (searchOn && e.target.closest('.sp, .stabs')) e.preventDefault(); };
+  if (STAB_KIND[stab]) {
+    if (remote.loading) listEl.append(h('div', { class: 'empty' }, t('list.loading')));
+    const rows = remote.messages.filter((m) => S.chats.get(m.chat_id));
+    for (const m of rows) {
+      const c = S.chats.get(m.chat_id);
+      listEl.append(h('button', { class: 'ci', type: 'button', role: 'listitem', onclick: () => fire('jump', { chatId: c.id, msgId: m.id }) },
+        avatar(entityOf(c)), h('span', { class: 'ci-main' },
+          h('span', { class: 'ci-top' }, h('span', { class: 'ci-title ellipsis' }, chatTitle(c)), h('span', { class: 'ci-time' }, fmtListTime(m.created_at))),
+          h('span', { class: 'ci-last ellipsis' }, stab === 'links' ? matchLine(m, S.query) : (m.file?.name || previewText(m))))));
+    }
+    if (!rows.length && !remote.loading) listEl.append(h('div', { class: 'empty' }, t('list.nothing')));
+    return true;
+  }
+  if (stab === 'channels') {
+    const found = [...S.chats.values()].filter((c) => !c.saved && kindOf(c) === 'channel' && (!q || chatTitle(c).toLowerCase().includes(q)))
+      .sort((a, b) => (b.last_message?.created_at ?? b.last_message_at) - (a.last_message?.created_at ?? a.last_message_at));
+    for (const c of found) listEl.append(item(c));
+    if (!found.length) listEl.append(h('div', { class: 'empty' }, t('list.nothing')));
+    return true;
+  }
+  if (q) return false;   // the chats tab with words: chats, people and messages as before
+  // nothing typed yet: the people written to most recently, and what was opened from the search before
+  const frequent = [...S.chats.values()].filter((c) => c.type === 'direct' && !c.saved && c.peer && !c.peer.is_bot)
+    .sort((a, b) => (b.last_message?.created_at ?? b.last_message_at) - (a.last_message?.created_at ?? a.last_message_at)).slice(0, 12);
+  if (frequent.length) {
+    listEl.append(h('div', { class: 'sp-head sp' }, h('span', null, t('search.frequent')),
+      h('button', { class: 'sp-link', type: 'button', onclick: () => { searchInput.value = ''; S.query = ''; searchOn = false; stab = 'chats'; S.filter = 'direct'; searchInput.blur(); render(); } }, t('search.all'))),
+    h('div', { class: 'sp sp-frequent' }, ...frequent.map((c) => h('button', { type: 'button', title: c.peer.name, onclick: () => { rememberSearch({ chat: c.id }); fire('open-chat', c.id); } },
+      avatar(c.peer), h('b', null, c.peer.name.split(' ')[0])))));
+  }
+  const recents = recentSearches().filter((r) => (r.chat ? S.chats.has(r.chat) : true));
+  if (recents.length) {
+    listEl.append(h('div', { class: 'sp-head sp' }, h('span', null, t('search.recent')),
+      h('button', { class: 'sp-link', type: 'button', onclick: () => { saveRecents([]); render(); } }, t('search.clear'))));
+    for (const r of recents) {
+      if (r.chat) { listEl.append(item(S.chats.get(r.chat))); continue; }
+      const u = { id: r.user, name: r.name, username: r.username, avatar: r.avatar };
+      listEl.append(personRow(u, () => { rememberSearch(r); openPerson(u); }));
+    }
+  }
+  if (!frequent.length && !recents.length) listEl.append(h('div', { class: 'empty' }, t('search.hint')));
+  return true;
 }
 
 // ---- call history (Calls section)

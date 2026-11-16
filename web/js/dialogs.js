@@ -346,8 +346,11 @@ export function openForward(msgOrList) {
       if (!list.length) return null;
       const cur = topicPick.get(c.id) ?? 0;
       return h('div', { class: 'fwd-topics', role: 'radiogroup', 'aria-label': t('fwd.topic') },
-        ...list.map((tp) => h('button', { class: `fwd-topic${tp.id === cur ? ' on' : ''}`, type: 'button', role: 'radio', 'aria-checked': String(tp.id === cur), onclick: () => { topicPick.set(c.id, tp.id); paint(); } },
-          tp.id === 0 ? t('topic.general') : `${tp.emoji ? `${tp.emoji} ` : '\u{1F4AC} '}${tp.title}`)));
+        h('div', { class: 'fwd-topics-h' }, t('fwd.topic')),
+        h('div', { class: 'fwd-topics-grid' }, ...list.map((tp) => h('button', { class: `fwd-topic${tp.id === cur ? ' on' : ''}`, type: 'button', role: 'radio', 'aria-checked': String(tp.id === cur), onclick: () => { topicPick.set(c.id, tp.id); paint(); } },
+          h('span', { class: 'fwd-topic-ico', 'aria-hidden': 'true' }, tp.id === 0 ? '#' : tp.emoji || '\u{1F4AC}'),
+          h('span', { class: 'fwd-topic-name' }, tp.id === 0 ? t('topic.general') : tp.title),
+          tp.id === cur ? h('span', { class: 'fwd-topic-ok', 'aria-hidden': 'true' }, '✓') : null))));
     };
     clear(rows).append(...all.filter((c) => !term || nameOf(c).toLowerCase().includes(term)).flatMap((c) => [h('button', {
       class: `fwd-row${picked.has(c.id) ? ' on' : ''}`, type: 'button', 'aria-pressed': picked.has(c.id) ? 'true' : 'false',
@@ -365,7 +368,7 @@ export function openForward(msgOrList) {
     send.disabled = picked.size === 0;
     send.textContent = picked.size ? `${t('fwd.send')} \u00B7 ${picked.size}` : t('fwd.send');
   }
-  const m = modal({ title: t('fwd.title'), className: 'fwd-modal', body: [preview, note, find, chips, rows, send] });
+  const m = modal({ title: t('fwd.title'), className: 'fwd-modal', body: [preview, find, chips, rows, note, send] });
   find.addEventListener('input', paint);
   send.addEventListener('click', async () => {
     send.disabled = true;

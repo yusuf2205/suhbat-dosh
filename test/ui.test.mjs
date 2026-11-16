@@ -471,6 +471,34 @@ test('messenger on a phone: the bottom menu opens every screen, and the settings
   } finally { await ctx.close(); }
 });
 
+test('messenger: the search opens like in Telegram (frequent contacts, tabs), remembers what was opened, and a picture opens whole', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.madina);
+  try {
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.evaluate(() => document.querySelector('.search input').focus());
+    await page.waitForSelector('.stabs .stab');
+    assert.equal((await page.$$('.stabs .stab')).length, 6, 'six tabs');
+    assert.ok(await page.$('.sp-frequent button'), 'frequent contacts');
+    await page.click('.sp-frequent button');   // opens that chat and remembers it
+    await page.waitForSelector('.bubble');
+    assert.ok(await page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('suhbat.recentsearch.') && localStorage.getItem(k).includes('"chat"'))), 'remembered');
+    await open('/');
+    await page.waitForSelector('.chatlist .ci');
+    await page.evaluate(() => document.querySelector('.search input').focus());
+    await page.waitForSelector('.sp-head');
+    assert.match(await page.textContent('.chatlist'), /Недавние/);
+    await page.click('.stab:has-text("Фото")');
+    await page.waitForSelector('.chatlist .ci, .chatlist .empty');
+    // a picture shown whole: inside the screen, no scrollbars
+    await page.evaluate(async () => { const { lightbox } = await import('/js/ui.js'); const c = document.createElement('canvas'); c.width = 1600; c.height = 2400; c.getContext('2d').fillRect(0, 0, 1600, 2400); lightbox(c.toDataURL('image/png')); });
+    await page.waitForSelector('.lb-wrap img');
+    const box = await page.$eval('.lb-wrap img', (e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: innerWidth, h: innerHeight }; });
+    assert.ok(box.l >= 0 && box.r <= box.w && box.t >= 0 && box.b <= box.h, JSON.stringify(box));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('messenger: passing a message on to a group with topics asks which topic, like Telegram', { skip: !canRun }, async () => {
   const lola = await login('+998900021031', 'Нигора');
   const mate = await login('+998900021032', 'Рустам');

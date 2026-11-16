@@ -256,7 +256,12 @@ export function matchLine(m, term) {
 }
 
 export function lightbox(src) {
-  const m = modal({ title: '', className: 'lightbox', body: h('img', { src, alt: '' }) });
+  // a picture shown whole, centred, never larger than the screen, with no frame, title or scrollbars; a tap on it or the cross closes it
+  let m;
+  const body = h('div', { class: 'lb-wrap' },
+    h('img', { src, alt: '', onclick: () => m.close() }),
+    h('button', { class: 'lb-close', type: 'button', 'aria-label': t('common.close'), onclick: () => m.close() }, '✕'));
+  m = modal({ title: t('info.photo'), className: 'lightbox lb-one', bare: true, body });
   return m;
 }
 

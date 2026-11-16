@@ -18,7 +18,7 @@ import { directRoute, sendFromChat } from './nearby.js';
 import { tgOnline, tgSeenLine } from './tgpresence.js';
 import { applyAutoTr, autoAvailable, autoDecided, autoOn, foreignLang, langName, setAuto } from './autotr.js';
 import { onceNode } from './once.js';
-import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf } from './topics.js';
+import { currentTopic, topicQuery, renderTopicBar, refreshTopics, topicsOf, openTopicCreate } from './topics.js';
 import { openReaders } from './readers.js';
 import { applyChatTheme, openChatTheme } from './chattheme.js';
 import { commentsButton } from './comments.js';
@@ -169,6 +169,22 @@ export async function switchTopic(topicId) {
   renderComposer();
   renderHeader();
   renderAll();
+  await loadLatest(id);
+  renderAll({ scroll: 'bottom' });
+  markRead();
+}
+
+/** "Single chat" (like in Telegram): the topics of a group are shown as one stream, or the strip of topics comes back. */
+export async function setFlatChat(on) {
+  const id = S.active;
+  const c = S.chats.get(id);
+  if (!c?.forum || S.flat.has(id) === on) return;
+  if (on) S.flat.add(id); else S.flat.delete(id);
+  const b = bucket(id);
+  b.list = []; b.hasMore = true; b.detached = false;
+  nodeCache.clear();
+  replyTo = null; editing = null;
+  renderComposer(); renderHeader(); renderAll();
   await loadLatest(id);
   renderAll({ scroll: 'bottom' });
   markRead();
@@ -1060,7 +1076,7 @@ function closeRecorder(rerender = true) {
 export function upsert(chatId, m) {
   if (m.bridge_failed) toast(t('br.send_failed'));
   const cf = S.chats.get(chatId);
-  if (cf?.forum && (m.topic_id || 0) !== (currentTopic(chatId) || 0)) { refreshTopics(chatId); return; }
+  if (cf?.forum && currentTopic(chatId) !== null && (m.topic_id || 0) !== currentTopic(chatId)) { refreshTopics(chatId); return; }
   const b = bucket(chatId);
   const idx = b.list.findIndex((x) => x.id === m.id || (m.client_id && x.client_id === m.client_id));
   const sentNow = idx < 0 || b.list[idx].pending; // my own message just sent; later updates (transcript, edit, reaction) must not move the view
@@ -1148,7 +1164,7 @@ const markReadDebounced = debounce(async () => {
   if (!c || document.visibilityState !== 'visible' || !isNearBottom() || bucket(id).detached) return;
   const last = [...bucket(id).list].reverse().find((m) => !m.pending && !m.failed);
   if (!last) return;
-  if (c.forum) {
+  if (c.forum && currentTopic(id) !== null) {
     // a group with topics: the reading position belongs to the topic that is open, whatever was marked for the whole chat before
     const topic = currentTopic(id) || 0;
     const key = `${id}:${topic}`;
@@ -1837,8 +1853,18 @@ function insertAtCursor(text) {
 function chatMoreMenu(anchor) {
   const c = activeChat();
   if (!c) return;
+  // a group with topics: the menu of Telegram first (new topic, information, single chat, search, members, poll, leave), then the usual rest
+  const forumMenu = c.type === 'group' && c.forum && !isSecret(c) ? [
+    ...(c.my_role === 'owner' || c.my_role === 'admin' ? [{ icon: 'plus', label: t('topic.new'), onClick: () => openTopicCreate(c.id) }] : []),
+    { icon: 'user', label: t('forum.info'), onClick: toggleInfo },
+    { icon: 'chat', label: S.flat.has(c.id) ? t('forum.topics_view') : t('forum.single'), onClick: () => setFlatChat(!S.flat.has(c.id)) },
+    { icon: 'search', label: t('chat.search'), onClick: () => openChatSearch(c.id) },
+    ...(c.my_role === 'owner' || c.my_role === 'admin' ? [{ icon: 'users', label: t('forum.manage'), onClick: toggleInfo }] : []),
+    ...(c.can_post ? [{ icon: 'grid', label: t('poll.new'), onClick: () => openPollCreate(c.id) }] : []),
+  ] : [];
   const items = [
-    { icon: 'search', label: t('chat.search'), onClick: () => openChatSearch(c.id) }, // the header button is hidden on narrow phone screens
+    ...forumMenu,
+    ...(forumMenu.length ? [] : [{ icon: 'search', label: t('chat.search'), onClick: () => openChatSearch(c.id) }]), // the header button is hidden on narrow phone screens
     isMuted(c)
       ? { icon: 'bell', label: t('ctx.unmute'), onClick: () => setMute(c, 'off') }
       : { icon: 'bell', label: t('chat.mute_for'), onClick: () => muteMenu(anchor, c) },

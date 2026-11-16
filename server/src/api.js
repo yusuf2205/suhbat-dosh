@@ -1869,9 +1869,11 @@ api.post('/messages/:id/reactions', (req, res) => {
 
 api.get('/search/messages', (req, res) => {
   if (!rateLimit(`msearch:${req.user.id}`, 60, 60_000)) throw new HttpError(429, 'too_many_requests');
-  const term = str(String(req.query.q ?? ''), 'q', { min: 2, max: 100 });
+  // a kind (photos, videos, files, links) may be searched without words, like the tabs of the search in Telegram
+  const kind = ['image', 'video', 'file', 'audio', 'voice', 'link'].includes(String(req.query.type)) ? String(req.query.type) : undefined;
+  const term = kind && !String(req.query.q ?? '').trim() ? '' : str(String(req.query.q ?? ''), 'q', { min: 2, max: 100 });
   const chatId = int(req.query.chat_id, 'chat_id', { optional: true });
   const before = int(req.query.before, 'before', { min: 1, optional: true });
-  const rows = searchMessages(req.user.id, { term, chatId, before, limit: 40 });
+  const rows = searchMessages(req.user.id, { term, chatId, before, type: kind, limit: 40 });
   res.json({ messages: rows.map(messageOut), more: rows.length === 40 });
 });
