@@ -42,8 +42,9 @@ export function adminIds() {
   return q.all('SELECT id FROM users WHERE is_admin = 1 AND is_bot = 0 AND banned_at IS NULL').map((r) => r.id);
 }
 
-export function notifyAdmins(text) {
-  for (const id of adminIds()) {
+export function notifyAdmins(text, { ownerOnly = false } = {}) {
+  const ids = ownerOnly ? q.all('SELECT id FROM users WHERE admin_owner = 1 AND is_bot = 0 AND banned_at IS NULL').map((r) => r.id) : adminIds();
+  for (const id of ids) {
     try { serviceMessage(id, text); } catch { /* never break the caller */ }
   }
 }

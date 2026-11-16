@@ -302,9 +302,9 @@ function autoVerify() {
 }
 
 // ------------------------------------------------------------------ alerts: in the messenger and, where the administrator signed in with Telegram, there too
-export function alert(text) {
-  notifyAdmins(text);
-  for (const r of q.all('SELECT telegram_id FROM users WHERE is_admin = 1 AND is_bot = 0 AND banned_at IS NULL AND telegram_id IS NOT NULL')) notifyTelegram(r.telegram_id, text);
+export function alert(text, { ownerOnly = false } = {}) {
+  notifyAdmins(text, { ownerOnly });
+  for (const r of q.all(`SELECT telegram_id FROM users WHERE ${ownerOnly ? 'admin_owner = 1' : 'is_admin = 1'} AND is_bot = 0 AND banned_at IS NULL AND telegram_id IS NOT NULL`)) notifyTelegram(r.telegram_id, text);
 }
 
 // ------------------------------------------------------------------ monitors
@@ -312,6 +312,7 @@ let lastDiskAlert = 0;
 let lastErrAlert = 0;
 let lastBackupAlert = 0;
 let lastBackupLook = 0;
+let lastMirrorAlert = 0;
 
 function check() {
   const s = sample();
@@ -330,7 +331,12 @@ function check() {
         lastBackupAlert = now();
         alert(newest ? `⚠️ Копия базы не делалась уже ${Math.round((now() - newest.created_at) / 3600_000)} ч (должна каждые ${config.backupHours} ч). Проверьте диск для копий.` : '⚠️ Копий базы нет совсем. Проверьте диск для копий.');
       }
-      // a failure of the second copy is not sent to the chat (it is noise: most often a file that vanished mid-pass); it stays in the log and in the status of the copies
+      // the second copy failing is told to the main administrator only (not to every admin), once in twelve hours; the others see it in 'Needs attention'
+      const err = filesMirror.last?.error;
+      if (err && now() - lastMirrorAlert > 12 * 3600_000) {
+        lastMirrorAlert = now();
+        alert(`⚠️ Вторая копия файлов не пишется: ${err}.`, { ownerOnly: true });
+      }
     } catch { /* the folder is busy: next time */ }
   }
   const recentErr = samples.slice(-10).reduce((a, x) => a + x.err, 0);
