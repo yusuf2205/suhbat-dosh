@@ -1534,7 +1534,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     return { right: person(ctx.me, info.members.find((x) => x.id === ctx.me)?.name), left: person(other?.id, other?.name || '—') };
   };
   const whoBar = h('div', { class: 'achat-who' },
-    h('button', { class: 'chip tbtn acw-back', type: 'button', title: 'Назад', 'aria-label': 'Назад', onclick: () => { if (depth() > 0) history.back(); else go('#/chats'); } }, '←'),
+    h('button', { class: 'chip acw-back', type: 'button', title: 'Назад', 'aria-label': 'Назад', onclick: () => { if (depth() > 0) history.back(); else go('#/chats'); } }, '←'),
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
