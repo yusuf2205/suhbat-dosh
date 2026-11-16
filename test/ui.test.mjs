@@ -471,6 +471,25 @@ test('messenger on a phone: the bottom menu opens every screen, and the settings
   } finally { await ctx.close(); }
 });
 
+test('admin: the chats of a person can be searched by name and by kind (personal, groups, channels)', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/user/${seed.madinaId}`);
+    await page.waitForSelector('.ud-chatbar input');
+    assert.ok((await page.$$('.ud-chats .ud-chat')).length >= 4, 'all the chats of the person');
+    await page.fill('.ud-chatbar input', 'сем');
+    assert.equal((await page.$$('.ud-chats .ud-chat')).length, 1, 'found by a part of the name');
+    assert.match(await page.textContent('.ud-chats'), /Семья/);
+    await page.fill('.ud-chatbar input', '');
+    await page.click('.ud-kind:has-text("Каналы")');
+    assert.match(await page.textContent('.ud-chats'), /Новости/);
+    assert.equal((await page.$$('.ud-chats .ud-chat')).length, 1, 'only channels');
+    await page.fill('.ud-chatbar input', 'нет такого');
+    assert.match(await page.textContent('.ud-chats'), /Ничего не найдено/);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('messenger: the search opens like in Telegram (frequent contacts, tabs), remembers what was opened, and a picture opens whole', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.madina);
   try {

@@ -546,3 +546,9 @@ table.t.health td { overflow-wrap: anywhere; }
 .afilters-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
 .afilters-d { display: flex; align-items: center; gap: 6px; }
 .afilters-d .input { flex: 1; min-width: 0; }
+.ud-chatbar { display: grid; gap: 8px; margin: 0 0 10px; }
+.ud-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.ud-kind { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(0, 0, 0, .15); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: .85rem; background: none; color: inherit; cursor: pointer; }
+.ud-kind small { color: #888; font-size: .75rem; }
+.ud-kind[aria-pressed=true] { background: #ffc400; border-color: #ffc400; color: #2b2b2e; font-weight: 600; }
+.ud-kind[aria-pressed=true] small { color: inherit; }

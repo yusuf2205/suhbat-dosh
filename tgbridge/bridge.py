@@ -397,7 +397,8 @@ def media_limit(kind: str) -> int:
 
 
 MEDIA_SEM = asyncio.Semaphore(2)   # big downloads at once (the temporary files live in memory)
-SMALL_SEM = asyncio.Semaphore(4)   # photos, voice messages and small files: never wait behind a film that takes an hour
+SMALL_SEM = asyncio.Semaphore(int(os.environ.get("BRIDGE_SMALL_JOBS", "8")))   # photos, voice messages and small files: never wait behind a film that takes an hour
+UPGRADE_PAR = int(os.environ.get("BRIDGE_UPGRADE_PAR", "4"))   # files of one account fetched at once while the missing media is filled in
 SMALL_FILE = 20 * 1024 * 1024
 
 
@@ -531,7 +532,7 @@ def upgrade_kinds() -> str:
     return "geo,photo,voice,file,audio,sticker,gif" + (",video" if VIDEO_ON else "")
 
 
-async def pending_media(a: Acct, limit=20):
+async def pending_media(a: Acct, limit=40):
     try:
         async with _http().get(f"{SERVER}/api/bridge/pending", params={"owner": a.uid, "kinds": upgrade_kinds(), "limit": limit, "skip_chats": ",".join(sorted(a.up_nochat))}, timeout=ClientTimeout(total=30),
                                headers={"Authorization": f"Bearer {TOKEN}"}) as r:
@@ -574,45 +575,63 @@ async def upgrade_round(a: Acct) -> str:
             log("media upgrade: a chat could not be read:", type(e).__name__)
             await asyncio.sleep(5)
             continue
-        # the small ones first: a big video of the same account must not hold its photos back
+        # several files at once (the small ones first: a big video of the same account must not hold its photos back)
         size_of = lambda m: (getattr(getattr(m, "file", None), "size", 0) or 0) if m is not None else 0
-        for it, m in sorted(zip(its, msgs), key=lambda p: size_of(p[1])):
+        par = asyncio.Semaphore(UPGRADE_PAR)
+
+        async def one(it, m):
             if m is None:
-                skips.setdefault("gone", []).append(it["id"])
-                continue
+                return it, "gone", None
             g = geo_of(m)
             if g:   # a place: it becomes a location message in the same spot
-                if await post_in({"owner": a.uid, "tg_chat": chat, "kind": "user", "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                                  "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000)}):
-                    done += 1
-                    continue
-                await flush_skips(a, skips)
-                return "down"
+                ok = await post_in({"owner": a.uid, "tg_chat": chat, "kind": "user", "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
+                                    "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000)})
+                return it, "geo", ok
             mk = media_kind(m)
             if not mk:
+                return it, "nomedia", None
+            async with par:
+                res = await upload_media_r(a, m, mk, {
+                    "tg_chat": chat, "chat_kind": "user", "backfill": True, "upgrade": True, "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
+                    "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
+                })
+            return it, "media", res
+
+        results = await asyncio.gather(*[one(it, m) for it, m in sorted(zip(its, msgs), key=lambda p: size_of(p[1]))], return_exceptions=True)
+        stop = None
+        for r in results:
+            if isinstance(r, BaseException):
+                await flush_skips(a, skips)
+                raise r
+            it, how, res = r
+            if how == "gone":
+                skips.setdefault("gone", []).append(it["id"])
+            elif how == "nomedia":
                 skips.setdefault("nomedia", []).append(it["id"])
-                continue
-            res = await upload_media_r(a, m, mk, {
-                "tg_chat": chat, "chat_kind": "user", "backfill": True, "upgrade": True, "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
-            })
-            if res == "ok":
+            elif how == "geo":
+                if res:
+                    done += 1
+                else:
+                    stop = stop or "down"
+            elif res == "ok":
                 done += 1
                 a.up_fail.pop(it["id"], None)
             elif res.startswith("skip:"):
                 skips.setdefault(res[5:], []).append(it["id"])
             elif res == "full":
-                await flush_skips(a, skips)
-                return "full"
+                stop = "full"
             elif res == "retry":
-                await flush_skips(a, skips)
-                return "down"
+                stop = stop or "down"
             else:   # Telegram would not give this file: three tries, then it is left as a mark
                 a.up_fail[it["id"]] = a.up_fail.get(it["id"], 0) + 1
                 if a.up_fail[it["id"]] >= 3:
                     skips.setdefault("download", []).append(it["id"])
                     a.up_fail.pop(it["id"], None)
-            await asyncio.sleep(0.4)   # be gentle with Telegram and the NAS
+        if stop:
+            await flush_skips(a, skips)
+            a.up_done += done
+            return stop
+        await asyncio.sleep(0.2)   # be gentle with Telegram and the NAS
     await flush_skips(a, skips)
     a.up_done += done
     if done:

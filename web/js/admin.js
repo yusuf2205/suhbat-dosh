@@ -612,14 +612,35 @@ async function showUser(id) {
 
   // chats: the most useful part, right under the top
   const typeName = { direct: 'личный', group: 'группа', channel: 'канал' };
-  const chatsPanel = h('section', { class: 'panel' }, h('h2', null, `Чаты · ${d.chats.length}`),
-    d.chats.length ? h('div', { class: 'ud-chats' }, d.chats.map((c) => h('button', { class: 'ud-chat', type: 'button', disabled: !may('chats_read'), onclick: () => openChat(c.id) },
-      h('span', { class: `ud-ci ${c.type}`, 'aria-hidden': 'true' }, (c.title || '#').slice(0, 1).toUpperCase()),
-      h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || `#${c.id}`),
-        h('small', { class: 'muted ellipsis' }, `${typeName[c.type] || c.type}${c.role && c.role !== 'member' ? ` · ${c.role}` : ''} · с ${fmtShort(c.joined_at)}`)),
-      c.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : null,
-      h('span', { class: 'ud-cn', title: 'написал сообщений' }, String(c.sent)),
-      h('span', { class: 'ud-go', 'aria-hidden': 'true' }, icon('chevron', 16))))) : h('p', { class: 'muted' }, 'Чатов нет'));
+  const chatRow = (c) => h('button', { class: 'ud-chat', type: 'button', disabled: !may('chats_read'), onclick: () => openChat(c.id) },
+    h('span', { class: `ud-ci ${c.type}`, 'aria-hidden': 'true' }, (c.title || '#').slice(0, 1).toUpperCase()),
+    h('span', { class: 'ud-cm' }, h('b', { class: 'ellipsis' }, c.title || `#${c.id}`),
+      h('small', { class: 'muted ellipsis' }, `${typeName[c.type] || c.type}${c.role && c.role !== 'member' ? ` · ${c.role}` : ''} · с ${fmtShort(c.joined_at)}`)),
+    c.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : null,
+    h('span', { class: 'ud-cn', title: 'написал сообщений' }, String(c.sent)),
+    h('span', { class: 'ud-go', 'aria-hidden': 'true' }, icon('chevron', 16)));
+  // search among the chats of this person: by name, and by kind (personal, groups, channels)
+  const chatList = h('div', { class: 'ud-chats' });
+  const chatHead = h('h2', null, `Чаты · ${d.chats.length}`);
+  const chatFind = h('input', { class: 'input', type: 'search', placeholder: 'Найти чат, группу или канал…', 'aria-label': 'Поиск по чатам пользователя', autocomplete: 'off' });
+  let chatKind = '';
+  const kindBtns = [['', 'Все'], ['direct', 'Личные'], ['group', 'Группы'], ['channel', 'Каналы']].map(([k, label]) => {
+    const n = k ? d.chats.filter((c) => c.type === k).length : d.chats.length;
+    const b = h('button', { class: 'ud-kind', type: 'button', 'aria-pressed': 'false', onclick: () => { chatKind = k; paintChats(); } }, label, h('small', null, String(n)));
+    b.dataset.k = k;
+    return b;
+  });
+  const paintChats = () => {
+    const term = chatFind.value.trim().toLowerCase();
+    const list = d.chats.filter((c) => (!chatKind || c.type === chatKind) && (!term || String(c.title || '').toLowerCase().includes(term)));
+    clear(chatList).append(...(list.length ? list.map(chatRow) : [h('p', { class: 'muted' }, 'Ничего не найдено')]));
+    chatHead.textContent = term || chatKind ? `Чаты · ${list.length} из ${d.chats.length}` : `Чаты · ${d.chats.length}`;
+    for (const b of kindBtns) b.setAttribute('aria-pressed', String(b.dataset.k === chatKind));
+  };
+  chatFind.addEventListener('input', paintChats);
+  paintChats();
+  const chatsPanel = h('section', { class: 'panel' }, chatHead,
+    d.chats.length ? [h('div', { class: 'ud-chatbar' }, chatFind, h('div', { class: 'ud-kinds' }, kindBtns)), chatList] : h('p', { class: 'muted' }, 'Чатов нет'));
 
   const dir = state.users.get(id) || {};
   const qIn = h('input', { class: 'input', type: 'number', min: 0, placeholder: 'МБ (пусто — как у всех, 0 — без лимита)', 'aria-label': 'Лимит хранилища, МБ', value: dir.quota ? Math.round(dir.quota / 1048576) : '' });
