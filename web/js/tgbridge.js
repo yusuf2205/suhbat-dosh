@@ -27,7 +27,11 @@ export function openBridge() {
     try { st = await api('GET', '/api/bridge'); } catch (e) { fail(e); win.close(); return; }
     if (!alive) return;
     if (!st.available) return win.setBody(h('p', { class: 'muted' }, t('br.unavailable')));
-    if (!st.running && !st.linked) return win.setBody(h('p', { class: 'muted' }, t('br.not_running')), h('code', { class: 'br-cmd' }, 'docker compose --profile tgbridge up -d --build tgbridge'));
+    if (!st.running && !st.linked) {
+      // the bridge is starting (after an update) or stopped: the command is for the administrator only, the others just wait: the window tries again by itself
+      timer = setTimeout(draw, 5000);
+      return win.setBody(h('p', { class: 'muted' }, t('br.not_running')), ...(S.me?.is_admin ? [h('p', { class: 'muted' }, 'Если не запускается, команда для сервера:'), h('code', { class: 'br-cmd' }, 'docker compose --profile tgbridge up -d --build tgbridge')] : []));
+    }
     return st.linked ? connected(st) : intro();
   }
 

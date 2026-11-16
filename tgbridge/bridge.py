@@ -955,8 +955,19 @@ async def sync_recent(a: Acct):
     log("recent sync done for", a.uid, "chats:", n)
 
 
+READY = False   # false while the saved sessions are still being connected after a start
+
+
 async def start_existing():
-    """On start: continue with every saved session."""
+    """On start: continue with every saved session (in the background: the bridge already answers, so nobody waits to link an account)."""
+    global READY
+    try:
+        await _start_existing()
+    finally:
+        READY = True
+
+
+async def _start_existing():
     os.makedirs(DATA, exist_ok=True)
     for name in os.listdir(DATA):
         m = re.fullmatch(r"session-(\d{1,12})\.bin", name)
@@ -1097,6 +1108,7 @@ async def login_task(a: Acct):
             except asyncio.TimeoutError:
                 if time.time() - L["started"] > 120:
                     L["status"] = "expired"
+                    log("login: the code was not scanned in time, account", a.uid)
                     return
                 await L["qr"].recreate()
                 L["url"] = L["qr"].url
@@ -1108,7 +1120,7 @@ async def login_task(a: Acct):
                 raise
         await finish_login(a)
     except Exception as e:
-        log("login failed:", type(e).__name__)
+        log("login failed:", type(e).__name__, str(e)[:120], "account", a.uid)
         L["status"] = "error"
 
 
@@ -1120,16 +1132,25 @@ async def finish_login(a: Acct):
     attach_handlers(a)
     a.login["status"] = "done"
     log("connected account", a.uid)
+    t = asyncio.create_task(catchup_loop(a))
+    FILLS.add(t)
+    t.add_done_callback(FILLS.discard)
 
 
 async def login_start(r):
     a = who(r)
-    if a.me:
+    if a.me or (not READY and os.path.exists(a.session_file)):
         return web.json_response({"error": "already_linked"}, status=409)
     if not MOCK and (not API_ID or not API_HASH):
         return web.json_response({"error": "no_api_keys"}, status=503)
     if a.login and a.login.get("task"):
         a.login["task"].cancel()
+    if a.client is not None and not MOCK:
+        try:   # the connection of the previous attempt is closed: attempts do not pile up
+            await asyncio.wait_for(a.client.disconnect(), timeout=5)
+        except Exception:
+            pass
+    log("login: a code is asked for, account", a.uid)
     if MOCK:
         a.client = MockClient()
         a.login = {"status": "waiting", "url": f"tg://login?token=MOCK{a.uid}", "started": time.time()}
@@ -1145,9 +1166,12 @@ async def login_start(r):
 async def login_status(r):
     a = who(r)
     L = a.login
+    # a saved session that is still being connected after a start is not an ended one: the server must not forget the link
+    waiting = a.me is None and not READY and os.path.exists(a.session_file)
+    linked = a.me is not None or waiting
     if not L:
-        return web.json_response({"status": "none", "linked": a.me is not None, "account": a.me})
-    return web.json_response({"status": L["status"], "linked": a.me is not None, "url": L.get("url"), "account": a.me if L["status"] == "done" else None})
+        return web.json_response({"status": "none", "linked": linked, "starting": waiting, "account": a.me})
+    return web.json_response({"status": L["status"], "linked": linked, "starting": waiting, "url": L.get("url"), "account": a.me if L["status"] == "done" else None})
 
 
 async def login_password(r):
@@ -1521,11 +1545,11 @@ async def main():
     if len(TOKEN) < 24:
         raise SystemExit("BRIDGE_TOKEN must be at least 24 characters")
     _key()
-    await start_existing()
     runner = web.AppRunner(app())
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     log("bridge listening on", PORT, "(mock)" if MOCK else "")
+    FILLS.add(asyncio.create_task(start_existing()))
     asyncio.create_task(retry_loop())
     ticks = 0
     cursor = 0
