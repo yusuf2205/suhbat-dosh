@@ -141,6 +141,26 @@ bridge.post('/bridge/start', async (req, res) => {
   res.json({ url: r.url, expires_in: r.expires_in });
 });
 
+/** The other way in, for a person with one phone: the phone number, then the code that Telegram sends to its own app. Neither is kept or logged here. */
+bridge.post('/bridge/phone', async (req, res) => {
+  guard(req);
+  if (link(req.user.id)) throw new HttpError(409, 'already_linked');
+  if (!rateLimit(`brphone:${req.user.id}`, 5, 3600_000)) throw new HttpError(429, 'too_many_requests');
+  const phone = str(String(req.body?.phone ?? ''), 'phone', { min: 7, max: 24 });
+  await call('POST', '/login/phone', req.user.id, { phone });
+  audit(req.user.id, 'bridge.start', { details: { by: 'phone' } });
+  res.json({ status: 'code' });
+});
+
+bridge.post('/bridge/code', async (req, res) => {
+  guard(req);
+  if (!rateLimit(`brcode:${req.user.id}`, 12, 600_000)) throw new HttpError(429, 'too_many_requests');
+  const code = str(String(req.body?.code ?? ''), 'code', { min: 3, max: 12 });
+  const r = await call('POST', '/login/code', req.user.id, { code });
+  if (r.status === 'done' && r.account) await finishLink(req, r.account);
+  res.json({ status: r.status, account: r.account || null });
+});
+
 bridge.get('/bridge/poll', async (req, res) => {
   guard(req);
   if (!rateLimit(`brpoll:${req.user.id}`, 120, 60_000)) throw new HttpError(429, 'too_many_requests');

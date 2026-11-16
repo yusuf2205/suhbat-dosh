@@ -136,6 +136,11 @@ class MockClient:
     async def is_user_authorized(self):
         return self.authorized
 
+    async def sign_in(self, password=None, **_kw):
+        if password != "mockpass":
+            raise type("PasswordHashInvalidError", (Exception,), {})()
+        self.authorized = True
+
     async def dialogs(self):
         return [{"id": -1001, "title": "Семья (мок)", "type": "group", "unread": 2},
                 {"id": 777, "title": "Дилшод (мок)", "type": "user", "unread": 0},
@@ -1163,6 +1168,88 @@ async def login_start(r):
     return web.json_response({"url": a.login["url"], "expires_in": 120})
 
 
+def login_error(e) -> web.Response:
+    """What went wrong with a phone or a code, in words the page knows."""
+    name = type(e).__name__
+    if name.startswith("FloodWait") or name == "FloodError":
+        return web.json_response({"error": "too_many_requests", "wait": int(getattr(e, "seconds", 0) or 0)}, status=429)
+    table = {"PhoneNumberInvalidError": "invalid_phone", "PhoneNumberBannedError": "phone_banned", "PhoneNumberFloodError": "too_many_requests",
+             "PhoneCodeInvalidError": "wrong_code", "PhoneCodeEmptyError": "wrong_code", "PhoneCodeExpiredError": "code_expired",
+             "ApiIdInvalidError": "bridge_error", "PhonePasswordFloodError": "too_many_requests"}
+    return web.json_response({"error": table.get(name, "bridge_error")}, status=400)
+
+
+async def login_phone(r):
+    """A person with one phone cannot scan a QR code with itself: the code comes to the Telegram app on that same phone."""
+    a = who(r)
+    if a.me or (not READY and os.path.exists(a.session_file)):
+        return web.json_response({"error": "already_linked"}, status=409)
+    if not MOCK and (not API_ID or not API_HASH):
+        return web.json_response({"error": "no_api_keys"}, status=503)
+    phone = re.sub(r"[^0-9]", "", str((await r.json()).get("phone", "")))
+    if not 7 <= len(phone) <= 15:
+        return web.json_response({"error": "invalid_phone"}, status=400)
+    if a.login and a.login.get("task"):
+        a.login["task"].cancel()
+    if a.client is not None and not MOCK:
+        try:
+            await asyncio.wait_for(a.client.disconnect(), timeout=5)
+        except Exception:
+            pass
+    try:
+        if MOCK:
+            a.client = MockClient()
+            a.login = {"status": "code", "phone": phone, "hash": "mock", "started": time.time(), "tries": 0}
+        else:
+            a.client = telethon_client()
+            await a.client.connect()
+            sent = await a.client.send_code_request("+" + phone)
+            a.login = {"status": "code", "phone": phone, "hash": sent.phone_code_hash, "started": time.time(), "tries": 0}
+    except Exception as e:
+        log("login by phone failed:", type(e).__name__, "account", a.uid)
+        return login_error(e)
+    log("login by phone: a code was sent, account", a.uid)
+    return web.json_response({"status": "code"})
+
+
+async def login_code(r):
+    a = who(r)
+    L = a.login
+    if not L or L.get("status") != "code":
+        return web.json_response({"error": "no_login"}, status=409)
+    if time.time() - L["started"] > 600:
+        L["status"] = "expired"
+        return web.json_response({"error": "code_expired"}, status=400)
+    L["tries"] = L.get("tries", 0) + 1
+    if L["tries"] > 6:
+        return web.json_response({"error": "too_many_requests"}, status=429)
+    code = re.sub(r"[^0-9]", "", str((await r.json()).get("code", "")))
+    if not code:
+        return web.json_response({"error": "wrong_code"}, status=400)
+    try:
+        if MOCK:
+            if code == "22222":
+                raise type("SessionPasswordNeededError", (Exception,), {})()
+            if code != "11111":
+                raise type("PhoneCodeInvalidError", (Exception,), {})()
+            a.client.authorized = True
+            a.me = {"name": "Мок Аккаунт", "username": f"mock_{a.uid}"}
+            await a.persist_session()
+            a.save_list()
+            L["status"] = "done"
+            start_upgrade(a)
+        else:
+            await a.client.sign_in("+" + L["phone"], code, phone_code_hash=L["hash"])
+            await finish_login(a)
+    except Exception as e:
+        if type(e).__name__ == "SessionPasswordNeededError":
+            L["status"] = "password"
+            return web.json_response({"status": "password"})
+        log("login code failed:", type(e).__name__, "account", a.uid)
+        return login_error(e)
+    return web.json_response({"status": "done", "account": a.me})
+
+
 async def login_status(r):
     a = who(r)
     L = a.login
@@ -1184,6 +1271,13 @@ async def login_password(r):
         await a.client.sign_in(password=pw)
     except Exception as e:
         return web.json_response({"error": "wrong_password" if "Password" in type(e).__name__ else "bridge_error"}, status=400)
+    if MOCK:
+        a.me = {"name": "Мок Аккаунт", "username": f"mock_{a.uid}"}
+        await a.persist_session()
+        a.save_list()
+        L["status"] = "done"
+        start_upgrade(a)
+        return web.json_response({"status": "done", "account": a.me})
     await finish_login(a)
     return web.json_response({"status": "done", "account": a.me})
 
@@ -1533,7 +1627,7 @@ def app():
     a = web.Application(middlewares=[guard], client_max_size=SEND_MAX + 1024 * 1024)
     a.add_routes([
         web.get("/health", health), web.get("/accounts", accounts), web.post("/resync", resync),
-        web.post("/login/start", login_start), web.get("/login/status", login_status), web.post("/login/password", login_password),
+        web.post("/login/start", login_start), web.post("/login/phone", login_phone), web.post("/login/code", login_code), web.get("/login/status", login_status), web.post("/login/password", login_password),
         web.get("/dialogs", dialogs), web.post("/chats", set_chats), web.post("/send", send), web.post("/send-file", send_file), web.post("/logout", logout),
         web.post("/backfill", backfill), web.get("/backfill/status", backfill_status),
         web.post("/read", read_back), web.post("/delete", delete_back), web.post("/delete-chat", delete_chat_back), web.post("/edit", edit_back), web.post("/mock/event", mock_event), web.post("/mock/message", mock_message), web.get("/mock/last", mock_last), web.post("/mock/media", mock_media),

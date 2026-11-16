@@ -624,3 +624,26 @@ test('a copy stands in the lists by the time of its real last message (not by th
   const mine = (await call(u.cookie, 'GET', '/api/chats')).data.chats.filter((c) => /друг/.test(c.title));
   assert.deepEqual(mine.map((c) => c.title), ['✈ Свежий друг', '✈ Давний друг'], 'and so in the list of the person');
 });
+
+test('a person with one phone links by the phone number and the code from the Telegram app (and the cloud password when there is one)', { skip: !havePy }, async () => {
+  const a = await phoneUser('+998900002071', 'Один телефон');
+  const b = await phoneUser('+998900002072', 'С паролем');
+  // a wrong number is refused before anything is asked of Telegram
+  assert.equal((await call(a.cookie, 'POST', '/api/bridge/phone', { phone: '12' })).status, 400);
+  assert.equal((await call(a.cookie, 'POST', '/api/bridge/code', { code: '11111' })).status, 409, 'a code before a number');
+  assert.equal((await call(a.cookie, 'POST', '/api/bridge/phone', { phone: '+998 90 111 22 33' })).data.status, 'code');
+  const bad = await call(a.cookie, 'POST', '/api/bridge/code', { code: '00000' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.data.error, 'wrong_code');
+  const ok = await call(a.cookie, 'POST', '/api/bridge/code', { code: '11111' });
+  assert.equal(ok.data.status, 'done');
+  assert.equal((await call(a.cookie, 'GET', '/api/bridge')).data.linked, true);
+  // an account with the cloud password: the code leads to the password step
+  assert.equal((await call(b.cookie, 'POST', '/api/bridge/phone', { phone: '+998 90 333 44 55' })).data.status, 'code');
+  assert.equal((await call(b.cookie, 'POST', '/api/bridge/code', { code: '22222' })).data.status, 'password');
+  assert.equal((await call(b.cookie, 'POST', '/api/bridge/password', { password: 'nope' })).data.error, 'wrong_password');
+  assert.equal((await call(b.cookie, 'POST', '/api/bridge/password', { password: 'mockpass' })).data.status, 'done');
+  assert.equal((await call(b.cookie, 'GET', '/api/bridge')).data.linked, true);
+  // already linked: no second login
+  assert.equal((await call(a.cookie, 'POST', '/api/bridge/phone', { phone: '+998901112233' })).status, 409);
+});

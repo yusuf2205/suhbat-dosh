@@ -57,6 +57,7 @@ export function openBridge() {
     win.setBody(
       h('p', null, t('br.scan_intro')),
       h('div', { class: 'qrlogin' }, box, status, h('ol', { class: 'qrlogin-steps' }, ['br.step1', 'br.step2', 'br.step3'].map((k) => h('li', null, t(k))))),
+      h('button', { class: 'btn secondary', type: 'button', style: { width: '100%' }, onclick: () => { clearTimeout(timer); phoneStep(); } }, t('br.one_phone')),
       h('button', { class: 'btn link', type: 'button', onclick: () => draw() }, t('common.cancel')));
     const until = Date.now() + (s.expires_in || 120) * 1000;
     const again = () => box.replaceChildren(h('button', { class: 'btn secondary', type: 'button', onclick: () => qrStep() }, t('qrl.refresh')));
@@ -73,6 +74,37 @@ export function openBridge() {
       timer = setTimeout(tick, 2000);
     };
     timer = setTimeout(tick, 1500);
+  }
+
+  // the second way in: the phone number, then the code that arrives in the Telegram app of the same phone (for a person who has no second device to scan with)
+  function phoneStep() {
+    const ph = h('input', { class: 'input', type: 'tel', inputmode: 'tel', autocomplete: 'tel', placeholder: t('br.phone_ph'), 'aria-label': t('br.phone_title') });
+    const err = h('div', { class: 'err', role: 'alert' });
+    const go = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      err.textContent = '';
+      go.disabled = true;
+      try { await api('POST', '/api/bridge/phone', { phone: ph.value }); codeStep(); } catch (e) { err.textContent = e.status === 0 ? t('net.offline') : errText(e.code); go.disabled = false; }
+    } }, t('br.send_code'));
+    ph.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); });
+    win.setBody(h('h4', null, t('br.phone_title')), h('p', null, t('br.phone_hint')), ph, err, go, h('button', { class: 'btn link', type: 'button', onclick: () => draw() }, t('common.cancel')));
+    setTimeout(() => ph.focus(), 50);
+  }
+
+  function codeStep() {
+    const cd = h('input', { class: 'input', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 12, placeholder: t('br.code_ph'), 'aria-label': t('br.code_ph') });
+    const err = h('div', { class: 'err', role: 'alert' });
+    const go = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      err.textContent = '';
+      go.disabled = true;
+      try {
+        const r = await api('POST', '/api/bridge/code', { code: cd.value });
+        if (r.status === 'password') { passwordStep(); return; }
+        toast(t('br.linked')); draw(); setTimeout(() => { if (alive && win.el.querySelector('.br-account') && !win.el.querySelector('.br-pick')) draw(); }, 6000);
+      } catch (e) { err.textContent = e.status === 0 ? t('net.offline') : errText(e.code); go.disabled = false; cd.select(); }
+    } }, t('br.code_ok'));
+    cd.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); });
+    win.setBody(h('p', null, t('br.code_hint')), cd, err, go, h('button', { class: 'btn link', type: 'button', onclick: () => phoneStep() }, t('common.cancel')));
+    setTimeout(() => cd.focus(), 50);
   }
 
   function passwordStep() {
