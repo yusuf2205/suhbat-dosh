@@ -273,8 +273,9 @@ export function verifyBackup(name) {
       if (pass && !pass.error && pass.started) {
         const have = new Set(fs.readdirSync(dest));
         const limit = pass.started - 60_000;
+        const skip = copyExcluded();
         out.files_missing = t.prepare('SELECT id FROM files').all().filter((r) => {
-          if (have.has(r.id)) return false;
+          if (have.has(r.id) || skip.has(r.id)) return false;
           try { return fs.statSync(path.join(config.filesDir, r.id)).mtimeMs < limit; } catch { return false; }
         }).length;
         if (out.files_missing > 0) out.problems.push(`файлов нет в копии: ${out.files_missing}`);
@@ -352,17 +353,50 @@ function check() {
  * or a broken volume does not take the users' files with it. Only files that are not mirrored yet are copied.
  */
 export const filesMirror = { last: null };
+
+/**
+ * What the second copy keeps: the files of personal chats and groups (not channels), and of those a Telegram copy's video is left out
+ * (it stays in Telegram itself, and it alone is more than half of all the files). Files made here are always kept, as are files that belong
+ * to no message (pictures of profiles and the like). BACKUP_FILES_SCOPE=all copies everything, as before.
+ */
+const TYPE_OF_CHAT = "CASE WHEN c.imported_from = 'tgbridge' AND tgk.kind = 'user' THEN 'direct' WHEN c.imported_from = 'tgbridge' AND tgk.kind IN ('group', 'channel') THEN tgk.kind ELSE c.type END";
+export function copyExcluded() {
+  if (process.env.BACKUP_FILES_SCOPE === 'all') return new Set();
+  return new Set(q.all(
+    `SELECT f.id FROM files f
+     WHERE EXISTS (SELECT 1 FROM messages m WHERE m.file_id = f.id)
+       AND NOT EXISTS (SELECT 1 FROM messages m JOIN chats c ON c.id = m.chat_id LEFT JOIN tg_chats tgk ON tgk.chat_id = c.id
+                       WHERE m.file_id = f.id AND ${TYPE_OF_CHAT} IN ('direct', 'group') AND NOT (COALESCE(c.imported_from, '') = 'tgbridge' AND m.kind = 'video'))`,
+  ).map((r) => r.id));
+}
+
 async function mirrorFiles() {
   const o = offsite();
   const dest = o.files || path.join(config.backupDir, 'files');
   let copied = 0;
   let bytes = 0;
+  let pruned = 0;
+  let freed = 0;
   const started = now();
   try {
     if (o.configured && !o.found) throw new Error('внешний диск не подключён');
     await fs.promises.mkdir(dest, { recursive: true });
+    const skip = copyExcluded();
+    // what no longer belongs to the copy goes from it first (only while the original is still in place, so a file is never left without any copy),
+    // together with the leftovers of copies that were cut short by a full disk
+    for (const name of await fs.promises.readdir(dest)) {
+      const at = path.join(dest, name);
+      try {
+        if (name.endsWith('.part')) { if (Date.now() - (await fs.promises.stat(at)).mtimeMs > 3600_000) await fs.promises.rm(at, { force: true }); continue; }
+        if (skip.has(name) && fs.existsSync(path.join(config.filesDir, name))) {
+          const size = (await fs.promises.stat(at)).size;
+          await fs.promises.rm(at, { force: true });
+          pruned += 1; freed += size;
+        }
+      } catch { /* gone already */ }
+    }
     for (const ent of await fs.promises.readdir(config.filesDir, { withFileTypes: true })) {
-      if (!ent.isFile()) continue;
+      if (!ent.isFile() || skip.has(ent.name)) continue;
       const src = path.join(config.filesDir, ent.name);
       const to = path.join(dest, ent.name);
       // a file can be deleted while the pass is running (a message removed, the disk freed): that is not a failure of the copy, the file is just skipped
@@ -379,10 +413,10 @@ async function mirrorFiles() {
         throw e;
       }
     }
-    filesMirror.last = { at: now(), started, copied, bytes, error: null };
-    if (copied) log('info', 'files mirrored', { copied, bytes });
+    filesMirror.last = { at: now(), started, copied, bytes, pruned, freed, error: null };
+    if (copied || pruned) log('info', 'files mirrored', { copied, bytes, pruned, freed });
   } catch (e) {
-    filesMirror.last = { at: now(), copied, bytes, error: String(e.message).slice(0, 120) };
+    filesMirror.last = { at: now(), copied, bytes, pruned, freed, error: String(e.message).slice(0, 120) };
     log('error', 'files mirror failed', { err: e.message });
   }
 }
