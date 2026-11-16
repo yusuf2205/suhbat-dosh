@@ -312,7 +312,6 @@ let lastDiskAlert = 0;
 let lastErrAlert = 0;
 let lastBackupAlert = 0;
 let lastBackupLook = 0;
-let lastMirrorAlert = 0;
 
 function check() {
   const s = sample();
@@ -331,11 +330,7 @@ function check() {
         lastBackupAlert = now();
         alert(newest ? `⚠️ Копия базы не делалась уже ${Math.round((now() - newest.created_at) / 3600_000)} ч (должна каждые ${config.backupHours} ч). Проверьте диск для копий.` : '⚠️ Копий базы нет совсем. Проверьте диск для копий.');
       }
-      const err = filesMirror.last?.error;
-      if (err && now() - lastMirrorAlert > 12 * 3600_000) {
-        lastMirrorAlert = now();
-        alert(`⚠️ Вторая копия файлов не пишется: ${err}.`);
-      }
+      // a failure of the second copy is not sent to the chat (it is noise: most often a file that vanished mid-pass); it stays in the log and in the status of the copies
     } catch { /* the folder is busy: next time */ }
   }
   const recentErr = samples.slice(-10).reduce((a, x) => a + x.err, 0);
