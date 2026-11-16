@@ -25,7 +25,7 @@ async function embed(texts, kind) {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ texts, kind }), signal: AbortSignal.timeout(60_000),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || !Array.isArray(j.vectors)) throw new Error(j.error || `http_${r.status}`);
+  if (!r.ok || !Array.isArray(j.vectors)) throw Object.assign(new Error(j.error || `http_${r.status}`), { answered: true });   // the service answered, it just would not take this text
   return j.vectors.map((v) => Float32Array.from(v));
 }
 
@@ -42,7 +42,31 @@ export async function indexBatch(limit = 48) {
      ORDER BY m.id DESC LIMIT ?`, limit,
   );
   if (!rows.length) return 0;
-  const vecs = await embed(rows.map((r) => r.text.slice(0, 600)), 'passage');
+  // cut by letters, not by halves of a pair: a smiley cut in two is a broken character the model cannot read
+  const texts = rows.map((r) => [...r.text].slice(0, 600).join('').toWellFormed());
+  let vecs;
+  try {
+    vecs = await embed(texts, 'passage');
+  } catch (e) {
+    if (!e.answered || rows.length === 1) {
+      if (e.answered) { q.run('INSERT OR REPLACE INTO embeddings (message_id, vec) VALUES (?,?)', rows[0].id, Buffer.alloc(0)); log('warn', 'embedding skipped for a message', { id: rows[0].id }); return 1; }
+      throw e;   // the service is away: try again later
+    }
+    // one text it will not take must not hold the whole queue back: one by one, a bad one gets an empty mark and is not tried again
+    let done = 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      try {
+        const [v] = await embed([texts[i]], 'passage');
+        q.run('INSERT OR REPLACE INTO embeddings (message_id, vec) VALUES (?,?)', rows[i].id, toBlob(v));
+      } catch (e2) {
+        if (!e2.answered) throw e2;
+        q.run('INSERT OR REPLACE INTO embeddings (message_id, vec) VALUES (?,?)', rows[i].id, Buffer.alloc(0));
+        log('warn', 'embedding skipped for a message', { id: rows[i].id });
+      }
+      done += 1;
+    }
+    return done;
+  }
   for (let i = 0; i < rows.length; i += 1) q.run('INSERT OR REPLACE INTO embeddings (message_id, vec) VALUES (?,?)', rows[i].id, toBlob(vecs[i]));
   return rows.length;
 }

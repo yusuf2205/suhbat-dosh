@@ -168,7 +168,13 @@ test('search by meaning: messages are indexed by the embedding service and found
     if (req.url === '/health') { res.end('{"ok":true}'); return; }
     let body = '';
     req.on('data', (c) => { body += c; });
-    req.on('end', () => { const j = JSON.parse(body); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ vectors: j.texts.map((t) => vec(t.replace(/^(query|passage): /, ''))), dim })); });
+    req.on('end', () => {
+      const j = JSON.parse(body);
+      res.setHeader('content-type', 'application/json');
+      // like the real model: a text with half of a smiley (a broken character) is refused, and so is anything marked as bad here
+      if (j.texts.some((t) => !t.isWellFormed() || t.includes('ПЛОХОЙ-ТЕКСТ'))) { res.statusCode = 500; res.end(JSON.stringify({ error: 'TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]' })); return; }
+      res.end(JSON.stringify({ vectors: j.texts.map((t) => vec(t.replace(/^(query|passage): /, ''))), dim }));
+    });
   });
   await new Promise((r) => stub.listen(0, '127.0.0.1', r));
   const port2 = PORT + 7;
@@ -198,14 +204,17 @@ test('search by meaning: messages are indexed by the embedding service and found
     await call2(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'договор с поставщиком подписан вчера вечером' });
     await call2(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'купить молоко хлеб и яйца в магазине' });
     await call2(a.cookie, 'POST', `/api/chats/${secretChat.id}/messages`, { text: 'договор с поставщиком для другого человека' });
+    // a text the model refuses, and a text cut in the middle of a smiley: neither may stop the others from being indexed
+    await call2(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: 'ПЛОХОЙ-ТЕКСТ который модель не принимает никогда' });
+    await call2(a.cookie, 'POST', `/api/chats/${chat.id}/messages`, { text: `${'б'.repeat(599)}\u{1F600} хвост сообщения после смайлика` });
     let status;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       status = (await call2(b.cookie, 'GET', '/api/search/semantic/status')).data;
-      if (status.done >= 2) break;
+      if (status.done >= 4) break;
       await new Promise((r) => setTimeout(r, 200));
     }
     assert.equal(status.ready, true);
-    assert.equal(status.done, 2, 'Boris sees the two messages of his own chat indexed');
+    assert.equal(status.done, 4, 'Boris sees all the four messages of his own chat dealt with, none holds the queue back');
     const r = await call2(b.cookie, 'GET', `/api/search/semantic?q=${encodeURIComponent('подписан договор поставщиком')}`);
     assert.equal(r.status, 200);
     assert.equal(r.data.results[0].message.text, 'договор с поставщиком подписан вчера вечером');
