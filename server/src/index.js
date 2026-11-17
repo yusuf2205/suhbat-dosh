@@ -148,7 +148,7 @@ const ofThisBuild = (req) => req?.query?.v === BUILD_ID;
 const sendVersioned = (res, file, type, kind, req) => { res.type(type).setHeader('Cache-Control', ofThisBuild(req) ? IMMUTABLE : NO_CACHE); res.send(versioned(file, kind)); };
 const page = (name) => (_req, res) => sendVersioned(res, path.join(webDir, name), 'text/html; charset=utf-8', 'html');
 app.get(['/', '/index.html'], page('index.html'));
-app.get('/admin', page('admin.html'));
+app.get(['/admin', '/admin.html'], page('admin.html'));
 app.get('/download', page('download.html'));
 app.get('/s/:token', page('share.html'));
 app.use(publicPage); // public channel pages and the sitemap
