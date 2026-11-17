@@ -607,7 +607,10 @@ async def upgrade_round(a: Acct) -> str:
     done = 0
     for chat, its in by_chat.items():
         try:
-            msgs = await a.client.get_messages(int(chat), ids=[i["tg_msg"] for i in its])
+            msgs = await asyncio.wait_for(a.client.get_messages(int(chat), ids=[i["tg_msg"] for i in its]), 120)
+        except asyncio.TimeoutError:
+            log("media upgrade: account", a.uid, "chat", chat, "did not answer in 120 s")
+            continue
         except ValueError:   # a chat this account cannot open by its id (an old chat that is not among its dialogs)
             msgs = await peerless_messages(a, chat, [i["tg_msg"] for i in its])
             if msgs is None:   # really out of reach: not asked about again until the next start
@@ -640,6 +643,8 @@ async def upgrade_round(a: Acct) -> str:
                 })
             return it, "media", res
 
+        if not any(m is not None for m in msgs):
+            log("media upgrade: account", a.uid, "chat", chat, "- none of", len(its), "messages found")
         results = await asyncio.gather(*[one(it, m) for it, m in sorted(zip(its, msgs), key=lambda p: size_of(p[1]))], return_exceptions=True)
         stop = None
         for r in results:
@@ -691,15 +696,22 @@ async def flush_skips(a: Acct, skips: dict):
 async def upgrade_loop(a: Acct):
     await asyncio.sleep(UPGRADE_DELAY)
     warm = False
+    rounds = 0
     while a.client is not None and a.me:
         if a.backfill["state"] in ("running", "queued"):
             await asyncio.sleep(30)
             continue
         try:
             if not warm:
+                log("media upgrade: account", a.uid, "reads its dialogs")
                 await a.client.get_dialogs(limit=BACKFILL_DIALOGS)   # the account's chats become known to the library again after a restart
                 warm = True
+                log("media upgrade: account", a.uid, "dialogs read")
+            t0 = time.time()
             res = await upgrade_round(a)
+            rounds += 1
+            if rounds <= 3 or rounds % 50 == 0 or time.time() - t0 > 60:
+                log("media upgrade: account", a.uid, "round", rounds, "->", res, "in", round(time.time() - t0, 1), "s, added so far", a.up_done)
         except asyncio.CancelledError:
             raise
         except Exception as e:
