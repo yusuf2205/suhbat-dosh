@@ -700,9 +700,14 @@ bridgeIn.get('/bridge/pending', (req, res) => {
   const where = `c.user_id = ? ${unreachable.length ? `AND c.tg_chat NOT IN (${unreachable.map(() => '?').join(',')})` : ''} AND m.kind = 'text' AND m.file_id IS NULL AND m.tg_deleted = 0 AND m.import_key LIKE 'tg:%' AND (${marks.map(() => 'm.text LIKE ?').join(' OR ')})
     AND m.id NOT IN (SELECT message_id FROM tg_media_skip)`;
   const args = [uid, ...unreachable, ...marks.map((m) => `${m}%`)];
-  // newest first (an ordering by anything else makes the database look at every waiting message on each call)
-  const items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE ${where} ORDER BY m.id DESC LIMIT ?`, ...args, limit)
-    .map((r) => ({ id: r.id, tg_chat: r.tg_chat, tg_msg: Number(String(r.import_key).split(':').pop()) })).filter((r) => Number.isInteger(r.tg_msg));
+  // personal chats first, then groups, channels last; within a kind the newest first (an ordering by an expression makes the database look at every
+  // waiting message on each call, so each kind is asked for on its own and the next one only when the one before has nothing waiting)
+  let items = [];
+  for (const kind of ['user', 'group', 'channel']) {
+    items = q.all(`SELECT m.id, c.tg_chat, m.import_key FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.kind = ? AND ${where} ORDER BY m.id DESC LIMIT ?`, kind, ...args, limit)
+      .map((r) => ({ id: r.id, tg_chat: r.tg_chat, tg_msg: Number(String(r.import_key).split(':').pop()) })).filter((r) => Number.isInteger(r.tg_msg));
+    if (items.length) break;
+  }
   // how many are left only tells the log how far it is: counting them all is slow with hundreds of thousands waiting, so once in a minute is enough
   const ck = JSON.stringify(args);
   const hit = LEFT_CACHE.get(ck);

@@ -141,7 +141,11 @@ function versioned(file, kind) {
   }
   return out;
 }
-const sendVersioned = (res, file, type, kind) => { res.type(type).setHeader('Cache-Control', NO_CACHE); res.send(versioned(file, kind)); };
+// a file asked for with this build's id in its address can never change under that address: kept for a year (the pages themselves are always
+// revalidated and carry the current id), which saves a round trip through the tunnel for every module on each visit
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+const ofThisBuild = (req) => req?.query?.v === BUILD_ID;
+const sendVersioned = (res, file, type, kind, req) => { res.type(type).setHeader('Cache-Control', ofThisBuild(req) ? IMMUTABLE : NO_CACHE); res.send(versioned(file, kind)); };
 const page = (name) => (_req, res) => sendVersioned(res, path.join(webDir, name), 'text/html; charset=utf-8', 'html');
 app.get(['/', '/index.html'], page('index.html'));
 app.get('/admin', page('admin.html'));
@@ -154,7 +158,7 @@ const moduleRoute = (dir) => (req, res, next) => {
   const f = path.basename(req.params.f || '');
   const file = path.join(dir, f);
   if (!f.endsWith('.js') || !fs.existsSync(file)) return next();
-  return sendVersioned(res, file, 'application/javascript; charset=utf-8', 'js');
+  return sendVersioned(res, file, 'application/javascript; charset=utf-8', 'js', req);
 };
 app.get('/js/:f', moduleRoute(path.join(webDir, 'js')));
 // every module of this build, so the service worker can keep the whole app for offline starts (not only the entry script)
@@ -183,9 +187,10 @@ app.use('/shared', express.static(sharedDir, { maxAge: 0, setHeaders: (res) => r
 const STABLE = /(\/js\/vendor\/|\.(png|ico|svg|woff2?|jpg|webp|tgs)$)/i;
 app.use(express.static(webDir, {
   maxAge: 0, etag: true, index: 'index.html',
-  setHeaders: (res, file) => res.setHeader('Cache-Control', STABLE.test(file.replaceAll('\\', '/'))
-    ? 'public, max-age=86400, stale-while-revalidate=604800'
-    : 'private, no-cache, max-age=0, must-revalidate'),
+  setHeaders: (res, file) => res.setHeader('Cache-Control', file.endsWith('.css') && ofThisBuild(res.req) ? IMMUTABLE
+    : STABLE.test(file.replaceAll('\\', '/'))
+      ? 'public, max-age=86400, stale-while-revalidate=604800'
+      : 'private, no-cache, max-age=0, must-revalidate'),
 }));
 
 // eslint-disable-next-line no-unused-vars

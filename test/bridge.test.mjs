@@ -683,3 +683,20 @@ test('a person with one phone links by the phone number and the code from the Te
   // already linked: no second login
   assert.equal((await call(a.cookie, 'POST', '/api/bridge/phone', { phone: '+998901112233' })).status, 409);
 });
+
+test('files that are still marks are asked for personal chats first, then groups, channels last', async () => {
+  const u = await phoneUser('+998900002107', 'Порядок');
+  await link(u);
+  const post = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, author: 'А', ...body }) }).then((r) => r.json());
+  // the newest mark is in a channel, then a group, the oldest in a personal chat (a group and a channel must be chosen first)
+  assert.equal((await call(u.cookie, 'PUT', '/api/bridge/chats', { chats: [{ id: -8102, title: 'Группа', kind: 'group', two_way: false }, { id: -1008103, title: 'Канал', kind: 'channel', two_way: false }] })).status, 200);
+  assert.ok((await post({ tg_chat: '8101', kind: 'user', title: 'Личный', tg_msg: 1, text: '[Фото]' })).id);
+  assert.ok((await post({ tg_chat: '-8102', kind: 'group', title: 'Группа', tg_msg: 1, text: '[Фото]' })).id);
+  assert.ok((await post({ tg_chat: '-1008103', kind: 'channel', title: 'Канал', tg_msg: 1, text: '[Фото]' })).id);
+  const ask = async () => (await (await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=photo`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json()).items.map((i) => i.tg_chat);
+  assert.deepEqual(await ask(), ['8101'], 'the personal chat comes first although it is the oldest');
+  // when the personal one is done (here: said to be unreachable), the group follows, the channel only after it
+  const askSkip = async (skip) => (await (await fetch(`${BASE}/api/bridge/pending?owner=${u.user.id}&kinds=photo&skip_chats=${skip}`, { headers: { Authorization: `Bearer ${TOKEN}` } })).json()).items.map((i) => i.tg_chat);
+  assert.deepEqual(await askSkip('8101'), ['-8102']);
+  assert.deepEqual(await askSkip('8101,-8102'), ['-1008103']);
+});
