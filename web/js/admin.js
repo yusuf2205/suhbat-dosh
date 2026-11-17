@@ -858,6 +858,24 @@ function player(media) {
   return h('div', { class: 'abub-player' }, media);
 }
 
+// Videos are loaded, and the short looping ones (stickers, GIFs) are played, only while they are near the screen: a conversation with hundreds of them
+// must not start hundreds of downloads and decoders at once (this was what made the page freeze).
+const nearScreen = typeof IntersectionObserver === 'function' ? new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    const v = e.target;
+    if (v.classList.contains('abub-motion')) {
+      if (e.isIntersecting) { const p = v.play?.(); if (p?.catch) p.catch(() => { /* the browser wants a touch first */ }); } else v.pause?.();
+    } else if (e.isIntersecting) {
+      if (v.preload === 'none' && v.paused && !v.currentTime && v.readyState === 0) { v.preload = 'metadata'; try { v.load(); } catch { /* it loads when played */ } }
+      nearScreen.unobserve(v);
+    }
+  }
+}, { rootMargin: '400px 0px' }) : null;
+function lazyVideo(v) {
+  if (nearScreen) { v.preload = 'none'; nearScreen.observe(v); }
+  return v;
+}
+
 // ---------------------------------------------------------------- the one player of the console
 // A voice message or a piece of music is drawn the way Telegram draws it (a round button, a waveform that fills as it plays, the time) and is played by
 // ONE sound object that lives outside of any page: going to another conversation, another section or reloading the list does not stop it.
@@ -1077,8 +1095,8 @@ function messageNode(m, ctx, prev) {
     m.kind === 'call' ? h('div', { class: 'abub-text' }, `📞 Звонок: ${m.text.replace(':video', ' (видео)')}${m.duration ? `, ${m.duration} с` : ''}`) : '',
     m.file && m.kind === 'image' ? h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, h('img', { class: `abub-img${isSticker(m.file) ? ' abub-sticker' : ''}`, src: `/api/admin/files/${m.file.id}`, alt: '', loading: 'lazy' })) : '',
     m.file && (m.kind === 'voice' || m.kind === 'audio') ? voiceBubble(m) : '',
-    m.file && m.kind === 'video' && isMotion(m.file) ? h('video', { class: 'abub-vid abub-motion', autoplay: true, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` }) : '',
-    m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
+    m.file && m.kind === 'video' && isMotion(m.file) ? lazyVideo(h('video', { class: 'abub-vid abub-motion', autoplay: !nearScreen, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` })) : '',
+    m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(lazyVideo(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }))), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
     m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener', onclick: (e) => { if (!canOpenNative()) return; e.preventDefault(); openNative({ url: `/api/admin/files/${m.file.id}`, name: m.file.name, mime: m.file.mime, id: m.file.id }).then((ok) => { if (!ok) window.open(`/api/admin/files/${m.file.id}`, '_blank', 'noopener'); }); } }, m.file.name), ` (${fmtBytes(m.file.size)}) `, h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}?download=1`, download: m.file.name, title: 'Скачать файл' }, '⬇ скачать')) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
     m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',
@@ -1237,13 +1255,14 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   };
   const draw = () => {
     keepVideos();   // a video that plays must not be taken out of the page with the rest
+    nearScreen?.disconnect();   // the ones of the page that is replaced are no longer watched
     clear(list);
     const gallery = ['media', 'photo', 'video', 'gif'].includes(f.kind);
     list.classList.toggle('agal', gallery);
     if (!all.length) list.append(h('p', { class: 'muted' }, f.kind === 'marked' ? 'Помеченных сообщений нет. Откройте меню ⋯ у сообщения и выберите «Пометить».' : 'Ничего не найдено'));
     if (gallery) {
       list.append(...all.filter((m) => m.file).map((m) => h('div', { class: 'agal-item abub', dataset: { id: String(m.id) } },
-        m.kind === 'image' || /\.gif$/i.test(m.file.name || '') ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` })),
+        m.kind === 'image' || /\.gif$/i.test(m.file.name || '') ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(lazyVideo(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }))),
         h('div', { class: 'abub-time' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`, h('button', { class: 'abub-more', type: 'button', 'aria-label': 'Действия с сообщением' }, '⋯')))));
       return;
     }
@@ -1273,23 +1292,32 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
   // like a messenger: the conversation opens on its newest message; going back keeps the message being read where it is
   let stick = true;
+  let scCache = null;
   const scroller = () => {
+    if (scCache && Date.now() - scCache.at < 1000 && scCache.el.isConnected) return scCache.el;   // asked on every scroll event: not worked out each time
+    let found = document.scrollingElement;
     for (let p = list.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {   // the body's own overflow belongs to the viewport
       const o = getComputedStyle(p).overflowY;
-      if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+      if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) { found = p; break; }
     }
-    return document.scrollingElement;
+    scCache = { el: found, at: Date.now() };
+    return found;
   };
   const toEnd = () => { list.lastElementChild?.scrollIntoView({ block: 'end' }); };
   // the place being read: the first message on screen and how far from the top of the screen it is
   let anchor = null;
   const bubbleOf = (mid) => list.querySelector(`.abub[data-id="${mid}"]`);
   const takeAnchor = () => {
-    for (const el of list.querySelectorAll('.abub')) {
-      const r = el.getBoundingClientRect();
-      if (r.bottom > 60) return { id: el.dataset.id, top: r.top };
+    // the first message that is on screen: a search among thousands, not a measuring of each
+    const els = list.querySelectorAll('.abub');
+    let lo = 0;
+    let hi = els.length - 1;
+    let at = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (els[mid].getBoundingClientRect().bottom > 60) { at = mid; hi = mid - 1; } else lo = mid + 1;
     }
-    return null;
+    return at < 0 ? null : { id: els[at].dataset.id, top: els[at].getBoundingClientRect().top };
   };
   const holdAnchor = () => {
     if (!anchor) return;
@@ -1306,9 +1334,23 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       const r = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100, before: all[0]?.id })}`);
       stick = false;
       anchor = takeAnchor();
-      all.unshift(...r.messages);
+      const lead = all.length ? bubbleOf(all[0].id) : null;
+      if (list.classList.contains('agal') || !r.messages.length || !lead) { all.unshift(...r.messages); draw(); } else {
+        // the older part goes in front of what is already there: nothing that is on the page is built again (pictures do not reload, nothing flickers)
+        const head = lead.previousElementSibling?.classList.contains('aday') ? lead.previousElementSibling : null;
+        const nodes = [];
+        r.messages.forEach((m, i) => nodes.push(...messageNode(m, ctx, r.messages[i - 1])));
+        // the message that was the first one has a neighbour before it now: its day heading and its "same author" look may change, so it is made again
+        nodes.push(...messageNode(all[0], ctx, r.messages.at(-1)));
+        const frag = document.createDocumentFragment();
+        frag.append(...nodes);
+        list.insertBefore(frag, head || lead);
+        head?.remove();
+        lead.remove();
+        all.unshift(...r.messages);
+        paintPlayer();
+      }
       more = r.has_more; moreBtn.hidden = !more;
-      draw();
       holdAnchor();
       // the pictures above arrive later and push everything down: keep the same message in place until the user moves on
       clearTimeout(loadEarlier.t);
@@ -1316,7 +1358,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     } finally { loading = false; }
   };
   moreBtn.onclick = loadEarlier;
-  list.addEventListener('load', () => { if (stick) toEnd(); else holdAnchor(); }, true);   // pictures change the height as they arrive
+  list.addEventListener('load', () => { if (stick && Date.now() - lastScrollAt > 800) toEnd(); else if (!stick) holdAnchor(); }, true);   // pictures change the height as they arrive
   let ready = false;   // the page settles on the newest message first; its own scrolling must not count as the user's
   setTimeout(() => { ready = true; }, 900);
   let lastScrollAt = 0;

@@ -250,7 +250,7 @@ export function openSettings() {
         group(
           row('sliders', t('st.advanced'), { onclick: () => go(pages.advanced) }),
           row('globe', t('settings.language'), { value: LANGS[getLang()], onclick: () => go(pages.language) })),
-        S.me.is_admin ? group(row('shield', t('st.admin'), { onclick: () => window.open('/admin', 'suhbat-admin') })) : null,
+        S.me.is_admin ? group(row('shield', t('st.admin'), { onclick: () => { location.assign('/admin'); } })) : null,
         group(row('logout', t('settings.logout'), { danger: true, onclick: logout })),
       ];
       return {

@@ -625,3 +625,29 @@ test('messenger: passing a message on to a group with topics asks which topic, l
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
+
+test('admin: older messages are put in front of the page; the ones already there are not built again and the place being read stays', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    const made = await call(seed.madina, 'POST', '/api/chats', { type: 'group', title: 'Длинная переписка', members: [] });
+    const chat = (await call(seed.madina, 'GET', '/api/chats')).data.chats.find((c) => c.title === 'Длинная переписка')?.id;
+    assert.ok(chat, `the long conversation exists (${made.status})`);
+    for (let i = 1; i <= 230; i++) {
+      const r = await call(seed.madina, 'POST', `/api/chats/${chat}/messages`, { text: `сообщение ${i}` });
+      if (r.status >= 300) { await new Promise((x) => setTimeout(x, 50)); i--; }
+    }
+    await open(`/admin.html#/chat/${chat}`);
+    await page.waitForSelector('.abub');
+    const before = await page.$$eval('.abub', (b) => b.length);
+    assert.ok(before >= 50 && before <= 120, `the newest part first (${before})`);
+    await page.evaluate(() => { document.querySelectorAll('.abub').forEach((e, i) => { e.__same = i; }); });
+    await page.click('button:has-text("Загрузить более ранние")');
+    await page.waitForFunction((n) => document.querySelectorAll('.abub').length > n, before);
+    const kept = await page.$$eval('.abub', (b) => b.filter((e) => e.__same !== undefined).length);
+    assert.ok(kept >= before - 1, `the bubbles that were there are the same elements (${kept} of ${before})`);
+    const ids = await page.$$eval('.abub', (b) => b.map((e) => Number(e.dataset.id)));
+    assert.deepEqual(ids, [...ids].sort((x, y) => x - y), 'in order');
+    assert.equal(new Set(ids).size, ids.length, 'no message twice');
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});
