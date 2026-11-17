@@ -1,2 +1,0 @@
-[     722ms] [ERROR] Loading the script 'https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092' violates the following Content Security Policy directive: "script-src 'self' 'wasm-unsafe-eval'". Note that 'script-src-elem' was not explicitly set, so 'script-src' is used as a fallback. The action has been blocked. @ https://suhbat-dosh.uz/admin.html:1
-[    1938ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://suhbat-dosh.uz/api/me:1
