@@ -651,3 +651,16 @@ test('admin: older messages are put in front of the page; the ones already there
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
+
+test('admin: a script of somebody else that fails to load (the statistics script of the tunnel) does not make the page reload again and again', { skip: !canRun }, async () => {
+  const { ctx, page, open } = await phonePage(seed.admin);
+  try {
+    let loads = 0;
+    page.on('load', () => { loads += 1; });
+    await open('/admin.html#/overview');
+    await page.waitForSelector('.adm-side, .abub, #admin-root > *');
+    await page.evaluate(() => { const s = document.createElement('script'); s.src = 'https://static.example.invalid/beacon.min.js'; document.head.append(s); });
+    await page.waitForTimeout(1500);
+    assert.equal(loads, 1, 'the page was loaded once and stayed');
+  } finally { await ctx.close(); }
+});
