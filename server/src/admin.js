@@ -308,8 +308,18 @@ admin.get('/chats/:id', (req, res) => {
     `SELECT u.id, u.name, u.username, u.phone, m.role, m.banned, m.can_send, m.joined_at
      FROM members m JOIN users u ON u.id = m.user_id WHERE m.chat_id = ? ORDER BY m.joined_at`, id,
   );
-  const tgk = c.imported_from === 'tgbridge' ? q.get('SELECT kind FROM tg_chats WHERE chat_id = ? LIMIT 1', id)?.kind : null;
-  res.json({ chat: { id: c.id, type: kindOfCopy({ ...c, tg_kind: tgk }), title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '' }, members });
+  const tg = c.imported_from === 'tgbridge' ? q.get('SELECT user_id, kind, tg_username, tg_phone FROM tg_chats WHERE chat_id = ? LIMIT 1', id) : null;
+  const tgk = tg?.kind || null;
+  // how to reach the people of a copied Telegram chat: the other side as Telegram told it (phone, @nickname), the owner of the account as it is here
+  const contact = (phone, username) => {
+    const ph = String(phone || '').replace(/[^\d]/g, '');
+    const un = String(username || '').replace(/^@/, '');
+    return { phone: ph.length >= 5 ? `+${ph}` : '', username: un };
+  };
+  const owner = tg ? getUser(tg.user_id) : null;
+  const peer = tg ? contact(tg.tg_phone, tg.tg_username) : null;
+  const mine = owner ? contact(owner.phone?.startsWith('email:') || owner.phone?.startsWith('login:') ? '' : owner.phone, owner.username) : null;
+  res.json({ chat: { id: c.id, type: kindOfCopy({ ...c, tg_kind: tgk }), title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '', peer, owner_contact: mine }, members });
 });
 
 // Filters of the admin's conversation view: text, kind, author, dates. Shared by the page and the export.

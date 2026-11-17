@@ -1577,10 +1577,18 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const chatName = c.title || state.chats.get(id)?.title || `Чат #${id}`;
   // who is being read stays on top while reading: which side is whose in a personal chat, the name and the people in a group
   const person = (uid, name) => (uid ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openUser(Number(uid)); } }, name || uname(uid)) : h('b', null, name));
+  // how to reach a person: the phone number if there is one, else the @nickname (in Telegram or here)
+  const reach = (p) => {
+    const t = p?.phone ? (/^\+?\d/.test(p.phone) ? p.phone : '') : '';
+    const text = t || (p?.username ? `@${String(p.username).replace(/^@/, '')}` : '');
+    return text ? h('small', { class: 'acw-contact', title: 'Телефон или ник' }, text) : null;
+  };
+  const withReach = (who, p) => h('span', { class: 'acw-who' }, who, reach(p));
   const directSides = () => {
-    if (ctx.imported) return { right: person(null, c.import_me || 'Владелец'), left: person(null, c.title || 'Собеседник') };
+    if (ctx.imported) return { right: withReach(person(null, c.import_me || 'Владелец'), info.chat.owner_contact), left: withReach(person(null, c.title || 'Собеседник'), info.chat.peer) };
+    const me = info.members.find((x) => x.id === ctx.me);
     const other = info.members.find((x) => x.id !== ctx.me);
-    return { right: person(ctx.me, info.members.find((x) => x.id === ctx.me)?.name), left: person(other?.id, other?.name || '—') };
+    return { right: withReach(person(ctx.me, me?.name), me), left: withReach(person(other?.id, other?.name || '—'), other) };
   };
   barFind = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по всему чату', 'aria-label': 'Поиск по всему чату', autocomplete: 'off',
     oninput: (e) => { search.value = e.target.value; f.q = e.target.value.trim(); paintTools(); later(); },

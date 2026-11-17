@@ -664,3 +664,14 @@ test('admin: a script of somebody else that fails to load (the statistics script
     assert.equal(loads, 1, 'the page was loaded once and stayed');
   } finally { await ctx.close(); }
 });
+
+test('admin: the bar of a personal conversation shows how to reach each side (the phone number, else the nickname)', { skip: !canRun }, async () => {
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.achat-who .acw-contact');
+    const lines = await page.$$eval('.achat-who .acw-contact', (e) => e.map((x) => x.textContent));
+    assert.ok(lines.length >= 1 && lines.every((t) => /^(\+\d{6,}|@\w+)$/.test(t)), `a phone or a nickname under the name (${lines})`);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});

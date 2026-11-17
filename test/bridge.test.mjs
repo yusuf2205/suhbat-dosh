@@ -280,6 +280,11 @@ test('the chat takes the other side\'s name, @username, phone and profile photo 
   let chat = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => c.title === '✈ Новое имя');
   assert.ok(chat, 'the name followed');
   assert.deepEqual(chat.tg, { username: 'dilshod', phone: '998901234567' });
+  // the console shows how to reach both sides of the copied chat: the phone of the other side as Telegram told it, and the account's owner here
+  const adm = await phoneUser('+998900002001', 'Админ');
+  const seen = (await call(adm.cookie, 'GET', `/api/admin/chats/${chat.id}`)).data.chat;
+  assert.deepEqual(seen.peer, { phone: '+998901234567', username: 'dilshod' });
+  assert.equal(seen.owner_contact.phone, u.user.phone);
   assert.equal(chat.avatar, null);
   assert.equal((await profile({})).changed, false, 'nothing new, nothing changed');
 

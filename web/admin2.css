@@ -143,6 +143,8 @@
 .acw-side { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acw-side.right { text-align: right; }
 .acw-side a, .acw-side b { display: block; overflow: hidden; text-overflow: ellipsis; }
+.acw-who { display: block; min-width: 0; }
+.achat-who small.acw-contact { margin-top: 1px; font-size: .74rem; color: rgba(255, 255, 255, .78); font-weight: 500; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .acw-and { opacity: .6; flex: none; }
 .achat-who .chip { flex: none; background: rgba(255, 255, 255, .12); border-color: transparent; color: #fff; }
 .achat-who .chip:hover { background: rgba(255, 255, 255, .22); }
