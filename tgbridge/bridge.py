@@ -519,6 +519,7 @@ async def post_media_r(a: Acct, kind: str, src, meta: dict) -> str:
                 return "full"
             if r.status in (400, 413, 415):
                 return "skip:" + {400: "bad", 413: "too_big", 415: "type"}[r.status]
+            log("media upload refused: status", r.status, "kind", kind)
             return "retry"
     except Exception as e:
         log("media upload failed:", type(e).__name__)
@@ -660,6 +661,7 @@ async def upgrade_round(a: Acct) -> str:
                 if res:
                     done += 1
                 else:
+                    log("media upgrade: account", a.uid, "chat", chat, "- the place was not taken, round stops")
                     stop = stop or "down"
             elif res == "ok":
                 done += 1
@@ -669,6 +671,8 @@ async def upgrade_round(a: Acct) -> str:
             elif res == "full":
                 stop = "full"
             elif res == "retry":
+                if stop is None:
+                    log("media upgrade: account", a.uid, "chat", chat, "message", it["tg_msg"], "- the server did not take the file, round stops")
                 stop = stop or "down"
             else:   # Telegram would not give this file: three tries, then it is left as a mark
                 a.up_fail[it["id"]] = a.up_fail.get(it["id"], 0) + 1
@@ -693,6 +697,20 @@ async def flush_skips(a: Acct, skips: dict):
     skips.clear()
 
 
+async def warm_dialogs(a: Acct):
+    """The account's chats become known to the library again after a restart (a chat it does not know cannot be opened by its id)."""
+    log("media upgrade: account", a.uid, "reads its dialogs")
+    try:
+        count = 0
+        async for _d in a.client.iter_dialogs(limit=BACKFILL_DIALOGS):
+            count += 1
+            if count % 200 == 0:
+                log("media upgrade: account", a.uid, "dialogs so far", count)
+        log("media upgrade: account", a.uid, "dialogs read:", count)
+    except Exception as e:
+        log("media upgrade: account", a.uid, "dialogs not read:", repr(e)[:100])
+
+
 async def upgrade_loop(a: Acct):
     await asyncio.sleep(UPGRADE_DELAY)
     warm = False
@@ -703,10 +721,8 @@ async def upgrade_loop(a: Acct):
             continue
         try:
             if not warm:
-                log("media upgrade: account", a.uid, "reads its dialogs")
-                await a.client.get_dialogs(limit=BACKFILL_DIALOGS)   # the account's chats become known to the library again after a restart
                 warm = True
-                log("media upgrade: account", a.uid, "dialogs read")
+                asyncio.create_task(warm_dialogs(a))   # in the background: for an account with very many chats it takes long, and the files must not wait for it
             t0 = time.time()
             res = await upgrade_round(a)
             rounds += 1
