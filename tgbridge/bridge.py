@@ -502,6 +502,12 @@ async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False
 async def post_media_r(a: Acct, kind: str, src, meta: dict) -> str:
     """src: the bytes, or the path of a file (streamed, never read into memory at once)."""
     params = {"owner": a.uid, "kind": kind, **{k: ("1" if v is True else "" if v is None or v is False else str(v)) for k, v in meta.items()}}
+    # the details travel in the address and a server refuses a long one (431): a very long caption is cut so that the file itself still comes
+    from urllib.parse import urlencode
+    cap = params.get("caption", "")
+    while cap and len(urlencode(params)) > 7000:
+        cap = cap[: max(0, int(len(cap) * 0.7) - 1)]
+        params["caption"] = cap
     f = None
     try:
         if isinstance(src, (bytes, bytearray)):
