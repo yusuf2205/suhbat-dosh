@@ -903,9 +903,11 @@ AUD.preload = 'auto';
 const PL = { item: null, queue: [], list: null, whoWhen: null, bar: null, src: '', ui: null };
 const PL_SEL = '.avm, video.abub-vid:not(.abub-motion)';
 const sameItem = (a, b) => !!a && !!b && a.fid === b.fid;
+// "who" (the author and the time) is worked out only when it is shown: working it out for every message of a long conversation each time the list
+// of the player is taken searched all the messages once for each voice message, which froze the page
 const itemOf = (el) => (el.matches('.avm')
-  ? { kind: 'a', fid: el.dataset.fid, src: el.dataset.src, dur: Number(el.dataset.dur) || 0, el, who: PL.whoWhen?.(el) || '' }
-  : { kind: 'v', fid: `v:${el.currentSrc || el.src}`, el, who: PL.whoWhen?.(el) || '' });
+  ? { kind: 'a', fid: el.dataset.fid, src: el.dataset.src, dur: Number(el.dataset.dur) || 0, el, get who() { return PL.whoWhen?.(el) || ''; } }
+  : { kind: 'v', fid: `v:${el.currentSrc || el.src}`, el, get who() { return PL.whoWhen?.(el) || ''; } });
 const listItems = () => (PL.list?.isConnected ? [...PL.list.querySelectorAll(PL_SEL)].map(itemOf) : []);
 const curMedia = () => (PL.item ? (PL.item.kind === 'a' ? AUD : PL.item.el) : null);
 const queueNow = () => {
@@ -948,23 +950,27 @@ function placePlayer() {
 }
 window.addEventListener('resize', () => { if (PL.bar?.isConnected) placePlayer(); });
 
+const lit = new Set();   // the voice messages that are drawn as playing or chosen: only these are touched when the sound moves
+function paintAvm(el, act) {
+  const playing = act && !AUD.paused;
+  el.classList.toggle('act', act);
+  el.classList.toggle('playing', playing);
+  el.querySelector('.avm-play').textContent = playing ? '⏸' : '▶';
+  const total = act && Number.isFinite(AUD.duration) && AUD.duration > 0 ? AUD.duration : Number(el.dataset.dur) || 0;
+  const frac = act && total ? Math.min(1, AUD.currentTime / total) : 0;
+  const bars = el.querySelectorAll('.avm-wave i');
+  const on = Math.round(frac * bars.length);
+  bars.forEach((b, i) => b.classList.toggle('on', i < on));
+  el.querySelector('.avm-wave').setAttribute('aria-valuenow', String(Math.round(frac * 100)));
+  el.querySelector('.avm-time').textContent = act ? `${mmss(AUD.currentTime)} / ${mmss(total)}` : mmss(total);
+}
 function paintPlayer() {
   const u = PL.ui;
   const m = curMedia();
-  for (const el of document.querySelectorAll('.avm')) {
-    const act = PL.item?.kind === 'a' && el.dataset.fid === PL.item.fid;
-    const playing = act && !AUD.paused;
-    el.classList.toggle('act', act);
-    el.classList.toggle('playing', playing);
-    el.querySelector('.avm-play').textContent = playing ? '⏸' : '▶';
-    const total = act && Number.isFinite(AUD.duration) && AUD.duration > 0 ? AUD.duration : Number(el.dataset.dur) || 0;
-    const frac = act && total ? Math.min(1, AUD.currentTime / total) : 0;
-    const bars = el.querySelectorAll('.avm-wave i');
-    const on = Math.round(frac * bars.length);
-    bars.forEach((b, i) => b.classList.toggle('on', i < on));
-    el.querySelector('.avm-wave').setAttribute('aria-valuenow', String(Math.round(frac * 100)));
-    el.querySelector('.avm-time').textContent = act ? `${mmss(AUD.currentTime)} / ${mmss(total)}` : mmss(total);
-  }
+  // this runs several times a second while a sound plays: only the voice messages that were or are the chosen one are redrawn, not every one of the page
+  const now = PL.item?.kind === 'a' ? [...document.querySelectorAll(`.avm[data-fid="${CSS.escape(PL.item.fid)}"]`)] : [];
+  for (const el of [...lit]) if (!now.includes(el)) { if (el.isConnected) paintAvm(el, false); lit.delete(el); }
+  for (const el of now) { paintAvm(el, true); lit.add(el); }
   if (!u || !PL.item || !m) return;
   u.play.textContent = m.paused ? '▶' : '⏸';
   u.time.textContent = mmss(m.currentTime);
