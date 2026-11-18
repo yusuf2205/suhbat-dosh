@@ -442,7 +442,19 @@ table.t.health td { overflow-wrap: anywhere; }
 .acw-find { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 14px; background: var(--ink-2, #26262b); border-color: transparent; color: var(--yel, #fbc700); cursor: pointer; }
 .acw-find[aria-pressed=true] { background: var(--yel, #fbc700); color: #1b1b1f; }
 .achat-find { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 12px; border-radius: 14px; background: var(--ink, #17171a); box-shadow: 0 6px 18px rgba(0, 0, 0, .18); }
+.achat-find { position: relative; flex-wrap: wrap; row-gap: 6px; }
 .achat-find[hidden] { display: none; }
+.achat-count { flex: none; color: rgba(255, 255, 255, .8); font-size: .85rem; white-space: nowrap; }
+.achat-step { flex: none; border: 0; background: rgba(255, 255, 255, .12); color: #fff; width: 32px; height: 32px; border-radius: 10px; cursor: pointer; font-size: .85rem; }
+.achat-step:disabled { opacity: .35; cursor: default; }
+.achat-step[hidden], .achat-count[hidden] { display: none; }
+.achat-find .afilters { margin-top: 0; }
+.achat-find .afilters summary, .achat-find .amenu summary { background: rgba(255, 255, 255, .12); color: #fff; padding: 5px 10px; font-size: .85rem; }
+.achat-find .chip.reset { background: rgba(255, 255, 255, .12); color: #fff; border: 0; }
+/* the filters open under the bar, over the conversation, instead of pushing it down */
+.achat-find .afilters[open] .afilters-body { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 14; margin-top: 0; padding: 12px; border-radius: 14px; background: var(--surface, #fff); color: var(--ink, #17171a); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); max-height: 70vh; overflow: auto; }
+.achat-find .amenu { position: relative; }
+.abub-text mark { background: #ffb000; color: #17171a; }
 .achat-find .as-ico { color: var(--yel, #fbc700); font-size: 1.2rem; }
 .achat-find .as-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #fff; font: inherit; }
 .achat-find .as-input::placeholder { color: rgba(255, 255, 255, .55); }

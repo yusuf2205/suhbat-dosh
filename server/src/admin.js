@@ -407,6 +407,19 @@ admin.get('/chats/:id/messages', (req, res) => {
   res.json(out);
 });
 
+// The places of a word in the conversation, like the search of Telegram: the numbers of the messages that have it, the newest first.
+// The conversation itself is not narrowed; the page jumps from one place to the next.
+admin.get('/chats/:id/hits', (req, res) => {
+  const id = int(req.params.id, 'id');
+  if (!q.get('SELECT 1 AS x FROM chats WHERE id = ?', id)) throw new HttpError(404, 'not_found');
+  const f = chatFilter(id, req.query);
+  if (!String(req.query.q ?? '').trim()) return res.json({ ids: [], total: 0 });
+  audit(req.user.id, 'admin.view_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip, details: { filter: { q: String(req.query.q).slice(0, 100), kind: req.query.kind || undefined, author: req.query.author || undefined } } });
+  const total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
+  const ids = q.all(`SELECT m.id FROM messages m WHERE ${f.where.join(' AND ')} ORDER BY m.created_at DESC, m.id DESC LIMIT 2000`, ...f.params).map((r) => r.id);
+  res.json({ ids, total });
+});
+
 // A message an administrator wants to come back to, with a note. The people in the chat never see it.
 admin.post('/messages/:id/mark', (req, res) => {
   const id = int(req.params.id, 'id');

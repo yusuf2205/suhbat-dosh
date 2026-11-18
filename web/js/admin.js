@@ -1247,7 +1247,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   await loadDirectories(); // a conversation may be opened straight from a link: names come from here
   const f = { q: '', kind: '', author: '', since: '', until: '', meaning: false };
   let jumpMode = !!focus;   // a part of the conversation around a message, or search results: the live feed is off
-  const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([k, v]) => k !== 'meaning' && v !== '' && v !== undefined && v !== null)).toString();
+  const qs = (extra = {}) => new URLSearchParams(Object.entries({ ...f, ...extra }).filter(([k, v]) => k !== 'meaning' && k !== 'q' && v !== '' && v !== undefined && v !== null)).toString();   // the words never narrow the conversation: they are looked for in it
   const first = await Promise.all([get(`/api/admin/chats/${id}`), get(`/api/admin/chats/${id}/messages?${focus ? `around=${focus}` : 'limit=100'}`)]);
   const info = first[0];
   const c0 = info.chat;
@@ -1294,7 +1294,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     list.addEventListener('touchend', (e) => { if (e.touches.length < 2) g0 = 0; }, { passive: true });
   }
   const heading = h('h2');
-  const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${f.q || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
+  const paintHeading = () => { heading.textContent = `Переписка (${hist.total ?? all.length}${(f.meaning && f.q) || f.kind || f.author || f.since || f.until ? ', по фильтру' : ''})`; };
   const moreBtn = h('button', { class: 'btn secondary', type: 'button', hidden: !more }, 'Загрузить более ранние');
   // like a messenger: the conversation opens on its newest message; going back keeps the message being read where it is
   let stick = true;
@@ -1400,7 +1400,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   });
 
   // search and filters
-  const active = () => !!(f.q || f.kind || f.author || f.since || f.until);
+  const active = () => !!((f.meaning && f.q) || f.kind || f.author || f.since || f.until);
   const meaningBtn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', title: 'Искать по смыслу, а не по словам: «деньги» найдёт и «перевод на карту»', onclick: () => { f.meaning = !f.meaning; paintTools(); if (f.q) reload(); } }, '✨ По смыслу');
   const reload = async () => {
     if (f.meaning && f.q.length >= 3) {
@@ -1422,12 +1422,60 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     hist = await get(`/api/admin/chats/${id}/messages?${qs({ limit: 100 })}`);
     all = [...hist.messages];
     more = hist.has_more; moreBtn.hidden = !more;
+    if (!keepFind) { find.ids = []; find.i = -1; find.total = 0; find.done = false; }
     paintHeading(); paintTools(); draw(); stick = true; toEnd();
+    if (f.q && !keepFind) findWord();
+  };
+  let keepFind = false;   // back to the end of the conversation: the places found stay, only the view moves
+  // a word is looked for IN the conversation, like in Telegram: all the messages stay, the word is marked, the arrows go from one place to the next
+  const find = { ids: [], i: -1, total: 0, done: false };
+  let findSeq = 0;
+  const showHit = async (i) => {
+    find.i = i; paintTools();
+    const mid = find.ids[i];
+    let el = bubbleOf(mid);
+    if (!el) {
+      // that place is not among the messages on the page: the part of the conversation around it is brought in
+      const r = await get(`/api/admin/chats/${id}/messages?${qs({ around: mid })}`);
+      if (find.ids[find.i] !== mid) return;   // the reader has already gone on
+      all = r.messages; more = r.has_more; moreBtn.hidden = !more; jumpMode = true;
+      draw(); el = bubbleOf(mid);
+    }
+    stick = false; anchor = null;
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      el.classList.remove('abub-hl'); void el.offsetWidth; el.classList.add('abub-hl');
+      setTimeout(() => el.classList.remove('abub-hl'), 2600);
+    }
+  };
+  const findWord = async () => {
+    const seq = ++findSeq;
+    const text = f.q;
+    if (f.meaning) return;
+    find.done = false;
+    if (!text) { find.ids = []; find.i = -1; find.total = 0; paintTools(); anchor = takeAnchor(); draw(); holdAnchor(); return; }
+    const p = new URLSearchParams(qs());
+    p.set('q', text);
+    let r;
+    try { r = await get(`/api/admin/chats/${id}/hits?${p}`); } catch (e) { if (seq === findSeq) notify(errMsg(e)); return; }
+    if (seq !== findSeq) return;   // typed on: only the last word counts
+    find.ids = r.ids; find.total = r.total; find.i = -1; find.done = true;
+    anchor = takeAnchor(); draw(); holdAnchor();   // the word gets its colour; the place being read stays
+    paintTools();
+    if (r.ids.length) await showHit(0);
+  };
+  const stepHit = (d) => {
+    const i = find.i + d;
+    if (i >= 0 && i < find.ids.length) showHit(i);
   };
   let timer = null;
-  const later = () => { clearTimeout(timer); timer = setTimeout(reload, 350); };
-  let barFind = null;   // the search field in the bar that stays on top while the conversation is read
-  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по тексту', 'aria-label': 'Поиск по тексту', oninput: (e) => { f.q = e.target.value.trim(); paintTools(); later(); if (barFind) barFind.value = e.target.value; } });
+  const later = () => { clearTimeout(timer); timer = setTimeout(f.meaning ? reload : findWord, 350); };
+  const search = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по чату', 'aria-label': 'Поиск по тексту в переписке', autocomplete: 'off',
+    oninput: (e) => { f.q = e.target.value.trim(); paintTools(); later(); },
+    onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); if (find.ids.length) stepHit(e.shiftKey ? -1 : 1); else { clearTimeout(timer); later(); } } else if (e.key === 'Escape') e.target.blur(); } });
+  const hitCount = h('span', { class: 'achat-count', 'aria-live': 'polite' });
+  const hitUp = h('button', { class: 'achat-step', type: 'button', title: 'Раньше (Enter)', 'aria-label': 'Предыдущее совпадение, раньше', onclick: () => stepHit(1) }, '▲');
+  const hitDown = h('button', { class: 'achat-step', type: 'button', title: 'Позже (Shift+Enter)', 'aria-label': 'Следующее совпадение, позже', onclick: () => stepHit(-1) }, '▼');
   const chips = CHAT_KINDS.map(([v, l]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(v === ''), onclick: () => { f.kind = v; reload(); } }, l));
   const authorSel = h('select', { class: 'as-select', 'aria-label': 'Автор', onchange: (e) => { f.author = e.target.value; reload(); } },
     h('option', { value: '' }, 'Все авторы'), (hist.authors || []).map((a) => h('option', { value: a }, a)));
@@ -1441,14 +1489,20 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   const toNumber = h('input', { class: 'as-date as-num', type: 'number', min: 1, placeholder: '№ сообщения', 'aria-label': 'Перейти к сообщению по номеру', onkeydown: (e) => { if (e.key === 'Enter' && e.target.value) goTo(`id=${Number(e.target.value)}`); } });
   const clearBtn = h('button', { class: 'chip reset', type: 'button', hidden: true, onclick: () => {
     Object.assign(f, { q: '', kind: '', author: '', since: '', until: '', meaning: false });
-    search.value = ''; authorSel.value = ''; since.value = ''; until.value = ''; if (barFind) barFind.value = '';
+    search.value = ''; authorSel.value = ''; since.value = ''; until.value = '';
     reload();
   } }, '✕ Сбросить');
   function paintTools() {
     chips.forEach((b, i) => b.setAttribute('aria-pressed', String(CHAT_KINDS[i][0] === f.kind)));
     meaningBtn.setAttribute('aria-pressed', String(f.meaning));
-    clearBtn.hidden = !active();
+    clearBtn.hidden = !(active() || f.q);
     filters.querySelector('summary').textContent = f.kind || f.author || f.since || f.until || f.meaning ? '⚙ Фильтры •' : '⚙ Фильтры';
+    const word = !!f.q && !f.meaning;
+    hitCount.hidden = !word;
+    hitCount.textContent = !word ? '' : find.ids.length ? `${find.i + 1} из ${find.total}` : find.done ? 'Нет' : '…';
+    hitUp.hidden = hitDown.hidden = !word || !find.ids.length;
+    hitUp.disabled = find.i >= find.ids.length - 1;
+    hitDown.disabled = find.i <= 0;
   }
   const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
   const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip solid', title: 'Скачать переписку (с учётом фильтров)' }, '⬇ Скачать'),
@@ -1460,8 +1514,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
       h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until),
       h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber)));
-  const tools = h('div', { class: 'achat-tools' },
-    h('div', { class: 'at-row' }, h('label', { class: 'as-search' }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search), filters, clearBtn, may('chats_export') ? exportMenu : null));
+  // the search and the filters stay in sight while the conversation is read (they are part of the bar that does not scroll away)
+  const findRow = h('div', { class: 'achat-find' },
+    h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search, hitCount, hitUp, hitDown, clearBtn, filters, may('chats_export') ? exportMenu : null);
+  document.addEventListener('click', (e) => { if (!filters.contains(e.target)) filters.open = false; });
+  paintTools();
 
   // a message: its menu, on the three dots or the right mouse button; nothing lies over the text
   let popup = null;
@@ -1524,7 +1581,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     e.preventDefault();
     openMessageMenu(bub, e.clientX, e.clientY);
   });
-  const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { if (jumpMode) { if (focus) go(`#/chat/${id}`); else reload(); } else { stick = true; toEnd(); } } }, '↓');
+  const jump = h('button', { class: 'ajump', type: 'button', hidden: true, 'aria-label': 'К последним сообщениям', title: 'К последним сообщениям', onclick: () => { if (jumpMode) { if (focus) go(`#/chat/${id}`); else { keepFind = true; reload().finally(() => { keepFind = false; }); } } else { stick = true; toEnd(); } } }, '↓');
   document.body.append(jump);
   const showJump = () => {
     if (!list.isConnected) { jump.remove(); return; }
@@ -1536,7 +1593,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   // live: new messages appear by themselves (when no filter is on); the view stays on the end if it was there
   const live = setInterval(async () => {
     if (!list.isConnected) { clearInterval(live); return; }
-    if (document.visibilityState !== 'visible' || jumpMode || f.q || f.kind || f.author || f.since || f.until) return;
+    if (document.visibilityState !== 'visible' || jumpMode || (f.meaning && f.q) || f.kind || f.author || f.since || f.until) return;
     if (Date.now() - lastScrollAt < 1500) return;   // the reader is moving the page: nothing may change under the finger
     try {
       const last = all.reduce((mx, m) => (typeof m.id === 'number' && m.id > mx ? m.id : mx), 0);   // the highest number: by time the last one may have a lower number
@@ -1590,24 +1647,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const other = info.members.find((x) => x.id !== ctx.me);
     return { right: withReach(person(ctx.me, me?.name), me), left: withReach(person(other?.id, other?.name || '—'), other) };
   };
-  barFind = h('input', { class: 'as-input', type: 'search', placeholder: 'Поиск по всему чату', 'aria-label': 'Поиск по всему чату', autocomplete: 'off',
-    oninput: (e) => { search.value = e.target.value; f.q = e.target.value.trim(); paintTools(); later(); },
-    onkeydown: (e) => { if (e.key === 'Escape') { e.target.blur(); } } });
-  const findRow = h('div', { class: 'achat-find', hidden: true }, h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), barFind,
-    h('button', { class: 'achat-find-x', type: 'button', 'aria-label': 'Очистить и закрыть поиск', title: 'Очистить и закрыть', onclick: () => {
-      barFind.value = ''; search.value = ''; f.q = ''; findRow.hidden = true; findBtn.setAttribute('aria-pressed', 'false'); paintTools(); reload();
-    } }, '✕'));
-  const findBtn = h('button', { class: 'chip acw-find', type: 'button', title: 'Поиск по всему чату', 'aria-label': 'Поиск по всему чату', 'aria-pressed': 'false', onclick: () => {
-    findRow.hidden = !findRow.hidden;
-    findBtn.setAttribute('aria-pressed', String(!findRow.hidden));
-    if (!findRow.hidden) { barFind.value = search.value; barFind.focus(); } else if (f.q) { /* the words stay as they are */ }
-  } }, icon('search', 20));
   const whoBar = h('div', { class: 'achat-who' },
     h('button', { class: 'chip acw-back', type: 'button', title: 'Назад', 'aria-label': 'Назад', onclick: () => { if (depth() > 0) history.back(); else go('#/chats'); } }, '←'),
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
-    findBtn,
     h('button', { class: 'chip tbtn', type: 'button', title: 'Медиа и файлы', 'aria-label': 'Медиа и файлы', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, icon('image', 20), h('span', { class: 'tbtn-t' }, 'Медиа и файлы')),
     h('button', { class: 'chip tbtn', type: 'button', title: 'Сводка', 'aria-label': 'Сводка', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, icon('trend', 20), h('span', { class: 'tbtn-t' }, 'Сводка')));
   // on a phone the menu of the console stays on top: the bar goes right under it
@@ -1630,7 +1674,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
         h('thead', null, h('tr', null, ['Участник', 'Телефон', 'Роль', 'Вступил', ''].map((x) => h('th', null, x)))),
         h('tbody', null, info.members.map((m) => h('tr', null, h('td', null, userLink(m.id)), h('td', { class: 'mono' }, m.phone), h('td', null, m.role),
           h('td', { class: 'ev-time' }, fmtDT(m.joined_at)), h('td', null, m.banned ? h('span', { class: 'pill warn' }, 'заблокирован') : m.can_send ? '' : h('span', { class: 'pill' }, 'без права писать')))))))),
-    h('div', { class: 'panel' }, h('div', { class: 'achat-stick' }, whoBar, findRow, playerBar), heading, tools, moreBtn, list),
+    h('div', { class: 'panel' }, h('div', { class: 'achat-stick' }, whoBar, findRow, playerBar), heading, moreBtn, list),
     hist.deleted.length ? h('div', { class: 'panel' }, h('h2', null, `Удалённые сообщения (${hist.deleted.length})`),
       h('div', { class: 'tablewrap' }, h('table', { class: 't' },
         h('thead', null, h('tr', null, ['Удалено', 'Кто удалил', 'Автор', 'Отправлено', 'Содержимое'].map((x) => h('th', null, x)))),

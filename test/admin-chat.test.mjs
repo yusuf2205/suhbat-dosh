@@ -92,6 +92,12 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
   assert.equal(after, m1.id);
   assert.equal((await call(admin.cookie, 'GET', `${url}/find?at=${Date.now() + 86400000}`)).data.id, edited.id, 'after the end: the last message');
   assert.equal((await call(admin.cookie, 'GET', `${url}/find`)).status, 400);
+  // the places of a word: numbers of the messages, the newest first; the conversation itself is not narrowed
+  const hits = (await call(admin.cookie, 'GET', `${url}/hits?q=${encodeURIComponent('стало')}`)).data;
+  assert.deepEqual(hits.ids, [edited.id]);
+  assert.equal(hits.total, 1);
+  assert.deepEqual((await call(admin.cookie, 'GET', `${url}/hits?q=`)).data, { ids: [], total: 0 });
+  assert.equal((await call(a.cookie, 'GET', `${url}/hits?q=x`)).status, 403, 'ordinary people get none of it');
   void list;
 });
 

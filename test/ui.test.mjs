@@ -490,23 +490,30 @@ test('admin: the chats of a person can be searched by name and by kind (personal
   } finally { await ctx.close(); }
 });
 
-test('admin: the bar of a conversation has a search over the whole chat that stays on top', { skip: !canRun }, async () => {
+test('admin: a word is looked for IN the conversation (all messages stay, the word is marked, arrows go between the places), and the search stays in sight', { skip: !canRun }, async () => {
   const { ctx, page, errors, open } = await phonePage(seed.admin);
   try {
     await open(`/admin.html#/chat/${seed.chat}`);
-    await page.waitForSelector('.achat-who .acw-find');
+    await page.waitForSelector('.achat-find input', { state: 'visible' });
     await page.waitForSelector('.abub');
     const all = (await page.$$('.abub')).length;
     assert.ok(all >= 10, `the whole conversation is shown first (${all})`);
-    assert.ok(!(await page.isVisible('.achat-find')), 'the field is closed at first');
-    await page.click('.achat-who .acw-find');
-    await page.waitForSelector('.achat-find input', { state: 'visible' });
     await page.fill('.achat-find input', 'сообщение 1');
-    await page.waitForFunction(() => document.querySelectorAll('.abub').length === 1, null, { timeout: 10000 });
-    assert.match(await page.textContent('.messages-list, .achat-list, .abub'), /сообщение 1/);
-    await page.click('.achat-find-x');
-    await page.waitForFunction((n) => document.querySelectorAll('.abub').length >= n, all, { timeout: 10000 });
-    assert.ok(!(await page.isVisible('.achat-find')), 'closed again, everything is back');
+    await page.waitForFunction(() => /из \d+/.test(document.querySelector('.achat-count')?.textContent || ''), null, { timeout: 10000 });
+    assert.ok((await page.$$('.abub')).length >= all, 'the other messages are not hidden');
+    assert.ok((await page.$$('.abub-text mark')).length >= 1, 'the word is marked');
+    assert.match(await page.textContent('.abub-text mark'), /сообщение 1/i);
+    const top = await page.evaluate(() => document.querySelector('.achat-find').getBoundingClientRect().top);
+    assert.ok(top >= 0 && top < 400, `the search is in sight (top ${top})`);
+    await page.evaluate(() => window.scrollBy(0, 400));
+    const still = await page.evaluate(() => document.querySelector('.achat-find').getBoundingClientRect().top);
+    assert.ok(still >= 0 && still < 400, `and stays in sight after scrolling (${still})`);
+    await page.click('.achat-find .afilters > summary');
+    assert.ok(await page.isVisible('.achat-find .afilters-body'), 'the filters open right there');
+    await page.fill('.achat-find input', 'такого слова нет нигде');
+    await page.waitForFunction(() => document.querySelector('.achat-count')?.textContent === 'Нет', null, { timeout: 10000 });
+    assert.equal((await page.$$('.abub-text mark')).length, 0);
+    assert.ok((await page.$$('.abub')).length >= all, 'nothing found, the conversation is whole');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
