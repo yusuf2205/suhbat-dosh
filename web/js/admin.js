@@ -1110,6 +1110,7 @@ function messageNode(m, ctx, prev) {
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
     h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at),
+      ctx.goto && m.file ? h('button', { class: 'abub-goto', type: 'button', title: 'Перейти к сообщению в переписке', 'aria-label': 'Перейти к сообщению', dataset: { goto: String(m.id) } }, '↗ К сообщению') : '',
       h('button', { class: 'abub-more', type: 'button', title: 'Действия', 'aria-label': 'Действия с сообщением', 'aria-haspopup': 'menu' }, '⋯'))));
   return nodes;
 }
@@ -1133,7 +1134,7 @@ function lockScroll(on) {
 window.addEventListener('hashchange', () => { scrollLocks = 0; document.documentElement.classList.remove('adm-locked'); });
 
 /** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
-function openLightbox(imgs, start) {
+function openLightbox(imgs, start, onGoto) {
   let i = start;
   lockScroll(true);
   const turns = new Map(); // picture -> degrees; a turned picture stays turned while the window is open
@@ -1163,6 +1164,7 @@ function openLightbox(imgs, start) {
     h('button', { class: 'alb-btn alb-next', type: 'button', 'aria-label': 'Вперёд', onclick: () => go(1) }, '›'),
     h('button', { class: 'alb-btn alb-turn', type: 'button', 'aria-label': 'Повернуть на 90°', title: 'Повернуть на 90° (R)', onclick: () => turn(90) }, '⟳'),
     h('a', { class: 'alb-btn alb-open', href: '#', target: '_blank', rel: 'noopener', onclick: (e) => { e.currentTarget.href = imgs[i].src; } }, 'Открыть отдельно'),
+    onGoto ? h('button', { class: 'alb-btn alb-goto', type: 'button', onclick: () => { const mid = Number(imgs[i].closest?.('.abub')?.dataset.id); if (mid) { close(); onGoto(mid); } } }, '↗ Перейти к сообщению') : null,
     h('button', { class: 'alb-btn alb-close', type: 'button', 'aria-label': 'Закрыть', onclick: close }, '✕'),
     cap);
   // the fingers: two zoom (like in Telegram), one moves a zoomed picture or, when it is not zoomed, a swipe goes to the next or the previous one
@@ -1279,10 +1281,11 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (gallery) {
       list.append(...all.filter((m) => m.file).map((m) => h('div', { class: 'agal-item abub', dataset: { id: String(m.id) } },
         m.kind === 'image' || /\.gif$/i.test(m.file.name || '') ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(lazyVideo(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }))),
-        h('div', { class: 'abub-time' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`, h('button', { class: 'abub-more', type: 'button', 'aria-label': 'Действия с сообщением' }, '⋯')))));
+        h('div', { class: 'abub-time' }, `${authorOf(m)} · ${fmtShort(m.created_at)}`, h('button', { class: 'abub-goto', type: 'button', title: 'Перейти к сообщению в переписке', 'aria-label': 'Перейти к сообщению', dataset: { goto: String(m.id) } }, '↗'), h('button', { class: 'abub-more', type: 'button', 'aria-label': 'Действия с сообщением' }, '⋯')))));
       return;
     }
     ctx.term = f.meaning ? '' : f.q;
+    ctx.goto = active();   // a filtered list (files, voice messages...): each file has its way back to the place in the conversation
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
     paintPlayer();
   };
@@ -1406,7 +1409,21 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     if (!img) return;
     e.preventDefault();
     const imgs = [...list.querySelectorAll('img.abub-img')];
-    openLightbox(imgs, imgs.indexOf(img));
+    openLightbox(imgs, imgs.indexOf(img), gotoMessage);
+  });
+  // "Go to the message" (like in Telegram): from a picture, a video or a file of a filtered list back to its place in the conversation
+  const gotoMessage = (mid) => {
+    const el = !active() ? bubbleOf(mid) : null;
+    if (el) {
+      stick = false; anchor = null;
+      el.scrollIntoView({ block: 'center' });
+      el.classList.remove('abub-hl'); void el.offsetWidth; el.classList.add('abub-hl');
+      setTimeout(() => el.classList.remove('abub-hl'), 2600);
+    } else go(`#/chat/${id}/${mid}`);
+  };
+  list.addEventListener('click', (e) => {
+    const b = e.target.closest?.('button.abub-goto');
+    if (b) { e.stopPropagation(); gotoMessage(Number(b.dataset.goto)); }
   });
 
   // search and filters

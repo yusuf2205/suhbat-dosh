@@ -598,3 +598,6 @@ html.adm-locked, html:has(.adlg), html:has(.alb) { overflow: hidden; }
 .ud-kind small { color: #888; font-size: .75rem; }
 .ud-kind[aria-pressed=true] { background: #ffc400; border-color: #ffc400; color: #2b2b2e; font-weight: 600; }
 .ud-kind[aria-pressed=true] small { color: inherit; }
+.alb-goto { left: 50%; bottom: 52px; transform: translateX(-50%); font-size: .95rem; white-space: nowrap; }
+.abub-goto { margin-left: 8px; padding: 2px 8px; border: 0; border-radius: 10px; background: rgba(251, 199, 0, .3); color: inherit; font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; }
+.abub-goto:hover { background: rgba(251, 199, 0, .55); }

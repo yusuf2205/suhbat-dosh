@@ -219,6 +219,14 @@ test('admin: the gallery of a conversation on a phone: icon buttons, square pict
     assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '2');
     await pinch(160, 90);    // fingers together: smaller
     assert.equal(await page.$eval('.aconv.agal', (e) => e.dataset.cols), '3');
+    // "Go to the message": from the open picture, back to its place in the whole conversation
+    const mid = await page.$eval('.agal-item', (e) => e.dataset.id);
+    await page.click('.agal-item img');
+    await page.waitForSelector('.alb-goto');
+    await page.click('.alb-goto');
+    await page.waitForFunction((m) => location.hash.endsWith(`/${m}`), mid, { timeout: 5000 });
+    await page.waitForSelector(`.abub[data-id="${mid}"].abub-hl, .abub[data-id="${mid}"]`);
+    assert.equal(await page.$('.aconv.agal'), null, 'the whole conversation, not the gallery');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
