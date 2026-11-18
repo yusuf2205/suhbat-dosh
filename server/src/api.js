@@ -61,6 +61,7 @@ import { BUILD_ID, SERVER_VERSION } from './build.js';
 import { getBotUsername, pollLogin, startLogin, telegramEnabled } from './telegram.js';
 import { checkCode, emailEnabled, issueCode, normalizeEmail } from './email.js';
 import { checkName, filePath, readHead, receive, removeFile, sniff, thumbPath } from './files.js';
+import { playableFor } from './playable.js';
 import zlib from 'node:zlib';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -1684,11 +1685,14 @@ api.post('/chats/:id/files', async (req, res) => {
 });
 
 /** Serve a stored file. Ranges (video/audio seeking, PDF page streaming) are handled by sendFile. */
-function sendFile(res, f, { download = false, pdfInline = false, thumb = false, noStore = false } = {}) {
+async function sendFile(res, f, { download = false, pdfInline = false, thumb = false, noStore = false } = {}) {
   const mediaOk = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
   const pdf = f.mime === 'application/pdf' && pdfInline && !download;
   const inline = !download && (mediaOk || pdf);
-  res.setHeader('Content-Type', inline ? f.mime : 'application/octet-stream');
+  // an old voice message or video that an iPhone cannot play as it is: a playable copy (made once); a download is always the original
+  const alt = inline && !thumb && !noStore && mediaOk ? await playableFor(f, res.req?.headers?.['user-agent']).catch(() => null) : null;
+  if (alt) res.setHeader('Vary', 'User-Agent');
+  res.setHeader('Content-Type', inline ? (alt?.mime || f.mime) : 'application/octet-stream');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (pdf) {
@@ -1701,7 +1705,7 @@ function sendFile(res, f, { download = false, pdfInline = false, thumb = false, 
   // file ids never change content: let the device keep what it has opened (private cache only); a one-time file is never kept
   res.setHeader('Cache-Control', noStore ? 'no-store' : 'private, max-age=31536000, immutable');
   res.setHeader('Accept-Ranges', 'bytes');
-  const full = thumb ? thumbPath(f.id) : filePath(f.id);
+  const full = alt?.path || (thumb ? thumbPath(f.id) : filePath(f.id));
   res.sendFile(full, { dotfiles: 'allow', cacheControl: false, lastModified: false }, (err) => {
     if (err && !res.headersSent) res.status(404).json({ error: 'not_found' });
   });

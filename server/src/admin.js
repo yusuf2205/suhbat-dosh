@@ -5,6 +5,7 @@ import { HttpError, escapeLike, int, now, str } from './util.js';
 import { dropSession, emit, isOnline } from './realtime.js';
 import { audit, getUser, memberIds, messageOut } from './service.js';
 import { filePath, removeFile } from './files.js';
+import { playableFor } from './playable.js';
 import fs from 'node:fs';
 import { EVENTS } from '../../shared/contracts.js';
 import { ROOM_MAX_TOP, roomMax } from './groupcalls.js';
@@ -659,7 +660,7 @@ admin.get('/audit', (req, res) => {
 });
 
 // Any stored file (attachments, avatars) — for reviewing what was sent.
-admin.get('/files/:id', (req, res) => {
+admin.get('/files/:id', async (req, res) => {
   const f = q.get('SELECT * FROM files WHERE id = ?', str(req.params.id, 'id', { min: 8, max: 40 }));
   if (!f || !fs.existsSync(filePath(f.id))) throw new HttpError(404, 'not_found');
   if (f.chat_id) hiddenChat(req, f.chat_id);
@@ -676,13 +677,15 @@ admin.get('/files/:id', (req, res) => {
     odt: 'application/vnd.oasis.opendocument.text', ods: 'application/vnd.oasis.opendocument.spreadsheet', rtf: 'application/rtf',
   };
   const inline = inlineMedia || pdf || text;
+  const alt = inlineMedia && req.query.download !== '1' ? await playableFor(f, req.headers['user-agent']).catch(() => null) : null;   // an old voice message or video an iPhone cannot play as it is
+  if (alt) res.setHeader('Vary', 'User-Agent');
   // a document is shown where the browser can show it (PDF, text) and is handed over with its real type otherwise (Word, Excel...), so the system opens it in the right program
-  res.setHeader('Content-Type', inlineMedia ? f.mime : pdf ? 'application/pdf' : text ? 'text/plain; charset=utf-8' : OFFICE[ext] || 'application/octet-stream');
+  res.setHeader('Content-Type', inlineMedia ? (alt?.mime || f.mime) : pdf ? 'application/pdf' : text ? 'text/plain; charset=utf-8' : OFFICE[ext] || 'application/octet-stream');
   res.setHeader('Content-Disposition', `${inline && req.query.download !== '1' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // the PDF viewer of a browser does not work inside a sandboxed document, so a PDF gets a CSP without the sandbox (it has no scripts of ours to run)
   res.setHeader('Content-Security-Policy', pdf ? "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'; img-src data:" : "default-src 'none'; sandbox");
-  res.sendFile(filePath(f.id), { dotfiles: 'allow', cacheControl: false });
+  res.sendFile(alt?.path || filePath(f.id), { dotfiles: 'allow', cacheControl: false });
 });
 
 // ------------------------------------------------------------------ account control

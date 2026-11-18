@@ -5,6 +5,9 @@ ENV NODE_ENV=production \
     PORT=3000
 WORKDIR /app
 
+# ffmpeg: playable copies of the old voice messages and videos for the iPhone (server/src/playable.js)
+RUN apk add --no-cache ffmpeg
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
