@@ -1463,7 +1463,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
   };
   let keepFind = false;   // back to the end of the conversation: the places found stay, only the view moves
   // a word is looked for IN the conversation, like in Telegram: all the messages stay, the word is marked, the arrows go from one place to the next
-  const find = { ids: [], i: -1, total: 0, done: false };
+  const find = { ids: [], i: -1, total: 0, done: false, short: false };
   let findSeq = 0;
   const showHit = async (i) => {
     find.i = i; paintTools();
@@ -1488,7 +1488,8 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     const text = f.q;
     if (f.meaning) return;
     find.done = false;
-    if (!text) { find.ids = []; find.i = -1; find.total = 0; paintTools(); anchor = takeAnchor(); draw(); holdAnchor(); return; }
+    find.short = !!text && [...text].length < 3;   // the index looks for three letters and more
+    if (!text || find.short) { find.ids = []; find.i = -1; find.total = 0; paintTools(); anchor = takeAnchor(); draw(); holdAnchor(); return; }
     const p = new URLSearchParams(qs());
     p.set('q', text);
     let r;
@@ -1534,7 +1535,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     filters.classList.toggle('on', !!(f.kind || f.author || f.since || f.until || f.meaning));   // a dot on the button: a filter is on
     const word = !!f.q && !f.meaning;
     hitCount.hidden = !word;
-    hitCount.textContent = !word ? '' : find.ids.length ? `${find.i + 1} из ${find.total}` : find.done ? 'Нет' : '…';
+    hitCount.textContent = !word ? '' : find.short ? 'от 3 букв' : find.ids.length ? `${find.i + 1} из ${find.total}` : find.done ? 'Нет' : '…';
     hitUp.hidden = hitDown.hidden = !word || !find.ids.length;
     hitUp.disabled = find.i >= find.ids.length - 1;
     hitDown.disabled = find.i <= 0;

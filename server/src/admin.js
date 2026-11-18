@@ -414,8 +414,12 @@ admin.get('/chats/:id/messages', (req, res) => {
 admin.get('/chats/:id/hits', (req, res) => {
   const id = int(req.params.id, 'id');
   if (!q.get('SELECT 1 AS x FROM chats WHERE id = ?', id)) throw new HttpError(404, 'not_found');
-  const f = chatFilter(id, req.query);
-  if (!String(req.query.q ?? '').trim()) return res.json({ ids: [], total: 0 });
+  const text = String(req.query.q ?? '').trim().slice(0, 100);
+  // through the full-text index (a scan of a conversation of millions of messages would hold the whole server): three letters at least
+  if ([...text].length < 3) return res.json({ ids: [], total: 0, short: true });
+  const f = chatFilter(id, { ...req.query, q: '' });
+  f.where.push('m.id IN (SELECT rowid FROM msg_fts WHERE msg_fts MATCH ?)');
+  f.params.push(`"${text.replace(/"/g, '""')}"`);
   audit(req.user.id, 'admin.view_chat', { target_type: 'chat', target_id: String(id), chat_id: id, ip: req.ip, details: { filter: { q: String(req.query.q).slice(0, 100), kind: req.query.kind || undefined, author: req.query.author || undefined } } });
   const total = q.get(`SELECT COUNT(*) AS n FROM messages m WHERE ${f.where.join(' AND ')}`, ...f.params).n;
   const ids = q.all(`SELECT m.id FROM messages m WHERE ${f.where.join(' AND ')} ORDER BY m.created_at DESC, m.id DESC LIMIT 2000`, ...f.params).map((r) => r.id);

@@ -97,7 +97,7 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
   const hits = (await call(admin.cookie, 'GET', `${url}/hits?q=${encodeURIComponent('стало')}`)).data;
   assert.deepEqual(hits.ids, [edited.id]);
   assert.equal(hits.total, 1);
-  assert.deepEqual((await call(admin.cookie, 'GET', `${url}/hits?q=`)).data, { ids: [], total: 0 });
+  assert.deepEqual((await call(admin.cookie, 'GET', `${url}/hits?q=ст`)).data.ids, [], 'two letters: nothing is scanned');
   assert.equal((await call(a.cookie, 'GET', `${url}/hits?q=x`)).status, 403, 'ordinary people get none of it');
   void list;
 });
