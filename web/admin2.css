@@ -601,3 +601,8 @@ html.adm-locked, html:has(.adlg), html:has(.alb) { overflow: hidden; }
 .alb-goto { left: 50%; bottom: 52px; transform: translateX(-50%); font-size: .95rem; white-space: nowrap; }
 .abub-goto { margin-left: 8px; padding: 2px 8px; border: 0; border-radius: 10px; background: rgba(251, 199, 0, .3); color: inherit; font: inherit; font-size: .78rem; font-weight: 600; cursor: pointer; }
 .abub-goto:hover { background: rgba(251, 199, 0, .55); }
+.afs { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line, #eadfb8); }
+.afs-t { margin: 0; font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted, #7a7466); }
+.afs .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.abub-del { border-style: dashed; opacity: .92; }
+.abub-del .abub-who { font-weight: 700; }

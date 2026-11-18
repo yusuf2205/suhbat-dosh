@@ -534,6 +534,13 @@ test('admin: a word is looked for IN the conversation (all messages stay, the wo
     await page.waitForFunction(() => document.querySelector('.achat-count')?.textContent === 'Нет', null, { timeout: 10000 });
     assert.equal((await page.$$('.abub-text mark')).length, 0);
     assert.ok((await page.$$('.abub')).length >= all, 'nothing found, the conversation is whole');
+    // the filters are in groups, with the start of the conversation and the deleted messages
+    await page.click('.achat-who .afilters > summary');
+    await page.waitForSelector('.afilters-body', { state: 'visible' });
+    assert.ok((await page.$$('.afilters-body .afs')).length >= 4, 'sections, not one long row');
+    assert.match(await page.textContent('.afilters-body'), /Удалённые/);
+    await page.click('.afilters-body button:has-text("К началу переписки")');
+    await page.waitForFunction(() => /#\/chat\/\d+\/\d+$/.test(location.hash), null, { timeout: 5000 });
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });

@@ -1123,7 +1123,7 @@ function locationLine(text) {
     h('a', { href: `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, `${g[1]}, ${g[2]}`), ' ', h('small', { class: 'muted' }, 'Яндекс Карты'));
 }
 
-const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['photo', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['audio', 'Аудио'], ['voicemsg', 'Голосовые'], ['gif', 'GIF'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
+const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['deleted', '🗑 Удалённые'], ['photo', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['audio', 'Аудио'], ['voicemsg', 'Голосовые'], ['gif', 'GIF'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
 
 // While a picture, a sheet or a menu is open only it answers to the finger: the page behind does not scroll (like in Telegram)
 let scrollLocks = 0;
@@ -1277,7 +1277,8 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     clear(list);
     const gallery = ['media', 'photo', 'video', 'gif'].includes(f.kind);
     list.classList.toggle('agal', gallery);
-    if (!all.length) list.append(h('p', { class: 'muted' }, f.kind === 'marked' ? 'Помеченных сообщений нет. Откройте меню ⋯ у сообщения и выберите «Пометить».' : 'Ничего не найдено'));
+    const gone = f.kind === 'deleted' ? (hist.deleted || []) : [];   // the ones deleted here have left the table: their copy is in the journal
+    if (!all.length && !gone.length) list.append(h('p', { class: 'muted' }, f.kind === 'marked' ? 'Помеченных сообщений нет. Откройте меню ⋯ у сообщения и выберите «Пометить».' : 'Ничего не найдено'));
     if (gallery) {
       list.append(...all.filter((m) => m.file).map((m) => h('div', { class: 'agal-item abub', dataset: { id: String(m.id) } },
         m.kind === 'image' || /\.gif$/i.test(m.file.name || '') ? h('img', { class: 'abub-img', src: `/api/admin/files/${m.file.id}`, alt: m.file.name, loading: 'lazy' }) : player(lazyVideo(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }))),
@@ -1287,6 +1288,13 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     ctx.term = f.meaning ? '' : f.q;
     ctx.goto = active();   // a filtered list (files, voice messages...): each file has its way back to the place in the conversation
     all.forEach((m, i) => list.append(...messageNode(m, ctx, all[i - 1])));
+    if (gone.length) {
+      list.append(h('div', { class: 'aday' }, `Удалено здесь (${gone.length})`));
+      for (const e of gone) list.append(h('div', { class: 'abub abub-del' },
+        h('div', { class: 'abub-who' }, '🗑 ', e.details?.author ? userLink(e.details.author) : 'Автор неизвестен', e.actor ? h('span', { class: 'muted' }, ' · удалил(а) ', userLink(e.actor.id)) : ''),
+        h('div', { class: 'abub-text' }, e.details?.text || (e.details?.file ? `[файл ${e.details.file.name}]` : '')),
+        h('div', { class: 'abub-time' }, `отправлено ${fmtDT(e.details?.sent_at)} · удалено ${fmtDT(e.ts)}`)));
+    }
     paintPlayer();
   };
   // the gallery (photos, videos, GIF): two fingers spread - bigger pictures, two fingers together - smaller and more of them, like in Telegram
@@ -1537,14 +1545,21 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
       h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('details').open = false; openExportDialog({ scope: 'chat', id, title: c0.title || state.chats.get(id)?.title || `Чат #${id}` }); } }, 'Архив с файлами, ссылка…')));
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
   // the filters open as a sheet over the conversation (made at the page itself, not inside the bar: nothing of the bar may cut or move it)
+  const chipOf = (v) => chips[CHAT_KINDS.findIndex(([k]) => k === v)];
+  const sec = (title, ...kids) => h('section', { class: 'afs' }, h('h4', { class: 'afs-t' }, title), ...kids);
+  const toStart = h('button', { class: 'chip', type: 'button', onclick: () => { filters.open = false; goTo('at=1'); } }, '⇤ К началу переписки');
+  const toEndBtn = h('button', { class: 'chip', type: 'button', onclick: () => { filters.open = false; stick = true; reload(); } }, '⇥ К последнему');
   const filters = h('details', { class: 'afilters' }, h('summary', { class: 'chip tbtn', title: 'Фильтры', 'aria-label': 'Фильтры' }, icon('filter', 20), h('span', { class: 'tbtn-t' }, 'Фильтры')));
   const sheet = h('div', { class: 'afsheet' },
     h('div', { class: 'afilters-back', onclick: () => { filters.open = false; } }),
     h('div', { class: 'afilters-body', role: 'dialog', 'aria-label': 'Фильтры' },
       h('div', { class: 'afilters-head' }, h('b', null, 'Фильтры'), clearBtn, h('button', { class: 'btn', type: 'button', onclick: () => { filters.open = false; } }, 'Готово')),
-      h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
-      h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until),
-      h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber)));
+      sec('Что показать', h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, ['', 'marked', 'edited', 'deleted'].map(chipOf))),
+      sec('Медиа', h('div', { class: 'chips' }, ['media', 'photo', 'video', 'gif'].map(chipOf))),
+      sec('Файлы и звук', h('div', { class: 'chips' }, ['file', 'audio', 'voicemsg'].map(chipOf))),
+      sec('Прочее', h('div', { class: 'chips' }, ['link', 'location', 'call'].map(chipOf), meaningBtn)),
+      sec('Автор и период', h('div', { class: 'at-row' }, authorSel), h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until)),
+      sec('Перейти', h('div', { class: 'chips' }, toStart, toEndBtn), h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'к дате'), toDate, toNumber))));
   // the search and the filters stay in sight while the conversation is read (they are part of the bar that does not scroll away)
   const findRow = h('div', { class: 'achat-find', hidden: true },
     h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search, hitCount, hitUp, hitDown,
