@@ -318,7 +318,9 @@ admin.get('/chats/:id', (req, res) => {
   };
   const owner = tg ? getUser(tg.user_id) : null;
   const peer = tg ? contact(tg.tg_phone, tg.tg_username) : null;
-  const mine = owner ? contact(owner.phone?.startsWith('email:') || owner.phone?.startsWith('login:') ? '' : owner.phone, owner.username) : null;
+  // the owner of the account: the number of the account here, else the one Telegram told the bridge
+  let mine = owner ? contact(/^(email|login):/.test(owner.phone || '') ? '' : owner.phone, owner.username) : null;
+  if (mine && !mine.phone) mine = contact(q.get('SELECT tg_phone FROM tg_bridge WHERE user_id = ?', owner.id)?.tg_phone, owner.username);
   res.json({ chat: { id: c.id, type: kindOfCopy({ ...c, tg_kind: tgk }), title: c.title, description: c.description, created_at: c.created_at, owner_id: c.owner_id, imported: c.imported_from || null, import_me: c.import_me || '', peer, owner_contact: mine }, members });
 });
 

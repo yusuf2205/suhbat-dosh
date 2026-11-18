@@ -492,6 +492,8 @@ function applyProfile(uid, b) {
   const username = clean(b.username, 40).replace(/^@/, '');
   const phone = clean(b.phone, 20).replace(/[^\d]/g, '');
   const title = clean(b.title, 60);
+  const mine = clean(b.me_phone, 20).replace(/[^\d]/g, '');
+  if (mine) q.run('UPDATE tg_bridge SET tg_phone = ? WHERE user_id = ? AND tg_phone != ?', mine, uid, mine);
   q.run('UPDATE tg_chats SET tg_username = ?, tg_phone = ? WHERE user_id = ? AND tg_chat = ?', username, phone, uid, row.tg_chat);
   let changed = row.tg_username !== username || row.tg_phone !== phone;
   if (title && title !== row.title) {

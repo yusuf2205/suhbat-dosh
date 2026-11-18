@@ -482,6 +482,7 @@ async def sync_profile(a: Acct, entity, key: str, kind: str, force: bool = False
         await to_server({
             "owner": a.uid, "tg_chat": key, "kind": kind, "profile": True, "title": title_of(entity) or "",
             "username": getattr(entity, "username", "") or "", "phone": getattr(entity, "phone", "") or "", "photo_id": photo_id,
+            "me_phone": (a.me or {}).get("phone", ""),   # the number of the account itself: the console shows both sides of the chat
         })
         if photo_id and a.chats.get(key, {}).get("photo") != photo_id:
             data = await a.client.download_profile_photo(entity, file=bytes)
@@ -1105,7 +1106,7 @@ async def _start_existing():
             await a.wipe()
             continue
         me = await a.client.get_me()
-        a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
+        a.me = {"name": display_name(me), "username": getattr(me, "username", "") or "", "phone": getattr(me, "phone", "") or ""}
         attach_handlers(a)
         await asyncio.sleep(1.0)
         try:
@@ -1238,7 +1239,7 @@ async def login_task(a: Acct):
 
 async def finish_login(a: Acct):
     me = await a.client.get_me()
-    a.me = {"name": display_name(me), "username": getattr(me, "username", "") or ""}
+    a.me = {"name": display_name(me), "username": getattr(me, "username", "") or "", "phone": getattr(me, "phone", "") or ""}
     await a.persist_session()
     a.save_list()
     attach_handlers(a)
