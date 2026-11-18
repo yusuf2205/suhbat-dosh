@@ -31,7 +31,7 @@ REMOTE="cd $DIR && tar xf - && docker compose up -d --build suhbat"
 if [ "$BRIDGE" = 1 ]; then
   REMOTE="$REMOTE && docker compose --profile tgbridge up -d --build tgbridge"
 fi
-tar cf - web server shared docs tgbridge nllb docker-compose.yml .env.example scripts | ssh "$HOST" "$REMOTE"
+tar cf - web server shared docs tgbridge nllb Dockerfile docker-compose.yml .env.example scripts | ssh "$HOST" "$REMOTE"
 
 echo "== waiting for the site"
 ok=0
