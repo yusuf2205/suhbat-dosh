@@ -6,7 +6,7 @@ import { t } from './i18n.js';
 import { S } from './state.js';
 import { modal, toast } from './ui.js';
 import { qrCanvas } from './qr.js';
-import jsQR from './vendor/jsqr.js';
+// the QR reader (250 KB) is loaded when a camera is really opened, not with every start of the app
 import { pairAnswer, pairClaim, pairCode, pairCreate, waitPaired } from './lan.js';
 
 const codeOfLink = (text) => /[?&]pair=(\d{5})\b/.exec(String(text))?.[1] || (/^\d{5}$/.test(String(text).trim()) ? String(text).trim() : null);
@@ -29,6 +29,7 @@ function cameraReader(onText) {
     await video.play().catch(() => {});
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const jsQR = (await import('./vendor/jsqr.js')).default;
     const tick = () => {
       if (!alive) return;
       if (video.videoWidth) {

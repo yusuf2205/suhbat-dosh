@@ -4,7 +4,7 @@ import { t, errText } from './i18n.js';
 import { S, fire } from './state.js';
 import { api } from './net.js';
 import { modal, toast } from './ui.js';
-import jsQR from './vendor/jsqr.js';
+// the QR reader (250 KB) is loaded when the camera is really opened, not with every start of the app
 import { qrTokenFrom, approveQrLogin } from './qrlogin.js';
 import { handleVerifyScan } from './safety.js';
 import { claimPairCode, pairLinkCode } from './pair.js';
@@ -58,6 +58,7 @@ export function openScanner() {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const detector = 'BarcodeDetector' in window ? new window.BarcodeDetector({ formats: ['qr_code'] }) : null;
+    const jsQR = (await import('./vendor/jsqr.js')).default;
     const tick = async () => {
       if (!alive) return;
       try {

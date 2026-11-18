@@ -212,6 +212,7 @@ test('the pages list the modules they need at the start (modulepreload), so a sl
   assert.ok(links.length >= 10, `the messenger lists its modules (${links.length})`);
   assert.ok(links.some((u) => u.startsWith('/js/main.js?v=')) && links.some((u) => u.startsWith('/js/chat.js?v=')), 'the entry and the chat');
   assert.equal(new Set(links).size, links.length, 'each once');
+  assert.ok(!links.some((u) => /jsqr/.test(u)), 'the QR reader (250 KB) is not loaded at the start, only when a camera opens');
   for (const u of links.slice(0, 5)) assert.equal((await fetch(BASE + u)).status, 200, u);
   const admin = await (await fetch(`${BASE}/admin.html`)).text();
   assert.ok([...admin.matchAll(/modulepreload" href="(\/js\/admin\.js\?v=[^"]+)"/g)].length === 1, 'the console lists its entry');
