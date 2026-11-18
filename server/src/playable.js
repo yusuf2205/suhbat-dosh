@@ -13,6 +13,21 @@ const DIR = path.join(config.dataDir, 'playable');
 const MAX_PARALLEL = 2;
 const TIMEOUT_MS = 5 * 60_000;
 const FAIL_PAUSE_MS = 10 * 60_000;
+const CAP_BYTES = Number(process.env.PLAYABLE_CAP_GB || 20) * 1024 ** 3;   // the copies are only a cache: the oldest are removed when they grow past this
+let sinceCheck = 0;
+
+/** Keeps the folder of copies under its limit: the least recently made go first (they are made again when asked for). */
+function prune() {
+  try {
+    const list = fs.readdirSync(DIR).filter((n) => !n.includes('.tmp.')).map((n) => { const st = fs.statSync(path.join(DIR, n)); return { n, size: st.size, at: st.mtimeMs }; });
+    let total = list.reduce((a, x) => a + x.size, 0);
+    if (total <= CAP_BYTES) return;
+    for (const x of list.sort((p, q) => p.at - q.at)) {
+      if (total <= CAP_BYTES * 0.8) break;
+      try { fs.unlinkSync(path.join(DIR, x.n)); total -= x.size; } catch { /* gone */ }
+    }
+  } catch { /* nothing to prune */ }
+}
 
 let ffmpegOk = null;
 const haveFfmpeg = () => {
@@ -50,7 +65,7 @@ function plan(f) {
   if ((f.mime === 'audio/ogg' || f.mime === 'audio/webm') && (f.size || 1) > 0) {
     return { ext: 'm4a', mime: 'audio/mp4', args: ['-vn', '-c:a', 'aac', '-b:a', '64k', '-ac', '1', '-movflags', '+faststart'] };
   }
-  if (f.mime === 'video/mp4' && (f.size || 0) > 1_000_000 && !moovAtStart(filePath(f.id))) {
+  if (f.mime === 'video/mp4' && (f.size || 0) > 1_000_000 && (f.size || 0) < 700 * 1024 * 1024 && !moovAtStart(filePath(f.id))) {
     return { ext: 'mp4', mime: 'video/mp4', args: ['-c', 'copy', '-movflags', '+faststart'] };
   }
   return null;
@@ -75,7 +90,7 @@ function convert(f, p, out) {
     child.on('close', (code) => {
       clearTimeout(timer);
       try {
-        if (code === 0 && fs.statSync(tmp).size > 0) { fs.renameSync(tmp, out); return resolve(true); }
+        if (code === 0 && fs.statSync(tmp).size > 0) { fs.renameSync(tmp, out); sinceCheck += 1; if (sinceCheck % 20 === 1) prune(); return resolve(true); }
       } catch { /* failed */ }
       try { fs.unlinkSync(tmp); } catch { /* none */ }
       log('warn', 'playable copy failed', { file: f.id, code, err: err.trim().slice(0, 200) });
