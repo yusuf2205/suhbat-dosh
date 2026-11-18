@@ -125,6 +125,30 @@ app.use('/api', (_req, _res, next) => next(new HttpError(404, 'not_found')));
 // ---- entry pages and ES modules are served with the build id appended to every module URL, so a new
 // release is never mixed with modules a browser or CDN cached earlier (cache busting without a bundler).
 const NO_CACHE = 'private, no-cache, max-age=0, must-revalidate';
+// The modules that a page needs at its start, found by reading the static imports from its entry script. They are listed in the page as
+// "modulepreload", so the browser asks for all of them at once; without it each level of imports costs one more round trip through the tunnel.
+const STATIC_IMPORT = /(?:\bimport|\bexport)\s*(?:[\w$*{}\s,]+?\s*from\s*)?['"]((?:\.{1,2}\/|\/shared\/)[^'"?]+\.js)['"]/g;
+function startModules(entryUrl) {
+  const seen = new Set();
+  const order = [];
+  const walk = (url) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    const file = url.startsWith('/shared/') ? path.join(sharedDir, url.slice(8)) : path.join(webDir, url);
+    let src;
+    try { src = fs.readFileSync(file, 'utf8'); } catch { return; }
+    order.push(url);
+    for (const m of src.matchAll(STATIC_IMPORT)) walk(new URL(m[1], `http://x${url}`).pathname);
+  };
+  walk(entryUrl);
+  return order;
+}
+function withPreload(html) {
+  const entry = /<script[^>]*type="module"[^>]*src="(\/js\/[\w.-]+\.js)(?:\?[^"]*)?"/.exec(html);
+  if (!entry) return html;
+  const links = startModules(entry[1]).map((u) => `  <link rel="modulepreload" href="${u}?v=${BUILD_ID}">`).join('\n');
+  return html.replace('</head>', `${links}\n</head>`);
+}
 const versionedCache = new Map();
 function versioned(file, kind) {
   const st = fs.statSync(file);
@@ -132,6 +156,7 @@ function versioned(file, kind) {
   let out = versionedCache.get(key);
   if (out === undefined) {
     let s = fs.readFileSync(file, 'utf8').replace(/\?v=\d+/g, `?v=${BUILD_ID}`);
+    if (kind === 'html' && /\/(index|admin)\.html$/.test(file.replaceAll('\\', '/'))) s = withPreload(s);
     if (kind === 'js') {
       // static and dynamic imports of our own modules: ./x.js, ../x.js, /shared/x.js
       s = s.replace(/((?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"])((?:\.{1,2}\/|\/shared\/)[^'"?]+\.js)(['"])/g, (_m, a, b, c) => `${a}${b}?v=${BUILD_ID}${c}`);
