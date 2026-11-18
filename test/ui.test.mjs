@@ -200,7 +200,7 @@ test('admin: the gallery of a conversation on a phone: icon buttons, square pict
     await open(`/admin.html#/chat/${seed.chat}`);
     await page.waitForSelector('.tbtn');
     const w = await page.$$eval('.tbtn', (b) => b.map((x) => Math.round(x.getBoundingClientRect().width)));
-    assert.deepEqual(w, [44, 44], 'two icon buttons, no text, on a phone');
+    assert.ok(w.length >= 4 && w.every((x) => x === 44), `icon buttons only, no text, on a phone (search, filters, download, media, summary): ${w}`);
     await page.click('.tbtn[aria-label="Медиа и файлы"]');
     await page.click('.amedia-row:has-text("фотографий")');
     await page.waitForSelector('.agal .agal-item img');
@@ -494,10 +494,17 @@ test('admin: a word is looked for IN the conversation (all messages stay, the wo
   const { ctx, page, errors, open } = await phonePage(seed.admin);
   try {
     await open(`/admin.html#/chat/${seed.chat}`);
-    await page.waitForSelector('.achat-find input', { state: 'visible' });
+    await page.waitForSelector('.achat-who .tbtn[aria-label="Поиск по чату"]');
     await page.waitForSelector('.abub');
     const all = (await page.$$('.abub')).length;
     assert.ok(all >= 10, `the whole conversation is shown first (${all})`);
+    // search, filters and download are icons in the top bar, between Back and Media
+    const order = await page.evaluate(() => [...document.querySelectorAll('.achat-who > *')].map((e) => e.getAttribute('aria-label') || e.firstElementChild?.getAttribute('aria-label') || e.className));
+    const at = (s) => order.findIndex((x) => String(x).includes(s));
+    assert.ok(at('Назад') < at('Поиск по чату') && at('Поиск по чату') < at('Фильтры') && at('Фильтры') < at('Медиа и файлы'), `the order of the bar: ${order.join(' | ')}`);
+    assert.ok(!(await page.isVisible('.achat-find')), 'the field is closed until the search icon is pressed');
+    await page.click('.achat-who .tbtn[aria-label="Поиск по чату"]');
+    await page.waitForSelector('.achat-find input', { state: 'visible' });
     await page.fill('.achat-find input', 'сообщение 1');
     await page.waitForFunction(() => /из \d+/.test(document.querySelector('.achat-count')?.textContent || ''), null, { timeout: 10000 });
     assert.ok((await page.$$('.abub')).length >= all, 'the other messages are not hidden');
@@ -508,8 +515,13 @@ test('admin: a word is looked for IN the conversation (all messages stay, the wo
     await page.evaluate(() => window.scrollBy(0, 400));
     const still = await page.evaluate(() => document.querySelector('.achat-find').getBoundingClientRect().top);
     assert.ok(still >= 0 && still < 400, `and stays in sight after scrolling (${still})`);
-    await page.click('.achat-find .afilters > summary');
-    assert.ok(await page.isVisible('.achat-find .afilters-body'), 'the filters open right there');
+    await page.click('.achat-who .afilters > summary');
+    assert.ok(await page.isVisible('.afilters-body'), 'the filters open as a sheet');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).overflow), 'hidden', 'the page behind does not scroll while the sheet is open');
+    const sheet = await page.evaluate(() => { const r = document.querySelector('.afilters-body').getBoundingClientRect(); return { bottom: Math.round(r.bottom), h: innerHeight, top: Math.round(r.top) }; });
+    assert.ok(sheet.bottom <= sheet.h && sheet.top >= 0, `the sheet is inside the screen (${JSON.stringify(sheet)})`);
+    await page.click('.afilters-head .btn');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).overflow), 'visible', 'closed: the page scrolls again');
     await page.fill('.achat-find input', 'такого слова нет нигде');
     await page.waitForFunction(() => document.querySelector('.achat-count')?.textContent === 'Нет', null, { timeout: 10000 });
     assert.equal((await page.$$('.abub-text mark')).length, 0);

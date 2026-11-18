@@ -452,7 +452,17 @@ table.t.health td { overflow-wrap: anywhere; }
 .achat-find .afilters summary, .achat-find .amenu summary { background: rgba(255, 255, 255, .12); color: #fff; padding: 5px 10px; font-size: .85rem; }
 .achat-find .chip.reset { background: rgba(255, 255, 255, .12); color: #fff; border: 0; }
 /* the filters open under the bar, over the conversation, instead of pushing it down */
-.achat-find .afilters[open] .afilters-body { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 14; margin-top: 0; padding: 12px; border-radius: 14px; background: var(--surface, #fff); color: var(--ink, #17171a); box-shadow: 0 10px 28px rgba(0, 0, 0, .28); max-height: 70vh; overflow: auto; }
+.afsheet { position: fixed; inset: 0; z-index: 420; }
+.afilters-back { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); }
+.afilters-body { position: absolute; left: 0; right: 0; bottom: 0; display: grid; gap: 10px; margin: 0; padding: 14px 14px max(14px, env(safe-area-inset-bottom)); max-height: 82vh; overflow-y: auto; overscroll-behavior: contain; border-radius: 18px 18px 0 0; background: var(--surface, #fff); color: var(--ink, #17171a); box-shadow: 0 -10px 30px rgba(0, 0, 0, .3); }
+.afilters-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.afilters-head .chip { margin-left: auto; }
+@media (min-width: 700px) { .afilters-body { left: 50%; right: auto; width: min(560px, 92vw); transform: translateX(-50%); } }
+.afilters.on > summary { box-shadow: inset 0 0 0 2px var(--yel, #fbc700); }
+/* a picture, a sheet or a window is open: only it answers to the finger, the page behind does not scroll */
+html.adm-locked, html:has(.adlg), html:has(.alb) { overflow: hidden; }
+.alb, .adlg { overscroll-behavior: contain; }
+.alb { touch-action: none; }
 .achat-find .amenu { position: relative; }
 .abub-text mark { background: #ffb000; color: #17171a; }
 .achat-find .as-ico { color: var(--yel, #fbc700); font-size: 1.2rem; }
@@ -529,7 +539,12 @@ table.t.health td { overflow-wrap: anywhere; }
 /* the buttons of a conversation (media and files, summary): an icon on a phone */
 .tbtn { display: inline-flex; align-items: center; gap: 8px; }
 .tbtn svg { flex: none; color: var(--yel, #fbc700); }
+.achat-who .afilters, .achat-who .amenu { margin-top: 0; flex: none; }
+.achat-who .afilters > summary.tbtn, .achat-who .amenu > summary.tbtn { height: 44px; padding: 0 14px; border-radius: 14px; background: var(--ink-2, #26262b); color: #fff; font-weight: 600; }
+.achat-who .tbtn[aria-pressed='true'] { background: var(--yel, #fbc700); color: #1b1b1f; }
+.achat-who .tbtn[aria-pressed='true'] svg { color: #1b1b1f; }
 @media (max-width: 640px) {
+  .achat-who .afilters > summary.tbtn, .achat-who .amenu > summary.tbtn { width: 44px; padding: 0; justify-content: center; }
   .tbtn { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 14px; background: var(--ink-2, #26262b); border-color: transparent; }
   .tbtn-t { display: none; }
   .achat-who { gap: 8px; }

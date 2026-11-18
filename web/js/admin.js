@@ -1124,9 +1124,18 @@ function locationLine(text) {
 
 const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['photo', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['audio', 'Аудио'], ['voicemsg', 'Голосовые'], ['gif', 'GIF'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
 
+// While a picture, a sheet or a menu is open only it answers to the finger: the page behind does not scroll (like in Telegram)
+let scrollLocks = 0;
+function lockScroll(on) {
+  scrollLocks = Math.max(0, scrollLocks + (on ? 1 : -1));
+  document.documentElement.classList.toggle('adm-locked', scrollLocks > 0);
+}
+window.addEventListener('hashchange', () => { scrollLocks = 0; document.documentElement.classList.remove('adm-locked'); });
+
 /** One picture at full size, with the arrows and Esc: all the pictures of the conversation that are loaded. */
 function openLightbox(imgs, start) {
   let i = start;
+  lockScroll(true);
   const turns = new Map(); // picture -> degrees; a turned picture stays turned while the window is open
   let z = 1; let px = 0; let py = 0;   // zoom and shift of the picture (two fingers zoom, one finger moves a zoomed picture, a double tap toggles)
   const pic = h('img', { class: 'alb-img', alt: '' });
@@ -1141,7 +1150,8 @@ function openLightbox(imgs, start) {
   };
   const turn = (d) => { turns.set(i, (((turns.get(i) || 0) + d) % 360 + 360) % 360); paintTurn(); };
   const show = () => { z = 1; px = 0; py = 0; pic.src = imgs[i].src; cap.textContent = `${i + 1} / ${imgs.length}`; paintTurn(); };
-  const close = () => { root.remove(); document.removeEventListener('keydown', key, true); };
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; lockScroll(false); root.remove(); document.removeEventListener('keydown', key, true); };
   const go = (d) => { i = (i + d + imgs.length) % imgs.length; show(); };
   const key = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); close(); } else if (e.key === 'ArrowRight') go(1); else if (e.key === 'ArrowLeft') go(-1);
@@ -1496,7 +1506,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     chips.forEach((b, i) => b.setAttribute('aria-pressed', String(CHAT_KINDS[i][0] === f.kind)));
     meaningBtn.setAttribute('aria-pressed', String(f.meaning));
     clearBtn.hidden = !(active() || f.q);
-    filters.querySelector('summary').textContent = f.kind || f.author || f.since || f.until || f.meaning ? '⚙ Фильтры •' : '⚙ Фильтры';
+    filters.classList.toggle('on', !!(f.kind || f.author || f.since || f.until || f.meaning));   // a dot on the button: a filter is on
     const word = !!f.q && !f.meaning;
     hitCount.hidden = !word;
     hitCount.textContent = !word ? '' : find.ids.length ? `${find.i + 1} из ${find.total}` : find.done ? 'Нет' : '…';
@@ -1505,24 +1515,42 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     hitDown.disabled = find.i <= 0;
   }
   const exportLink = (format, label) => h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.currentTarget.href = `/api/admin/chats/${id}/export?${qs({ format })}`; e.currentTarget.closest('details').open = false; } }, label);
-  const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip solid', title: 'Скачать переписку (с учётом фильтров)' }, '⬇ Скачать'),
+  const exportMenu = h('details', { class: 'amenu' }, h('summary', { class: 'chip tbtn', title: 'Скачать переписку (с учётом фильтров)', 'aria-label': 'Скачать переписку' }, icon('download', 20), h('span', { class: 'tbtn-t' }, 'Скачать')),
     h('div', { class: 'amenu-list' }, exportLink('txt', 'Текст (.txt)'), exportLink('html', 'Страница (.html)'),
       h('a', { class: 'amenu-item', href: '#', onclick: (e) => { e.preventDefault(); e.currentTarget.closest('details').open = false; openExportDialog({ scope: 'chat', id, title: c0.title || state.chats.get(id)?.title || `Чат #${id}` }); } }, 'Архив с файлами, ссылка…')));
   document.addEventListener('click', (e) => { if (!exportMenu.contains(e.target)) exportMenu.open = false; });
-  const filters = h('details', { class: 'afilters' }, h('summary', { class: 'chip' }, '⚙ Фильтры'),
-    h('div', { class: 'afilters-body' },
+  // the filters open as a sheet over the conversation (made at the page itself, not inside the bar: nothing of the bar may cut or move it)
+  const filters = h('details', { class: 'afilters' }, h('summary', { class: 'chip tbtn', title: 'Фильтры', 'aria-label': 'Фильтры' }, icon('filter', 20), h('span', { class: 'tbtn-t' }, 'Фильтры')));
+  const sheet = h('div', { class: 'afsheet' },
+    h('div', { class: 'afilters-back', onclick: () => { filters.open = false; } }),
+    h('div', { class: 'afilters-body', role: 'dialog', 'aria-label': 'Фильтры' },
+      h('div', { class: 'afilters-head' }, h('b', null, 'Фильтры'), clearBtn, h('button', { class: 'btn', type: 'button', onclick: () => { filters.open = false; } }, 'Готово')),
       h('div', { class: 'at-row' }, h('div', { class: 'chips', role: 'group', 'aria-label': 'Тип сообщений' }, chips, meaningBtn)),
       h('div', { class: 'at-row' }, authorSel, h('span', { class: 'at-lab' }, 'с'), since, h('span', { class: 'at-lab' }, 'по'), until),
       h('div', { class: 'at-row' }, h('span', { class: 'at-lab' }, 'Перейти к:'), toDate, toNumber)));
   // the search and the filters stay in sight while the conversation is read (they are part of the bar that does not scroll away)
-  const findRow = h('div', { class: 'achat-find' },
-    h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search, hitCount, hitUp, hitDown, clearBtn, filters, may('chats_export') ? exportMenu : null);
-  document.addEventListener('click', (e) => { if (!filters.contains(e.target)) filters.open = false; });
+  const findRow = h('div', { class: 'achat-find', hidden: true },
+    h('span', { class: 'as-ico', 'aria-hidden': 'true' }, '⌕'), search, hitCount, hitUp, hitDown,
+    h('button', { class: 'achat-find-x', type: 'button', 'aria-label': 'Закрыть поиск', title: 'Закрыть поиск', onclick: () => { search.value = ''; f.q = ''; findWord(); findRow.hidden = true; findBtn.setAttribute('aria-pressed', 'false'); } }, '✕'));
+  const findBtn = h('button', { class: 'chip tbtn', type: 'button', title: 'Поиск по чату', 'aria-label': 'Поиск по чату', 'aria-pressed': 'false', onclick: () => {
+    findRow.hidden = !findRow.hidden;
+    findBtn.setAttribute('aria-pressed', String(!findRow.hidden));
+    if (!findRow.hidden) search.focus();
+  } }, icon('search', 20), h('span', { class: 'tbtn-t' }, 'Поиск'));
+  // a sheet over the conversation: the conversation behind it does not move and does not answer to taps
+  let sheetOn = false;
+  filters.addEventListener('toggle', () => {
+    if (filters.open === sheetOn) return;
+    sheetOn = filters.open;
+    if (sheetOn) document.body.append(sheet); else sheet.remove();
+    lockScroll(sheetOn);
+  });
+  window.addEventListener('hashchange', () => { sheet.remove(); sheetOn = false; filters.open = false; }, { once: true });
   paintTools();
 
   // a message: its menu, on the three dots or the right mouse button; nothing lies over the text
   let popup = null;
-  const closePopup = () => { popup?.remove(); popup = null; document.removeEventListener('keydown', popupKey, true); };
+  const closePopup = () => { if (popup) lockScroll(false); popup?.remove(); popup = null; document.removeEventListener('keydown', popupKey, true); };
   const popupKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); closePopup(); } };
   const copy = async (text, done) => { try { await navigator.clipboard.writeText(text); notify(done, 2000); } catch { notify('Не удалось скопировать'); } };
   const openMessageMenu = (bub, x, y) => {
@@ -1556,6 +1584,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
         openExportDialog({ scope: 'message', id: mid, title: `Сообщение №${mid}${who ? ` · ${who}` : ''}` });
       }));
     document.body.append(popup);
+    lockScroll(true);
     const r = popup.getBoundingClientRect();
     popup.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
     popup.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
@@ -1652,6 +1681,7 @@ async function showChat(id, focus = null) {   // focus: a message to scroll to (
     c.type === 'direct'
       ? (() => { const { right, left } = directSides(); return h('div', { class: 'acw-main' }, h('div', { class: 'acw-side left' }, h('small', null, 'слева'), left), h('span', { class: 'acw-and', 'aria-hidden': 'true' }, '⇄'), h('div', { class: 'acw-side right' }, h('small', null, 'справа'), right)); })()
       : h('div', { class: 'acw-main' }, h('div', { class: 'acw-side' }, h('small', null, c.type === 'channel' ? 'канал' : 'группа'), h('b', null, chatName)), h('small', { class: 'muted' }, `${info.members.length} участн.`)),
+    findBtn, filters, may('chats_export') ? exportMenu : null,
     h('button', { class: 'chip tbtn', type: 'button', title: 'Медиа и файлы', 'aria-label': 'Медиа и файлы', onclick: () => openMediaList(id, chatName, (k) => { f.kind = k; reload(); }) }, icon('image', 20), h('span', { class: 'tbtn-t' }, 'Медиа и файлы')),
     h('button', { class: 'chip tbtn', type: 'button', title: 'Сводка', 'aria-label': 'Сводка', onclick: () => openChatSummary(id, chatName, (name) => { authorSel.value = name; f.author = name; reload(); }) }, icon('trend', 20), h('span', { class: 'tbtn-t' }, 'Сводка')));
   // on a phone the menu of the console stays on top: the bar goes right under it
