@@ -2358,3 +2358,14 @@ html.shot-hidden body { filter: blur(24px) brightness(.6); pointer-events: none;
 @keyframes qr-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
 .text a.mention { font-weight: 600; }
+
+/* the map card of a shared place, like in Telegram: the map around the point and a pin on it */
+.gmap { position: relative; display: block; width: 100%; min-width: 220px; max-width: 480px; padding: 0; border: 0; border-radius: 14px; overflow: hidden; background: #e9e4d4; cursor: pointer; isolation: isolate; }
+.gmap-in { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.gmap-t { position: absolute; width: 256px; height: 256px; max-width: none; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.gmap-pin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -100%); line-height: 0; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .35)); pointer-events: none; }
+.gmap-badge { position: absolute; left: 8px; top: 8px; padding: 3px 9px; border-radius: 10px; background: rgba(0, 0, 0, .62); color: #fff; font-size: .78rem; font-weight: 600; }
+.gmap-attr { position: absolute; right: 4px; bottom: 2px; padding: 0 5px; border-radius: 6px; background: rgba(255, 255, 255, .75); color: #333; font-size: .62rem; }
+.geo-card.geo-map { display: grid; gap: 4px; padding: 0; background: none; cursor: default; }
+.geo-cap { font-size: .78rem; }
+.abub-geo { display: grid; gap: 4px; max-width: 480px; }

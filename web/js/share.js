@@ -6,6 +6,7 @@ import { api } from './net.js';
 import { avatar, modal, popMenu, toast } from './ui.js';
 import { icon } from './icons.js';
 import { startCall } from './call.js';
+import { mapCard } from './geomap.js';
 
 /** Open tel:/mailto:/https: links the way the platform wants (the Android shell has its own opener). */
 export function openExternal(url) {
@@ -102,11 +103,11 @@ export function locationNode(m) {
   const url = `https://yandex.ru/maps/?pt=${g.lng},${g.lat}&z=16&l=map`;
   const live = m.live_until ? m.live_until > Date.now() : null;
   const clock = m.live_until ? new Date(m.live_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  const card = h('button', { class: `geo-card${live ? ' live' : ''}`, type: 'button', onclick: () => openExternal(url) },
-    h('span', { class: 'geo-pin' }, icon('pin', 26)),
-    h('span', { class: 'geo-txt' }, h('b', null, live ? `\u{1F534} ${t('geo.live_on', { time: clock })}` : m.live_until ? t('geo.live_off') : t('msg.location')),
-      h('span', { class: 'muted' }, `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`),
-      h('span', { class: 'geo-open' }, t('geo.open'))));
+  // the map around the place with a pin, like the card of Telegram; a tap opens it in a map application
+  const title = live ? `\u{1F534} ${t('geo.live_on', { time: clock })}` : m.live_until ? t('geo.live_off') : '';
+  const card = h('div', { class: `geo-card geo-map${live ? ' live' : ''}` },
+    mapCard(g.lat, g.lng, { badge: title, onOpen: () => openExternal(url) }),
+    h('span', { class: 'geo-cap muted' }, `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)} · `, h('a', { href: url, onclick: (e) => { e.preventDefault(); openExternal(url); } }, t('geo.open'))));
   if (live && m.sender_id === S.me.id) {
     return h('div', { class: 'geo-wrap' }, card, h('button', { class: 'btn small danger', type: 'button', onclick: () => stopLive(m.id) }, t('geo.stop')));
   }

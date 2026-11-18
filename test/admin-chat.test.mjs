@@ -99,6 +99,10 @@ test('marks, summary, going to a date or a number, filters; ordinary people get 
   assert.equal(hits.total, 1);
   assert.deepEqual((await call(admin.cookie, 'GET', `${url}/hits?q=ст`)).data.ids, [], 'two letters: nothing is scanned');
   assert.equal((await call(a.cookie, 'GET', `${url}/hits?q=x`)).status, 403, 'ordinary people get none of it');
+  // the tiles of the map cards: only for the people who are signed in, and only real tiles
+  assert.equal((await call('', 'GET', '/api/map/tile/16/1/1.png')).status, 401, 'a tile for a signed-in person only');
+  assert.equal((await call(a.cookie, 'GET', '/api/map/tile/99/1/1.png')).status, 400, 'a zoom that does not exist');
+  assert.equal((await call(a.cookie, 'GET', '/api/map/tile/3/9/1.png')).status, 400, 'a tile outside the map');
   void list;
 });
 

@@ -709,3 +709,20 @@ test('admin: the bar of a personal conversation shows how to reach each side (th
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); }
 });
+
+test('a place is a map card with a pin in the admin console', { skip: !canRun }, async () => {
+  const sent = await call(seed.madina, 'POST', `/api/chats/${seed.chat}/messages`, { text: 'geo:41.311081,69.240562', kind: 'location', client_id: 'geo-card-test-1' });
+  assert.ok(sent.status < 300, `the place was sent (${sent.status})`);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const { ctx, page, errors, open } = await phonePage(seed.admin);
+  try {
+    await page.route('**/api/map/tile/**', (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png }));
+    await open(`/admin.html#/chat/${seed.chat}`);
+    await page.waitForSelector('.abub-geo .gmap', { timeout: 10000 });
+    assert.ok((await page.$$('.abub-geo .gmap-t')).length >= 9, 'the map is made of tiles');
+    assert.ok(await page.isVisible('.abub-geo .gmap-pin'), 'with a pin');
+    const w = await page.$eval('.abub-geo .gmap', (e) => Math.round(e.getBoundingClientRect().width));
+    assert.ok(w >= 200 && w <= 480, `the card fits the screen (${w})`);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); }
+});

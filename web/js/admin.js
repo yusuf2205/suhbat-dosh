@@ -3,6 +3,7 @@ import { h, clear, linkify } from './dom.js';
 import { SPEEDS, currentSpeed, setSpeed } from './speed.js';
 import './ripple.js';
 import { icon } from './icons.js';
+import { mapCard } from './geomap.js';
 import { qrCanvas } from './qr.js';
 import { canOpenNative, openNative } from './native.js';
 
@@ -1119,8 +1120,13 @@ function messageNode(m, ctx, prev) {
 function locationLine(text) {
   const g = /^geo:(-?[\d.]+),(-?[\d.]+)/.exec(String(text || ''));
   if (!g) return h('div', { class: 'abub-text' }, text);
-  return h('div', { class: 'abub-text' }, '\u{1F4CD} Геопозиция: ',
-    h('a', { href: `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, `${g[1]}, ${g[2]}`), ' ', h('small', { class: 'muted' }, 'Яндекс Карты'));
+  const lat = Number(g[1]);
+  const lng = Number(g[2]);
+  const url = `https://yandex.ru/maps/?pt=${g[2]},${g[1]}&z=16&l=map`;
+  if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) return h('div', { class: 'abub-text' }, text);
+  // the map around the place with a pin, like in Telegram
+  return h('div', { class: 'abub-geo' }, mapCard(lat, lng, { onOpen: () => window.open(url, '_blank', 'noopener') }),
+    h('small', { class: 'muted' }, `${g[1]}, ${g[2]} · `, h('a', { href: url, target: '_blank', rel: 'noopener', title: 'Открыть в Яндекс Картах' }, 'Яндекс Карты')));
 }
 
 const CHAT_KINDS = [['', 'Всё'], ['marked', '⭐ Помеченные'], ['media', '🖼 Галерея'], ['edited', 'Изменённые'], ['deleted', '🗑 Удалённые'], ['photo', 'Фото'], ['video', 'Видео'], ['file', 'Файлы'], ['audio', 'Аудио'], ['voicemsg', 'Голосовые'], ['gif', 'GIF'], ['link', 'Ссылки'], ['location', 'Геопозиции'], ['call', 'Звонки']];
