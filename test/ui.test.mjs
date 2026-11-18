@@ -516,12 +516,12 @@ test('admin: a word is looked for IN the conversation (all messages stay, the wo
     const still = await page.evaluate(() => document.querySelector('.achat-find').getBoundingClientRect().top);
     assert.ok(still >= 0 && still < 400, `and stays in sight after scrolling (${still})`);
     await page.click('.achat-who .afilters > summary');
-    assert.ok(await page.isVisible('.afilters-body'), 'the filters open as a sheet');
+    await page.waitForSelector('.afilters-body', { state: 'visible', timeout: 5000 });
     assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).overflow), 'hidden', 'the page behind does not scroll while the sheet is open');
     const sheet = await page.evaluate(() => { const r = document.querySelector('.afilters-body').getBoundingClientRect(); return { bottom: Math.round(r.bottom), h: innerHeight, top: Math.round(r.top) }; });
     assert.ok(sheet.bottom <= sheet.h && sheet.top >= 0, `the sheet is inside the screen (${JSON.stringify(sheet)})`);
     await page.click('.afilters-head .btn');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).overflow), 'visible', 'closed: the page scrolls again');
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).overflow === 'visible', null, { timeout: 5000 });   // closed: the page scrolls again
     await page.fill('.achat-find input', 'такого слова нет нигде');
     await page.waitForFunction(() => document.querySelector('.achat-count')?.textContent === 'Нет', null, { timeout: 10000 });
     assert.equal((await page.$$('.abub-text mark')).length, 0);
