@@ -1660,7 +1660,7 @@ function buildFileInner(m) {
     return tn ? h('div', { class: 'voice-with-tr' }, voiceNode(m), tn) : voiceNode(m);
   }
   prefetchNative(f);
-  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) openInSystem(f); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
+  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) openInSystem({ url: `${f.url}?dl=1`, name: f.name, mime: f.mime }, { toast }); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));
 }

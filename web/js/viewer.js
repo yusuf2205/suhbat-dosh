@@ -1,6 +1,6 @@
 import { speedRow } from './speed.js';
 import { closeLayer, openLayer } from './backnav.js';
-import { canOpenNative, isOffice, openNative } from './native.js';
+import { canOpenNative, isOffice, openDocument, openNative } from './native.js';
 import { h, clear, formatBytes, longPress } from './dom.js';
 import { t, errText } from './i18n.js';
 import { S } from './state.js';
@@ -264,7 +264,8 @@ export async function openViewer(chatId, messageId, single = null) {
       h('b', null, f.name), h('span', { class: 'muted' }, `${f.mime} · ${formatBytes(f.size)}`),
       h('div', { class: 'row', style: { justifyContent: 'center', marginTop: '14px' } },
         canOpenNative() ? h('button', { class: 'btn', type: 'button', onclick: () => openNative(f) }, t('viewer.open')) : null,
-        !canOpenNative() && (isPdf(f) || isOffice(f)) ? h('a', { class: 'btn', href: `${f.url}?inline=1`, target: '_blank', rel: 'noopener' }, t('viewer.open')) : null,
+        !canOpenNative() && isPdf(f) ? h('a', { class: 'btn', href: `${f.url}?inline=1`, target: '_blank', rel: 'noopener' }, t('viewer.open')) : null,
+        !canOpenNative() && isOffice(f) ? h('button', { class: 'btn', type: 'button', onclick: () => openDocument({ url: `${f.url}?dl=1`, name: f.name, mime: f.mime }, { toast }) }, t('viewer.open')) : null,
         h('a', { class: `btn ${canOpenNative() ? 'secondary' : 'secondary'}`, href: `${f.url}?dl=1`, download: f.name, onclick: (e) => { if (canOpenNative()) { e.preventDefault(); openNative(f); } } }, t('viewer.download')))));
   }
 

@@ -5,7 +5,7 @@ import './ripple.js';
 import { icon } from './icons.js';
 import { mapCard } from './geomap.js';
 import { qrCanvas } from './qr.js';
-import { canOpenNative, openNative } from './native.js';
+import { canOpenNative, isOffice, openDocument, openNative } from './native.js';
 
 const root = document.getElementById('admin-root');
 const fmtDT = (ts) => (ts ? new Date(ts).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'medium' }) : '—');
@@ -1104,7 +1104,7 @@ function messageNode(m, ctx, prev) {
     m.file && (m.kind === 'voice' || m.kind === 'audio') ? voiceBubble(m) : '',
     m.file && m.kind === 'video' && isMotion(m.file) ? lazyVideo(h('video', { class: 'abub-vid abub-motion', autoplay: !nearScreen, muted: true, loop: true, playsinline: true, src: `/api/admin/files/${m.file.id}` })) : '',
     m.file && m.kind === 'video' && !isMotion(m.file) ? h('div', { class: 'abub-video' }, player(lazyVideo(h('video', { class: 'abub-vid', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/files/${m.file.id}` }))), h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener' }, `${m.file.name} (${fmtBytes(m.file.size)})`)) : '',
-    m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener', onclick: (e) => { if (!canOpenNative()) return; e.preventDefault(); openNative({ url: `/api/admin/files/${m.file.id}`, name: m.file.name, mime: m.file.mime, id: m.file.id }).then((ok) => { if (!ok) window.open(`/api/admin/files/${m.file.id}`, '_blank', 'noopener'); }); } }, m.file.name), ` (${fmtBytes(m.file.size)}) `, h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}?download=1`, download: m.file.name, title: 'Скачать файл' }, '⬇ скачать')) : '',
+    m.file && !['image', 'voice', 'audio', 'video'].includes(m.kind) ? h('div', { class: 'abub-text' }, kindIcon, ' ', h('a', { href: `/api/admin/files/${m.file.id}`, target: '_blank', rel: 'noopener', onclick: (e) => { if (isOffice(m.file)) { e.preventDefault(); openDocument({ url: `/api/admin/files/${m.file.id}`, name: m.file.name, mime: m.file.mime, id: m.file.id }, { toast: (x) => notify(x, 2500) }); return; } if (!canOpenNative()) return; e.preventDefault(); openNative({ url: `/api/admin/files/${m.file.id}`, name: m.file.name, mime: m.file.mime, id: m.file.id }).then((ok) => { if (!ok) window.open(`/api/admin/files/${m.file.id}`, '_blank', 'noopener'); }); } }, m.file.name), ` (${fmtBytes(m.file.size)}) `, h('a', { class: 'abub-dl', href: `/api/admin/files/${m.file.id}?download=1`, download: m.file.name, title: 'Скачать файл' }, '⬇ скачать')) : '',
     m.kind === 'location' ? locationLine(m.text) : '',
     m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме', m.tg_deleted_info?.at ? ` · ${fmtDT(m.tg_deleted_info.at)}` : '', ' · ',
