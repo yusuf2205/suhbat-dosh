@@ -354,7 +354,8 @@ function chatFilter(id, query) {
 
 const adminMessage = (m, history = {}) => {
   const s = m.sender_id ? getUser(m.sender_id) : null;
-  return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [], mark: q.get('SELECT note, created_at FROM admin_marks WHERE message_id = ?', m.id) || null };
+  return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [], mark: q.get('SELECT note, created_at FROM admin_marks WHERE message_id = ?', m.id) || null,
+    ...(m.tg_deleted ? { tg_deleted_info: { at: m.tg_deleted_at || null, by: m.tg_deleted_by ? userRef(getUser(m.tg_deleted_by)) : null } } : {}) };
 };
 const editHistory = (chatId) => {
   const history = {};

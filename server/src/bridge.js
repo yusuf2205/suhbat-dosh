@@ -435,7 +435,7 @@ function applyDeleted(uid, b) {
       : q.all("SELECT m.* FROM messages m JOIN tg_chats c ON c.chat_id = m.chat_id WHERE c.user_id = ? AND c.kind != 'channel' AND m.import_key LIKE ?", uid, `tg:%:${id}`);
     for (const m of rows) {
       if (m.tg_deleted) continue;
-      q.run('UPDATE messages SET tg_deleted = 1 WHERE id = ?', m.id);
+      q.run('UPDATE messages SET tg_deleted = 1, tg_deleted_at = ? WHERE id = ?', now(), m.id);
       emit(memberIds(m.chat_id), { type: EVENTS.MESSAGE_UPDATE, message: messageOut(getMessage(m.id)) });
       n += 1;
     }
@@ -885,7 +885,7 @@ export async function bridgeDeleteChat(chatId, user) {
   if (!row || row.kind !== 'user' || row.ctype === 'direct') throw new HttpError(400, 'invalid_input');
   await call('POST', '/delete-chat', user.id, { chat: row.tg_chat });   // if Telegram refuses, nothing here changes
   const last = q.get('SELECT last_message_id AS n FROM chats WHERE id = ?', chatId)?.n || 0;
-  q.run('UPDATE messages SET tg_deleted = 1 WHERE chat_id = ? AND tg_deleted = 0', chatId);
+  q.run('UPDATE messages SET tg_deleted = 1, tg_deleted_at = ?, tg_deleted_by = ? WHERE chat_id = ? AND tg_deleted = 0', now(), user.id, chatId);
   q.run('UPDATE members SET cleared_before = ?, last_read_id = MAX(last_read_id, ?), hidden = 1 WHERE chat_id = ? AND user_id = ?', last, last, chatId, user.id);
   audit(user.id, 'bridge.delete_chat', { chat_id: chatId, target_type: 'chat', target_id: String(chatId), details: { tg_chat: row.tg_chat } });
   emit([user.id], { type: EVENTS.CHAT_REMOVE, chat_id: chatId });
