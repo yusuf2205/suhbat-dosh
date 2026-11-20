@@ -642,10 +642,10 @@ test('a personal chat deleted for good goes from Telegram too, for its owner onl
 test('the console tells who deleted a message in Telegram: the owner for the own, the author or the owner for the other side', { skip: !havePy }, async () => {
   const u = await phoneUser('+998900002710', 'Кто удалил');
   await link(u);
-  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, ...body }) }).then((r) => r.json());
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', ...body }) }).then((r) => r.json());
   await tgPost({ tg_chat: '7101', title: 'Собеседник', author: 'Собеседник', tg_msg: 1, text: 'от друга' });
   await tgPost({ tg_chat: '7101', title: 'Собеседник', author: 'Я', out: true, tg_msg: 2, text: 'от меня' });
-  const chatId = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => /Собеседник/.test(c.title)).id;
+  const chatId = (await call(admin.cookie, 'GET', `/api/admin/chats/of/${u.user.id}`)).data.chats.find((c) => /Собеседник/.test(c.title)).id;
   assert.equal((await fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, deleted: true, tg_chat: '7101', ids: [1, 2] }) })).status, 200);
   const got = (await call(admin.cookie, 'GET', `/api/admin/chats/${chatId}/messages`)).data.messages;
   const theirs = got.find((x) => x.text === 'от друга').tg_deleted_info;
