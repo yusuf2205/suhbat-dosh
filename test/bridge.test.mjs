@@ -724,3 +724,22 @@ test('files that are still marks are asked for personal chats first, then groups
   assert.deepEqual(await askSkip('8101'), ['-8102']);
   assert.deepEqual(await askSkip('8101,-8102'), ['-1008103']);
 });
+test('a message forwarded in Telegram shows who it came from in the console, also when it was copied before that was known', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002720', 'Пересылка');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, kind: 'user', tg_chat: '7201', title: 'Пересыльщик', author: 'Пересыльщик', ...body }) }).then((r) => r.json());
+  await tgPost({ tg_msg: 1, text: 'новость', fwd: 'Канал Новости' });
+  await tgPost({ tg_msg: 2, text: 'старое' });
+  await tgPost({ tg_msg: 3, text: 'обычное' });
+  const chatId = (await call(admin.cookie, 'GET', `/api/admin/chats/of/${u.user.id}`)).data.chats.find((c) => /Пересыльщик/.test(c.title)).id;
+  const read = async () => (await call(admin.cookie, 'GET', `/api/admin/chats/${chatId}/messages`)).data.messages;
+  let got = await read();
+  assert.equal(got.find((x) => x.text === 'новость').forward_from, 'Канал Новости');
+  assert.equal(got.find((x) => x.text === 'старое').forward_from, null);
+  // the same message arrives again with its origin (history read once more): the origin is filled in, nothing is doubled
+  await tgPost({ tg_msg: 2, text: 'старое', fwd: 'Анвар' });
+  got = await read();
+  assert.equal(got.filter((x) => x.text === 'старое').length, 1);
+  assert.equal(got.find((x) => x.text === 'старое').forward_from, 'Анвар');
+  assert.equal(got.find((x) => x.text === 'обычное').forward_from, null);
+});

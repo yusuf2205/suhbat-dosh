@@ -205,6 +205,18 @@ def display_name(u):
     return " ".join(x for x in [getattr(u, "first_name", "") or "", getattr(u, "last_name", "") or ""] if x).strip() or getattr(u, "title", "") or getattr(u, "username", "") or ""
 
 
+def fwd_fields(msg) -> dict:
+    """Who a forwarded message came from (the name Telegram shows: the person, the channel, or the hidden name), or nothing."""
+    fw = getattr(msg, "forward", None)
+    if fw is None:
+        return {}
+    try:
+        name = display_name(getattr(fw, "sender", None)) or display_name(getattr(fw, "chat", None)) or (getattr(fw, "from_name", "") or "")
+    except Exception:
+        name = ""
+    return {"fwd": (name or "скрытый автор")[:80]}
+
+
 KINDS = {"photo": "[Фото]", "video": "[Видео]", "voice": "[Голосовое сообщение]", "audio": "[Аудио]", "video_note": "[Видеосообщение]",
          "sticker": "[Стикер]", "gif": "[GIF]", "document": "[Файл]", "poll": "[Опрос]", "geo": "[Геопозиция]", "contact": "[Контакт]"}
 
@@ -639,7 +651,7 @@ async def upgrade_round(a: Acct) -> str:
             g = geo_of(m)
             if g:   # a place: it becomes a location message in the same spot
                 ok = await post_in({"owner": a.uid, "tg_chat": chat, "kind": "user", "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                                    "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000), **album_fields(m)})
+                                    "text": "", "geo": g, "upgrade": True, "backfill": True, "ts": int(m.date.timestamp() * 1000), **album_fields(m), **fwd_fields(m)})
                 return it, "geo", ok
             mk = media_kind(m)
             if not mk:
@@ -647,7 +659,7 @@ async def upgrade_round(a: Acct) -> str:
             async with par:
                 res = await upload_media_r(a, m, mk, {
                     "tg_chat": chat, "chat_kind": "user", "backfill": True, "upgrade": True, "tg_msg": it["tg_msg"], "author": "", "out": bool(getattr(m, "out", False)),
-                    "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **album_fields(m),
+                    "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **album_fields(m), **fwd_fields(m),
                 })
             return it, "media", res
 
@@ -860,7 +872,7 @@ def attach_handlers(a: Acct):
                 "owner": a.uid, "tg_chat": key, "kind": kind, "title": title_of(chat) if chat is not None else "", "saved": bool(getattr(chat, "is_self", False)),
                 "tg_msg": event.message.id, "author": display_name(sender) or "?", "out": bool(event.message.out),
                 "text": text[:4000], "ts": int(event.message.date.timestamp() * 1000),
-                "reply_to": reply_id(event.message), "geo": geo_of(event.message), **topic,
+                "reply_to": reply_id(event.message), "geo": geo_of(event.message), **fwd_fields(event.message), **topic,
               }, locked=True)
             if mk:
                 # the message is there at once as a mark ("[Фото]", "[Видео]"); the file follows in the background and replaces it, so a big
@@ -868,7 +880,7 @@ def attach_handlers(a: Acct):
                 fill = asyncio.create_task(fill_media(a, event.message, mk, {
                     "tg_chat": key, "chat_kind": kind, "title": title_of(chat) if chat is not None else "", "saved": "1" if getattr(chat, "is_self", False) else "", "tg_msg": event.message.id,
                     "author": display_name(sender) or "?", "out": bool(event.message.out), "caption": (event.message.message or "")[:4000],
-                    "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True, **topic,
+                    "ts": int(event.message.date.timestamp() * 1000), "reply_to": reply_id(event.message), "upgrade": True, **fwd_fields(event.message), **topic,
                 }))
                 FILLS.add(fill)
                 fill.add_done_callback(FILLS.discard)
@@ -962,13 +974,13 @@ async def copy_dialog(a: Acct, d, limit=None, media_since=None):
             mk = media_kind(m) if (BACKFILL_MEDIA or (media_since and m.date.timestamp() >= media_since)) else None
             if mk and await upload_media(a, m, mk, {
                 "tg_chat": str(d.id), "chat_kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": "1" if getattr(d.entity, "is_self", False) else "", "backfill": True, "tg_msg": m.id, "author": display_name(sender) or "?",
-                "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **topic,
+                "out": bool(m.out), "caption": (getattr(m, "message", "") or "")[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m), **fwd_fields(m), **topic,
             }):
                 continue
             await to_server({
                 "owner": a.uid, "tg_chat": str(d.id), "kind": kind, "title": (title_of(d.entity) if d.is_user else d.name) or "", "saved": bool(getattr(d.entity, "is_self", False)), "backfill": True, "tg_msg": m.id,
                 "author": display_name(sender) or "?", "out": bool(m.out), "text": describe(m)[:4000], "ts": int(m.date.timestamp() * 1000), "reply_to": reply_id(m),
-                "geo": geo_of(m), **topic,
+                "geo": geo_of(m), **fwd_fields(m), **topic,
             })
         msgs.clear()
 

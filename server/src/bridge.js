@@ -581,8 +581,10 @@ function deliver(b, file = null) {
   const topicId = topicOfTelegram(uid, row, b);
   // the pictures Telegram sent as one album share its number
   const album = /^\d{1,24}$/.test(String(b.tg_album ?? '')) ? `tg${b.tg_album}` : null;
-  const had = q.get('SELECT id, kind, file_id, album_id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key);
+  const fwd = String(b.fwd ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80) || null;   // who a forwarded message came from
+  const had = q.get('SELECT id, kind, file_id, album_id, forward_from FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, key);
   if (had) {
+    if (fwd && !had.forward_from) q.run('UPDATE messages SET forward_from = ? WHERE id = ?', fwd, had.id);   // a message copied before this was known
     if (album && !had.album_id) q.run('UPDATE messages SET album_id = ? WHERE id = ?', album, had.id);   // a message copied before albums existed joins its album now
     // the file of a message that was copied as a mark such as "[Фото]" (history, a failed upload): the message becomes the real one
     if (b.upgrade && (file || geo) && had.kind === 'text' && !had.file_id) {
@@ -599,8 +601,8 @@ function deliver(b, file = null) {
     ? q.get('SELECT id FROM messages WHERE chat_id = ? AND import_key = ?', row.chat_id, `tg:${row.tg_chat}:${b.reply_to}`)?.id ?? null : null;
   const ts = Number.isFinite(Number(b.ts)) && Number(b.ts) > 0 ? Math.min(Math.round(Number(b.ts)), now()) : now();
   const r = q.run(
-    'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at, topic_id, album_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-    row.chat_id, b.out ? uid : null, file ? file.kind : geo ? 'location' : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, topicId, album, // others' messages have no account here: they count as unread
+    'INSERT INTO messages (chat_id, sender_id, kind, text, reply_to, file_id, duration, import_author, import_key, created_at, topic_id, album_id, forward_from) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    row.chat_id, b.out ? uid : null, file ? file.kind : geo ? 'location' : 'text', text, reply, file ? file.id : null, file?.duration ?? null, author, key, ts, topicId, album, fwd, // others' messages have no account here: they count as unread
   );
   const id = Number(r.lastInsertRowid);
   if ((b.out || b.backfill) && q.get('SELECT forum FROM chats WHERE id = ?', row.chat_id)?.forum) {
@@ -680,7 +682,7 @@ bridgeIn.post('/bridge/media', async (req, res) => {
     out = deliver({
     owner: uid, tg_chat: tgChat, kind: qy.chat_kind, title: qy.title, saved: qy.saved === '1', tg_msg: Number(qy.tg_msg), author: qy.author, out: qy.out === '1',
     caption: qy.caption, ts: Number(qy.ts), reply_to: qy.reply_to ? Number(qy.reply_to) : null, backfill: qy.backfill === '1', upgrade: qy.upgrade === '1', tg_album: qy.tg_album,
-    tg_topic: qy.tg_topic, topic_title: qy.topic_title, topic_color: qy.topic_color,
+    tg_topic: qy.tg_topic, topic_title: qy.topic_title, topic_color: qy.topic_color, fwd: qy.fwd,
   }, { id: fid, kind, duration: Number.isFinite(dur) && dur >= 0 && dur < 86400 ? Math.round(dur) : null });
   } catch (e) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); throw e; }
   if (!out.id) { q.run('DELETE FROM files WHERE id = ?', fid); removeFile(fid); return res.json(out); } // skipped or already there: the file is not kept
