@@ -1,4 +1,5 @@
 import express from 'express';
+import { officeMime } from './office.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1688,11 +1689,12 @@ api.post('/chats/:id/files', async (req, res) => {
 async function sendFile(res, f, { download = false, pdfInline = false, thumb = false, noStore = false } = {}) {
   const mediaOk = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
   const pdf = f.mime === 'application/pdf' && pdfInline && !download;
-  const inline = !download && (mediaOk || pdf);
+  const office = !download && pdfInline && officeMime(f.name);   // opened with ?inline=1: handed to the program that opens it (Quick Look on an iPhone), not saved
+  const inline = !download && (mediaOk || pdf || !!office);
   // an old voice message or video that an iPhone cannot play as it is: a playable copy (made once); a download is always the original
   const alt = inline && !thumb && !noStore && mediaOk ? await playableFor(f, res.req?.headers?.['user-agent']).catch(() => null) : null;
   if (alt) res.setHeader('Vary', 'User-Agent');
-  res.setHeader('Content-Type', inline ? (alt?.mime || f.mime) : 'application/octet-stream');
+  res.setHeader('Content-Type', office || (inline ? (alt?.mime || f.mime) : 'application/octet-stream'));
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.name)}`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   if (pdf) {

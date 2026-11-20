@@ -176,7 +176,7 @@ test('freeing the disk by kind of chat: personal, groups, channels', async () =>
   assert.equal((await call(admin.cookie, 'GET', base)).data.files, 1, 'the personal chat file stays');
 });
 
-test('documents in the admin chat: PDF and text open in the browser, Word and Excel come with their real type', async () => {
+test('documents in the admin chat: PDF and text open in the browser, Word and Excel come with their real type and are opened, not saved', async () => {
   const admin = await adminLogin();
   const a = await login('+998901110021', 'Зафар');
   const b = await login('+998901110022', 'Умида');
@@ -199,9 +199,17 @@ test('documents in the admin chat: PDF and text open in the browser, Word and Ex
   assert.match(txt.headers.get('content-disposition'), /^inline/);
   const docx = await get(await send('договор.docx', crypto.randomBytes(300), 'client-doc-docx'));
   assert.equal(docx.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-  assert.match(docx.headers.get('content-disposition'), /^attachment/);
+  assert.match(docx.headers.get('content-disposition'), /^inline/, 'a document is handed to the program that opens it, not saved');
+  assert.match((await get(docx.url.split('/').pop(), '?download=1')).headers.get('content-disposition'), /^attachment/, 'the download button still saves');
   const xlsx = await get(await send('цены.xlsx', crypto.randomBytes(300), 'client-doc-xlsx'));
   assert.equal(xlsx.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  const mine = (id, qs) => fetch(`${BASE}/api/files/${id}${qs}`, { headers: { cookie: a.cookie } });
+  const docId = docx.url.split('/').pop();
+  const open = await mine(docId, '?inline=1');
+  assert.equal(open.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.match(open.headers.get('content-disposition'), /^inline/, 'in the messenger a document opens as a document');
+  assert.match((await mine(docId, '?dl=1')).headers.get('content-disposition'), /^attachment/);
+  assert.match((await mine(docId, '')).headers.get('content-disposition'), /^attachment/, 'with no request to open it nothing changes');
   const pdfId = pdf.url.split('/').pop();
   assert.match((await get(pdfId, '?download=1')).headers.get('content-disposition'), /^attachment/);
 });

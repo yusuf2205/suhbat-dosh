@@ -24,3 +24,10 @@ export async function openNative(file) {
   } catch { /* fall back to the viewer */ }
   return false;
 }
+
+/** A Word / Excel ... file is opened by the device, not saved: the app hands it over; a browser opens it as a document (Quick Look on an iPhone). */
+export async function openInSystem(file) {
+  if (canOpenNative() && (await openNative(file))) return true;
+  window.open(`${file.url}?inline=1`, '_blank', 'noopener');
+  return true;
+}

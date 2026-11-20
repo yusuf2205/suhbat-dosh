@@ -1,4 +1,5 @@
 import express from 'express';
+import { OFFICE } from './office.js';
 import { bridgeAdmin, bridgeCleanup } from './bridge.js';
 import { q, tx, place } from './db.js';
 import { HttpError, escapeLike, int, now, str } from './util.js';
@@ -682,13 +683,7 @@ admin.get('/files/:id', async (req, res) => {
   const inlineMedia = /^(image\/(jpeg|png|gif|webp)|audio\/|video\/)/.test(f.mime);
   const pdf = f.mime === 'application/pdf' || ext === 'pdf';
   const text = !inlineMedia && !pdf && ['txt', 'csv', 'log', 'json', 'md'].includes(ext);
-  const OFFICE = {
-    doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    odt: 'application/vnd.oasis.opendocument.text', ods: 'application/vnd.oasis.opendocument.spreadsheet', rtf: 'application/rtf',
-  };
-  const inline = inlineMedia || pdf || text;
+  const inline = inlineMedia || pdf || text || !!OFFICE[ext];
   const alt = inlineMedia && req.query.download !== '1' ? await playableFor(f, req.headers['user-agent']).catch(() => null) : null;   // an old voice message or video an iPhone cannot play as it is
   if (alt) res.setHeader('Vary', 'User-Agent');
   // a document is shown where the browser can show it (PDF, text) and is handed over with its real type otherwise (Word, Excel...), so the system opens it in the right program

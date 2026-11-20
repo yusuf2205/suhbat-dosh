@@ -40,13 +40,12 @@ import { startCall } from './call.js';
 import { openViewer, openMediaPanel } from './viewer.js';
 import { makeThumb } from './thumbs.js';
 import { voiceNode, encodeWave } from './voice.js';
-import { canOpenNative, isOffice, openNative, prefetchNative } from './native.js';
+import { canOpenNative, isOffice, openInSystem, openNative, prefetchNative } from './native.js';
 import { fileIcon } from './fileicons.js';
 import { ensureMediaPermission, openAppSettings, showMediaProblem } from './mediaaccess.js';
 import { aliasOf, shownName, aliasSig, animalAvatar } from './persona.js';
 import { animatedEmoji, isSingleEmoji, openStickerPicker, stickerNode } from './stickers.js';
 import { acceptSecretChat, isSecret, openBlob, openPayload, sealBlob, sealPayload, secretStatus, showSecretInfo, startSecretChat } from './secret.js';
-import { fileBlob } from './downloads.js';
 import { syncGroup } from './e2egroup.js';
 import { cancel as cancelTask, enqueue as enqueueUpload, onUpload, pause as pauseUpload, restore as restoreUploads, resume as resumeUpload } from './uploads.js';
 import { contactNode, initPhoneMenu, locationNode, openContactShare, sendLocation } from './share.js';
@@ -1508,18 +1507,6 @@ function keyboardNode(m) {
   return h('div', { class: 'ikb' }, rows);
 }
 
-/** Save a received file through the browser (from the device cache when it is there). */
-async function saveFile(f) {
-  try {
-    const blob = await fileBlob(f, 2);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = f.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
-  } catch (e) { toast(errText(e.code === 'forbidden' ? 'forbidden' : 'generic')); }
-}
-
 /** The body of an encrypted message: text or a file, decrypted on this device. */
 function secretNode(m, c) {
   const box = h('div', { class: 'text secret-text' }, '🔒 …');
@@ -1673,7 +1660,7 @@ function buildFileInner(m) {
     return tn ? h('div', { class: 'voice-with-tr' }, voiceNode(m), tn) : voiceNode(m);
   }
   prefetchNative(f);
-  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) { if (canOpenNative()) openNative(f); else saveFile(f); } else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
+  return h('button', { class: 'filecard', type: 'button', onclick: () => { if (isOffice(f)) openInSystem(f); else if (canOpenNative()) openNative(f); else open(); }, 'aria-label': f.name },
     h('span', { class: 'ficon' }, fileIcon(f.name, f.mime, 40)),
     h('span', { class: 'fname' }, h('b', null, f.name), h('span', { class: 'muted' }, formatBytes(f.size))));
 }
