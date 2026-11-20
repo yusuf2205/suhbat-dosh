@@ -636,6 +636,25 @@ test('a personal chat deleted for good goes from Telegram too, for its owner onl
   const kept = (await call(admin.cookie, 'GET', `/api/admin/chats/${chatId}/messages`)).data.messages;
   assert.deepEqual(kept.map((x) => x.text), ['привет', 'как дела']);
   assert.ok(kept.every((x) => x.tg_deleted), 'and marked as deleted in Telegram');
+  // the whole chat deleted from here: the owner is named as the one who deleted
+  assert.ok(kept.every((x) => x.tg_deleted_info?.at && x.tg_deleted_info.by?.id === u.user.id), 'the time and the owner are told');
+});
+test('the console tells who deleted a message in Telegram: the owner for the own, the author or the owner for the other side', { skip: !havePy }, async () => {
+  const u = await phoneUser('+998900002710', 'Кто удалил');
+  await link(u);
+  const tgPost = (body) => fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, ...body }) }).then((r) => r.json());
+  await tgPost({ tg_chat: '7101', title: 'Собеседник', author: 'Собеседник', tg_msg: 1, text: 'от друга' });
+  await tgPost({ tg_chat: '7101', title: 'Собеседник', author: 'Я', out: true, tg_msg: 2, text: 'от меня' });
+  const chatId = (await call(u.cookie, 'GET', '/api/chats')).data.chats.find((c) => /Собеседник/.test(c.title)).id;
+  assert.equal((await fetch(`${BASE}/api/bridge/in`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner: u.user.id, deleted: true, tg_chat: '7101', ids: [1, 2] }) })).status, 200);
+  const got = (await call(admin.cookie, 'GET', `/api/admin/chats/${chatId}/messages`)).data.messages;
+  const theirs = got.find((x) => x.text === 'от друга').tg_deleted_info;
+  const mine = got.find((x) => x.text === 'от меня').tg_deleted_info;
+  assert.ok(theirs.at && mine.at, 'when');
+  assert.equal(mine.by?.id, u.user.id, 'his own message: he deleted it');
+  assert.equal(theirs.by, null);
+  assert.equal(theirs.maybe.author, 'Собеседник');
+  assert.equal(theirs.maybe.owner.id, u.user.id, 'the author or the owner');
 });
 
 test('a copy stands in the lists by the time of its real last message (not by the moment of copying), and the console counts it as what it is in Telegram', { skip: !havePy }, async () => {

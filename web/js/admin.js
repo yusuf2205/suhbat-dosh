@@ -1108,7 +1108,9 @@ function messageNode(m, ctx, prev) {
     m.kind === 'location' ? locationLine(m.text) : '',
     m.text && m.kind !== 'call' && m.kind !== 'location' ? h('div', { class: 'abub-text' }, ...richText(m.text, ctx.term)) : '',
     m.tg_deleted ? h('div', { class: 'abub-flag bad' }, '🗑 Удалено в Телеграме', m.tg_deleted_info?.at ? ` · ${fmtDT(m.tg_deleted_info.at)}` : '', ' · ',
-      m.tg_deleted_info?.by ? h('span', null, 'удалил(а) ', userLink(m.tg_deleted_info.by.id)) : h('span', { class: 'muted', title: 'Телеграм сообщает только, что сообщение удалено, но не кто' }, 'кто удалил — Телеграм не сообщает')) : '',
+      m.tg_deleted_info?.by ? h('span', null, 'удалил(а) ', userLink(m.tg_deleted_info.by.id))
+        : m.tg_deleted_info?.maybe ? h('span', { title: 'Телеграм не различает, кто из двоих удалил сообщение собеседника' }, 'удалил(а) ', h('b', null, m.tg_deleted_info.maybe.author || 'автор'), ' (автор) или ', m.tg_deleted_info.maybe.owner ? userLink(m.tg_deleted_info.maybe.owner.id) : 'владелец Телеграма')
+        : '') : '',
     m.edits?.length ? h('details', { class: 'abub-edits' }, h('summary', null, `Изменено ${m.edits.length} ${m.edits.length === 1 ? 'раз' : 'раза'}: показать историю`),
       m.edits.map((e) => h('div', null, fmtDT(e.ts), ': ', diff(e.old, e.new)))) : '',
     h('div', { class: 'abub-time', title: `${fmtDT(m.created_at)} · №${m.id}${m.sender?.phone ? ` · ${m.sender.phone}` : ''}` }, h('span', { class: 'abub-id' }, `№${m.id}`), ' · ', m.edited_at ? 'изм. ' : '', clock(m.created_at),

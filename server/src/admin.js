@@ -352,10 +352,21 @@ function chatFilter(id, query) {
   return { where, params, filtered: !!(text || kind || who || query.since || query.until) };
 }
 
+/**
+ * Who deleted a message in Telegram. Telegram does not say, so it is worked out: the chat deleted from here is the owner; a message the owner wrote cannot be
+ * removed from the owner's side by anyone else, so it was the owner; a message of the other side was removed by the owner or by its author (not told apart).
+ */
+function deletedInfo(m) {
+  const owner = m.tg_deleted_by || m.sender_id || q.get('SELECT user_id FROM tg_chats WHERE chat_id = ?', m.chat_id)?.user_id || null;
+  const info = { at: m.tg_deleted_at || null, by: null, maybe: null };
+  if (m.tg_deleted_by || m.sender_id) info.by = userRef(getUser(m.tg_deleted_by || m.sender_id));
+  else info.maybe = { author: m.import_author || null, owner: owner ? userRef(getUser(owner)) : null };
+  return info;
+}
 const adminMessage = (m, history = {}) => {
   const s = m.sender_id ? getUser(m.sender_id) : null;
   return { ...messageOut(m), sender: userRef(s), edits: history[String(m.id)] || [], mark: q.get('SELECT note, created_at FROM admin_marks WHERE message_id = ?', m.id) || null,
-    ...(m.tg_deleted ? { tg_deleted_info: { at: m.tg_deleted_at || null, by: m.tg_deleted_by ? userRef(getUser(m.tg_deleted_by)) : null } } : {}) };
+    ...(m.tg_deleted ? { tg_deleted_info: deletedInfo(m) } : {}) };
 };
 const editHistory = (chatId) => {
   const history = {};
